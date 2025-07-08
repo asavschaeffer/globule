@@ -1,0 +1,194 @@
+test_cases:
+  - id: "TC-018"
+    name: "Glass Engine Framework Self-Test"
+    description: "Test the Glass Engine framework functionality itself"
+    category: "framework"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "essential"
+        narration_level: "detailed"
+      showcase:
+        enabled: true
+        priority: "high"
+        narration_level: "verbose"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "glass", "tutorial", "--test", "TC-001"]
+        timeout: 30
+        
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "glass", "showcase", "--category", "core_functionality"]
+        timeout: 60
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Tutorial mode executed"
+          contains: ["Glass Engine Test Run", "Tutorial Mode"]
+          
+        - type: "cli_output"
+          description: "Test results displayed"
+          contains: ["Test Results", "PASSED", "FAILED"]
+          
+        - type: "cli_output"
+          description: "Summary provided"
+          contains: ["Summary:", "passed"]
+      
+      showcase:
+        - type: "cli_output"
+          description: "Tutorial mode executed"
+          contains: ["Glass Engine Test Run", "Tutorial Mode"]
+          
+        - type: "cli_output"
+          description: "Showcase mode executed"
+          contains: ["Glass Engine Test Run", "Showcase Mode"]
+          
+        - type: "cli_output"
+          description: "Test results displayed"
+          contains: ["Test Results", "PASSED", "FAILED"]
+          
+        - type: "cli_output"
+          description: "Summary provided"
+          contains: ["Summary:", "passed"]
+          
+        - type: "cli_output"
+          description: "Reports generated"
+          contains: ["Reports saved to:"]
+          
+        - type: "log_entry"
+          description: "Glass Engine execution logged"
+          contains: ["Glass Engine", "test execution"]
+          log_level: "INFO"
+
+  - id: "TC-019"
+    name: "Glass Engine Error Handling"
+    description: "Test Glass Engine error handling and recovery"
+    category: "framework"
+    mode_config:
+      tutorial:
+        enabled: false
+        priority: "low"
+      showcase:
+        enabled: true
+        priority: "medium"
+    
+    setup_hooks:
+      - "mock_parser_failure"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "glass", "showcase", "--test", "TC-009"]
+        timeout: 30
+        
+    assertions:
+      showcase:
+        - type: "cli_output"
+          description: "Error handling test executed"
+          contains: ["Glass Engine Test Run", "Showcase Mode"]
+          
+        - type: "cli_output"
+          description: "Error recovery demonstrated"
+          contains: ["Error", "recovery"]
+          
+        - type: "log_entry"
+          description: "Error handled gracefully"
+          contains: ["Error", "handled", "recovery"]
+          log_level: "ERROR"
+
+  - id: "TC-020"
+    name: "Glass Engine Report Generation"
+    description: "Test Glass Engine report generation system"
+    category: "framework"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "medium"
+      showcase:
+        enabled: true
+        priority: "high"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "glass", "tutorial", "--category", "core_functionality"]
+        timeout: 60
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Tests executed"
+          contains: ["Glass Engine Test Run", "Tutorial Mode"]
+          
+        - type: "cli_output"
+          description: "Reports generated"
+          contains: ["Reports saved to:"]
+      
+      showcase:
+        - type: "cli_output"
+          description: "Tests executed"
+          contains: ["Glass Engine Test Run", "Tutorial Mode"]
+          
+        - type: "cli_output"
+          description: "Reports generated"
+          contains: ["Reports saved to:"]
+          
+        - type: "cli_output"
+          description: "Error statistics shown"
+          contains: ["Total errors", "Most common error"]
+          
+        - type: "log_entry"
+          description: "Report generation logged"
+          contains: ["Report", "generated"]
+          log_level: "INFO"
+
+  - id: "TC-021"
+    name: "Glass Engine Trace System"
+    description: "Test Glass Engine trace ID propagation and logging"
+    category: "framework"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "medium"
+      showcase:
+        enabled: true
+        priority: "high"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "glass", "showcase", "--test", "TC-001"]
+        timeout: 30
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Test executed with trace ID"
+          contains: ["Glass Engine Test Run", "Showcase Mode"]
+          
+        - type: "cli_output"
+          description: "Trace ID visible in output"
+          contains: ["trace_id"]
+      
+      showcase:
+        - type: "cli_output"
+          description: "Test executed with trace ID"
+          contains: ["Glass Engine Test Run", "Showcase Mode"]
+          
+        - type: "cli_output"
+          description: "Trace ID visible in output"
+          contains: ["trace_id"]
+          
+        - type: "log_entry"
+          description: "Trace ID propagated in logs"
+          contains: ["GLASS ENGINE", "trace_id"]
+          log_level: "INFO"
+          
+        - type: "log_entry"
+          description: "Test isolation verified"
+          contains: ["Test isolation", "artifacts"]
+          log_level: "INFO"
