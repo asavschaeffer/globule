@@ -1,0 +1,185 @@
+test_cases:
+  - id: "TC-015"
+    name: "End-to-End User Journey"
+    description: "Complete user journey from setup to daily operations"
+    category: "integration"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "essential"
+        narration_level: "detailed"
+      showcase:
+        enabled: true
+        priority: "high"
+        narration_level: "verbose"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "add", "Today I learned about Glass Engine testing framework"]
+        timeout: 15
+        
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "search", "Glass Engine"]
+        timeout: 15
+        
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "today"]
+        timeout: 15
+        
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "stats"]
+        timeout: 10
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Thought successfully added"
+          contains: ["Added", "thought"]
+          
+        - type: "cli_output"
+          description: "Search results displayed"
+          contains: ["Results", "Glass Engine"]
+          
+        - type: "database_record"
+          description: "Thought stored in database"
+          table: "globules"
+          condition: "content LIKE '%Glass Engine%'"
+          expected_count: 1
+      
+      showcase:
+        - type: "cli_output"
+          description: "Thought successfully added"
+          contains: ["Added", "thought"]
+          
+        - type: "cli_output"
+          description: "Search results displayed"
+          contains: ["Results", "Glass Engine"]
+          
+        - type: "database_record"
+          description: "Thought stored in database"
+          table: "globules"
+          condition: "content LIKE '%Glass Engine%'"
+          expected_count: 1
+          
+        - type: "log_entry"
+          description: "Parser execution logged"
+          contains: ["Parser", "text processed"]
+          log_level: "INFO"
+          
+        - type: "log_entry"
+          description: "Embedding generation logged"
+          contains: ["Embedding", "generated"]
+          log_level: "INFO"
+          
+        - type: "log_entry"
+          description: "Database operation logged"
+          contains: ["Database", "INSERT"]
+          log_level: "INFO"
+
+  - id: "TC-016"
+    name: "Performance Stress Test"
+    description: "Test system performance under multiple operations"
+    category: "integration"
+    mode_config:
+      tutorial:
+        enabled: false
+        priority: "low"
+      showcase:
+        enabled: true
+        priority: "medium"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "add", "Performance test thought 1"]
+        timeout: 15
+        
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "add", "Performance test thought 2"]
+        timeout: 15
+        
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "add", "Performance test thought 3"]
+        timeout: 15
+        
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "search", "Performance"]
+        timeout: 20
+        
+    assertions:
+      showcase:
+        - type: "database_record"
+          description: "All thoughts stored"
+          table: "globules"
+          condition: "content LIKE '%Performance test%'"
+          expected_count: 3
+          
+        - type: "cli_output"
+          description: "Search returns all performance thoughts"
+          contains: ["Results", "Performance test thought 1", "Performance test thought 2", "Performance test thought 3"]
+          
+        - type: "log_entry"
+          description: "No performance warnings"
+          contains: ["slow", "timeout", "performance"]
+          log_level: "WARNING"
+          should_not_contain: true
+
+  - id: "TC-017"
+    name: "Configuration Validation"
+    description: "Test various configuration scenarios"
+    category: "integration"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "medium"
+      showcase:
+        enabled: true
+        priority: "high"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "config"]
+        timeout: 5
+        
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "add", "Configuration test thought"]
+        timeout: 15
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Configuration displayed"
+          contains: ["Current Configuration", "Database Path"]
+          
+        - type: "cli_output"
+          description: "Thought added successfully"
+          contains: ["Added", "thought"]
+      
+      showcase:
+        - type: "cli_output"
+          description: "Configuration displayed"
+          contains: ["Current Configuration", "Database Path", "LLM Provider"]
+          
+        - type: "cli_output"
+          description: "Thought added successfully"
+          contains: ["Added", "thought"]
+          
+        - type: "log_entry"
+          description: "Configuration loaded"
+          contains: ["Config", "loaded"]
+          log_level: "INFO"
+          
+        - type: "database_record"
+          description: "Configuration test thought stored"
+          table: "globules"
+          condition: "content = 'Configuration test thought'"
+          expected_count: 1
