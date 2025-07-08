@@ -24,6 +24,33 @@ from .embedding_engine import Embedder, create_embedder
 from .parser_engine import Parser, ParsedResult, create_parser
 from .storage import Globule, SQLiteStorage, Storage
 
+# Import Glass Engine components
+try:
+    from .glass_hooks import HookRegistry, get_hook_registry
+    from .glass_errors import ErrorHandler, ErrorRecovery, error_handler, error_recovery
+    from .glass_reports import ReportGenerator, save_test_reports
+    GLASS_COMPONENTS_AVAILABLE = True
+except ImportError:
+    GLASS_COMPONENTS_AVAILABLE = False
+    # Create stub classes for missing components
+    class HookRegistry:
+        def __init__(self): pass
+        def execute_setup_hooks(self, *args, **kwargs): pass
+        def execute_teardown_hooks(self, *args, **kwargs): pass
+    
+    class ErrorHandler:
+        def __init__(self): pass
+        def handle_error(self, error, **kwargs): return None
+        def should_retry(self, error, attempt): return False
+    
+    class ErrorRecovery:
+        def __init__(self, handler): pass
+        async def execute_with_retry(self, func, *args, **kwargs): return await func(*args, **kwargs)
+    
+    def get_hook_registry(): return HookRegistry()
+    error_handler = ErrorHandler()
+    error_recovery = ErrorRecovery(error_handler)
+
 
 class TestStatus(Enum):
     """Status of test execution."""
@@ -1089,6 +1116,12 @@ class GlassOrchestrator:
         self.assertion_validator = AssertionValidator()
         self.console = Console()
         
+        # Initialize Glass Engine components
+        self.hook_registry = get_hook_registry() if GLASS_COMPONENTS_AVAILABLE else HookRegistry()
+        self.error_handler = error_handler
+        self.error_recovery = error_recovery
+        self.report_generator = ReportGenerator() if GLASS_COMPONENTS_AVAILABLE else None
+        
     async def run(self, mode: str, test_id: Optional[str] = None, 
                   category: Optional[str] = None) -> TestRunResult:
         """Main orchestration method."""
@@ -1166,46 +1199,121 @@ class GlassOrchestrator:
             )
             
         except Exception as e:
+            # Handle orchestrator-level errors
+            error_info = self.error_handler.handle_error(e)
             self.console.print(f"[red]Error during test execution: {e}[/red]")
+            if error_info and error_info.recovery_suggestion:
+                self.console.print(f"[yellow]Recovery suggestion: {error_info.recovery_suggestion}[/yellow]")
             raise
     
     async def _execute_single_test(self, test_case: TestCase, mode: str) -> TestResult:
-        """Execute a single test case with full isolation."""
+        """Execute a single test case with full isolation and error handling."""
         trace_id = generate_trace_id()
+        error_message = None
+        failure_details = None
         
-        async with TestContext(trace_id, test_case.id, mode) as context:
-            # Setup context for this test case
-            await context.setup_for_test_case(test_case, mode)
-            
-            # Execute test steps
-            step_results = []
-            for i, step in enumerate(test_case.steps):
-                step_result = await self.test_executor.execute_step(
-                    step, context, i
-                )
-                step_results.append(step_result)
+        try:
+            async with TestContext(trace_id, test_case.id, mode) as context:
+                # Setup context for this test case
+                await context.setup_for_test_case(test_case, mode)
                 
-                if step_result.status == TestStatus.FAILED:
-                    break
-            
-            # Validate assertions
-            assertion_results = await self.assertion_validator.validate_assertions(
-                test_case.assertions.get(mode, []), context
+                # Execute setup hooks
+                if test_case.setup_hooks and GLASS_COMPONENTS_AVAILABLE:
+                    await self.hook_registry.execute_setup_hooks(
+                        test_case.setup_hooks, context
+                    )
+                
+                # Execute test steps with error recovery
+                step_results = []
+                for i, step in enumerate(test_case.steps):
+                    try:
+                        step_result = await self.error_recovery.execute_with_retry(
+                            self.test_executor.execute_step,
+                            step, context, i,
+                            max_retries=test_case.retry_count
+                        )
+                        step_results.append(step_result)
+                        
+                        if step_result.status == TestStatus.FAILED:
+                            break
+                            
+                    except Exception as e:
+                        error_info = self.error_handler.handle_error(
+                            e, test_case_id=test_case.id, trace_id=trace_id
+                        )
+                        
+                        step_results.append(StepResult(
+                            step_index=i,
+                            status=TestStatus.ERROR,
+                            duration=0.0,
+                            output="",
+                            error=str(e)
+                        ))
+                        
+                        error_message = str(e)
+                        failure_details = error_info.recovery_suggestion
+                        break
+                
+                # Validate assertions with error handling
+                assertion_results = []
+                try:
+                    assertion_results = await self.assertion_validator.validate_assertions(
+                        test_case.assertions.get(mode, []), context
+                    )
+                except Exception as e:
+                    error_info = self.error_handler.handle_error(
+                        e, test_case_id=test_case.id, trace_id=trace_id
+                    )
+                    error_message = str(e)
+                    failure_details = error_info.recovery_suggestion
+                
+                # Execute teardown hooks
+                if test_case.teardown_hooks and GLASS_COMPONENTS_AVAILABLE:
+                    try:
+                        await self.hook_registry.execute_teardown_hooks(
+                            test_case.teardown_hooks, context
+                        )
+                    except Exception as e:
+                        # Log teardown errors but don't fail the test
+                        self.error_handler.handle_error(
+                            e, test_case_id=test_case.id, trace_id=trace_id
+                        )
+                
+                # Determine overall test status
+                test_status = self._calculate_test_status(step_results, assertion_results)
+                
+                return TestResult(
+                    test_case_id=test_case.id,
+                    status=test_status,
+                    duration=time.time() - context.start_time.timestamp(),
+                    trace_id=trace_id,
+                    start_time=context.start_time,
+                    end_time=datetime.now(),
+                    step_results=step_results,
+                    assertion_results=assertion_results,
+                    artifacts_path=context.artifacts_dir,
+                    error_message=error_message,
+                    failure_details=failure_details
+                )
+                
+        except Exception as e:
+            # Handle catastrophic test failures
+            error_info = self.error_handler.handle_error(
+                e, test_case_id=test_case.id, trace_id=trace_id
             )
-            
-            # Determine overall test status
-            test_status = self._calculate_test_status(step_results, assertion_results)
             
             return TestResult(
                 test_case_id=test_case.id,
-                status=test_status,
-                duration=time.time() - context.start_time.timestamp(),
+                status=TestStatus.ERROR,
+                duration=0.0,
                 trace_id=trace_id,
-                start_time=context.start_time,
+                start_time=datetime.now(),
                 end_time=datetime.now(),
-                step_results=step_results,
-                assertion_results=assertion_results,
-                artifacts_path=context.artifacts_dir
+                step_results=[],
+                assertion_results=[],
+                artifacts_path=f"test_runs/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{mode}/{test_case.id}",
+                error_message=str(e),
+                failure_details=error_info.recovery_suggestion if error_info else None
             )
     
     def _calculate_test_status(self, step_results: List[StepResult], 
@@ -1286,3 +1394,37 @@ class GlassOrchestrator:
             summary_text += f", {error_tests} errors"
         
         self.console.print(summary_text)
+        
+        # Generate and save reports
+        if self.report_generator and GLASS_COMPONENTS_AVAILABLE:
+            try:
+                artifacts_dir = f"test_runs/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{mode}"
+                run_result = TestRunResult(
+                    run_id=generate_run_id(),
+                    mode=mode,
+                    total_tests=len(results),
+                    passed_tests=passed_tests,
+                    failed_tests=failed_tests,
+                    error_tests=error_tests,
+                    skipped_tests=0,
+                    total_duration=sum(r.duration for r in results),
+                    test_results=results,
+                    artifacts_dir=artifacts_dir
+                )
+                
+                saved_files = save_test_reports(run_result, artifacts_dir)
+                self.console.print(f"[dim]Reports saved to: {artifacts_dir}[/dim]")
+                
+                # Display error statistics if available
+                if hasattr(self.error_handler, 'get_error_statistics'):
+                    error_stats = self.error_handler.get_error_statistics()
+                    if error_stats['total_errors'] > 0:
+                        self.console.print(f"[yellow]Total errors encountered: {error_stats['total_errors']}[/yellow]")
+                        if error_stats.get('most_common_error'):
+                            most_common = error_stats['most_common_error']
+                            self.console.print(f"[yellow]Most common error: {most_common['type']} ({most_common['count']} occurrences)[/yellow]")
+                
+            except Exception as e:
+                self.console.print(f"[yellow]Warning: Could not generate reports: {e}[/yellow]")
+        else:
+            self.console.print(f"[dim]Reports not available (Glass components not loaded)[/dim]")
