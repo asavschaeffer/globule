@@ -1,0 +1,87 @@
+test_cases:
+  - id: "TC-001"
+    name: "Add Basic Thought"
+    description: "User adds a simple thought to the system"
+    category: "core_functionality"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "essential"
+        narration_level: "basic"
+      showcase:
+        enabled: true
+        priority: "high"
+        narration_level: "detailed"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "add", "I need to finish the quarterly report"]
+        timeout: 10
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Success message displayed"
+          contains: ["✓ Thought captured successfully!"]
+        
+        - type: "database_record"
+          description: "Record created in database"
+          table: "globules"
+          condition: "content = 'I need to finish the quarterly report'"
+          expected_count: 1
+      
+      showcase:
+        - type: "cli_output"
+          description: "Success message displayed"
+          contains: ["✓ Thought captured successfully!"]
+        
+        - type: "database_record"
+          description: "Record created in database"
+          table: "globules"
+          condition: "content = 'I need to finish the quarterly report'"
+          expected_count: 1
+        
+        - type: "log_entry"
+          description: "Processing logged"
+          contains: ["ThoughtProcessor initialized"]
+          log_level: "INFO"
+        
+        - type: "embedding"
+          description: "Embedding generated"
+          not_null: true
+
+  - id: "TC-002"
+    name: "Add Empty Thought"
+    description: "System handles empty thought input gracefully"
+    category: "core_functionality"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "essential"
+      showcase:
+        enabled: true
+        priority: "high"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "add", ""]
+        timeout: 5
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Handles empty input gracefully"
+          contains: ["✓ Thought captured successfully!"]
+      
+      showcase:
+        - type: "cli_output"
+          description: "Handles empty input gracefully"
+          contains: ["✓ Thought captured successfully!"]
+        
+        - type: "database_record"
+          description: "Empty record created"
+          table: "globules"
+          condition: "content = ''"
+          expected_count: 1

@@ -1,0 +1,63 @@
+test_cases:
+  - id: "TC-003"
+    name: "Basic Search"
+    description: "User searches for thoughts using basic query"
+    category: "search"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "essential"
+      showcase:
+        enabled: true
+        priority: "high"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "search", "quarterly report"]
+        timeout: 15
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Search results displayed"
+          contains: ["Results for 'quarterly report'"]
+      
+      showcase:
+        - type: "cli_output"
+          description: "Search results displayed"
+          contains: ["Results for 'quarterly report'"]
+        
+        - type: "log_entry"
+          description: "Search query logged"
+          contains: ["QueryEngine", "search"]
+          log_level: "INFO"
+
+  - id: "TC-004"
+    name: "Search No Results"
+    description: "Search query returns no results"
+    category: "search"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "medium"
+      showcase:
+        enabled: true
+        priority: "high"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "search", "nonexistent_query_12345"]
+        timeout: 15
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "No results message displayed"
+          contains: ["No results found"]
+      
+      showcase:
+        - type: "cli_output"
+          description: "No results message displayed"
+          contains: ["No results found"]
