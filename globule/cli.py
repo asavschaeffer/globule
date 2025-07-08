@@ -167,5 +167,39 @@ def config(ctx: click.Context):
         create_default_config()
         console.print("[green]Created config.yaml[/green]")
 
+@cli.command()
+@click.argument('mode', type=click.Choice(['tutorial', 'showcase']))
+@click.option('--test', help='Run specific test case')
+@click.option('--category', help='Run tests in specific category')
+@click.pass_context
+def glass(ctx: click.Context, mode: str, test: str = None, category: str = None):
+    """Run Glass Engine tests in tutorial or showcase mode."""
+    import asyncio
+    from .glass import GlassOrchestrator
+    
+    config = ctx.obj.config
+    if not config:
+        console.print("[red]No configuration found. Please run 'globule config' first.[/red]")
+        return
+    
+    orchestrator = GlassOrchestrator(config)
+    
+    async def run_tests():
+        try:
+            result = await orchestrator.run(mode, test_id=test, category=category)
+            
+            # Display final summary
+            if result.failed_tests == 0 and result.error_tests == 0:
+                console.print(f"[green]🎉 All {result.passed_tests} tests passed![/green]")
+            else:
+                console.print(f"[yellow]⚠️  {result.failed_tests + result.error_tests} tests failed[/yellow]")
+                
+        except Exception as e:
+            console.print(f"[red]Glass Engine error: {e}[/red]")
+            import traceback
+            traceback.print_exc()
+    
+    asyncio.run(run_tests())
+
 if __name__ == '__main__':
     cli()
