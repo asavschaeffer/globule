@@ -1,0 +1,202 @@
+test_cases:
+  - id: "TC-009"
+    name: "Parser Failure Recovery"
+    description: "System handles parser failure gracefully"
+    category: "edge_cases"
+    mode_config:
+      tutorial:
+        enabled: false
+        priority: "low"
+      showcase:
+        enabled: true
+        priority: "high"
+    
+    setup_hooks:
+      - "mock_parser_failure"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "add", "This should trigger parser failure"]
+        timeout: 10
+        
+    assertions:
+      showcase:
+        - type: "log_entry"
+          description: "Parser failure logged"
+          contains: ["Parser failed", "fallback"]
+          log_level: "ERROR"
+        
+        - type: "database_record"
+          description: "Record still created despite parser failure"
+          table: "globules"
+          condition: "content = 'This should trigger parser failure'"
+          expected_count: 1
+
+  - id: "TC-010"
+    name: "Embedder Failure Recovery"
+    description: "System handles embedder failure gracefully"
+    category: "edge_cases"
+    mode_config:
+      tutorial:
+        enabled: false
+        priority: "low"
+      showcase:
+        enabled: true
+        priority: "high"
+    
+    setup_hooks:
+      - "mock_embedder_failure"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "add", "This should trigger embedder failure"]
+        timeout: 10
+        
+    assertions:
+      showcase:
+        - type: "log_entry"
+          description: "Embedder failure logged"
+          contains: ["Embedding failed"]
+          log_level: "ERROR"
+        
+        - type: "database_record"
+          description: "Record created with null embedding"
+          table: "globules"
+          condition: "content = 'This should trigger embedder failure' AND embedding IS NULL"
+          expected_count: 1
+
+  - id: "TC-011"
+    name: "Database Full Scenario"
+    description: "System handles database full condition"
+    category: "edge_cases"
+    mode_config:
+      tutorial:
+        enabled: false
+        priority: "low"
+      showcase:
+        enabled: true
+        priority: "high"
+    
+    setup_hooks:
+      - "mock_database_full"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "add", "This should trigger database full error"]
+        timeout: 10
+        
+    assertions:
+      showcase:
+        - type: "cli_output"
+          description: "Error message displayed"
+          contains: ["Error", "Database full"]
+        
+        - type: "log_entry"
+          description: "Database error logged"
+          contains: ["Database full", "No space left"]
+          log_level: "ERROR"
+
+  - id: "TC-012"
+    name: "Network Timeout Scenario"
+    description: "System handles network timeout gracefully"
+    category: "edge_cases"
+    mode_config:
+      tutorial:
+        enabled: false
+        priority: "low"
+      showcase:
+        enabled: true
+        priority: "high"
+    
+    setup_hooks:
+      - "network_timeout"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "add", "This should trigger network timeout"]
+        timeout: 15
+        
+    assertions:
+      showcase:
+        - type: "cli_output"
+          description: "Timeout error displayed"
+          contains: ["Error", "timeout"]
+        
+        - type: "log_entry"
+          description: "Timeout error logged"
+          contains: ["timeout", "Network timeout"]
+          log_level: "ERROR"
+
+  - id: "TC-013"
+    name: "Invalid Command Arguments"
+    description: "System handles invalid command arguments"
+    category: "edge_cases"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "low"
+      showcase:
+        enabled: true
+        priority: "medium"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "nonexistent_command"]
+        timeout: 5
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Command error displayed"
+          contains: ["Error", "No such command"]
+      
+      showcase:
+        - type: "cli_output"
+          description: "Command error displayed"
+          contains: ["Error", "No such command"]
+        
+        - type: "cli_output"
+          description: "Help information provided"
+          contains: ["Usage:", "Commands:"]
+
+  - id: "TC-014"
+    name: "Missing Configuration"
+    description: "System handles missing configuration gracefully"
+    category: "edge_cases"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "low"
+      showcase:
+        enabled: true
+        priority: "medium"
+    
+    setup_hooks:
+      - "remove_config_file"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "add", "Test with missing config"]
+        timeout: 10
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Configuration created message"
+          contains: ["No config found", "creating default"]
+      
+      showcase:
+        - type: "cli_output"
+          description: "Configuration created message"
+          contains: ["No config found", "creating default"]
+        
+        - type: "log_entry"
+          description: "Configuration creation logged"
+          contains: ["Created config.yaml"]
+          log_level: "INFO"
