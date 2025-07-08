@@ -5,7 +5,7 @@ Based on my analysis of the Globule codebase, here's a comprehensive implementat
 ## 1. Test Case Definitions
 
 ### Structure & Storage
-**Location:** `tests/glass_engine/test_cases.yaml`
+**Location:** `tests/glass_engine/test_cases/` (directory-based organization)
 
 **YAML Structure:**
 ```yaml
@@ -31,21 +31,26 @@ test_cases:
     assertions:
       tutorial:
         - type: "cli_output"
+          description: "Success message displayed"
           contains: ["✓ Thought captured successfully!"]
         - type: "database_record"
+          description: "Record created in database"
           table: "globules"
           condition: "content = 'I need to finish the quarterly report'"
       
       showcase:
         - type: "cli_output"
+          description: "Success message displayed"
           contains: ["✓ Thought captured successfully!"]
         - type: "database_record"
+          description: "Record created in database"
           table: "globules"
           condition: "content = 'I need to finish the quarterly report'"
         - type: "log_entry"
+          description: "Processing logged"
           contains: ["[GLASS ENGINE]", "ThoughtProcessor initialized"]
-        - type: "embedding_generated"
-          field: "embedding"
+        - type: "embedding"
+          description: "Embedding generated"
           not_null: true
     
     edge_cases:
@@ -56,7 +61,8 @@ test_cases:
           args: [""]
         expected_behavior: "graceful_failure"
         assertions:
-          - type: "error_message"
+          - type: "cli_output"
+            description: "Error message displayed"
             contains: ["Error: Empty input"]
       
       - name: "Parser Failure"
@@ -67,8 +73,10 @@ test_cases:
         expected_behavior: "fallback_to_simple_parser"
         assertions:
           - type: "log_entry"
+            description: "Parser failure logged"
             contains: ["Parser failed", "fallback"]
           - type: "database_record"
+            description: "Record still created"
             table: "globules"
             condition: "content = 'Test thought'"
 
@@ -349,7 +357,7 @@ class TestHooks:
 
 ### Test Development Workflow
 1. **Add New Test Case:**
-   - Edit `test_cases.yaml`
+   - Create or edit test case YAML file in appropriate category directory
    - Define steps, assertions, edge cases
    - Run single test: `globule glass tutorial --test TC-005`
 
@@ -412,5 +420,19 @@ docs/glass_engine/
 - Rich CLI interface with progress indicators
 - Comprehensive documentation
 - IDE integration for test authoring
+
+## Key Architectural Decisions
+
+This implementation plan incorporates several critical design decisions that prioritize maintainability, robustness, and developer experience:
+
+- **Directory-Based Test Organization**: Tests are organized by category in separate YAML files rather than a single monolithic file, improving scalability and reducing merge conflicts.
+
+- **Dependency Injection for Mocking**: Uses a clean `ComponentFactory` pattern instead of brittle monkey-patching, making mocks explicit and type-safe.
+
+- **Polymorphic Assertion System**: Object-oriented assertion classes replace a single dataclass with many optional fields, making the system more extensible and maintainable.
+
+- **Assertion-Driven State Capture**: Only captures the specific state needed by assertions rather than generic snapshots, improving performance and debugging effectiveness.
+
+These decisions are detailed in the accompanying Low-Level Design document, which serves as the canonical technical specification for implementation.
 
 This plan provides a robust foundation for implementing the UDE methodology in Globule, ensuring comprehensive testing coverage while maintaining developer productivity and system transparency.
