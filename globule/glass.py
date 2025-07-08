@@ -815,3 +815,161 @@ class TraceManager:
     def get_trace_entries(self) -> List[Dict[str, Any]]:
         """Get all trace entries."""
         return self.trace_entries.copy()
+
+
+# Test Execution System
+class CommandExecutor:
+    """Executor for CLI commands with proper environment setup."""
+    
+    async def execute_cli_command(self, command: str, args: List[str], 
+                                 context: TestContext) -> str:
+        """Execute CLI command with proper environment setup."""
+        # Set up environment with test context
+        env = dict(os.environ)
+        env['GLOBULE_DB_PATH'] = context.temp_db_path
+        env['GLOBULE_CONFIG_PATH'] = context.temp_config_path
+        env['GLASS_ENGINE_TRACE_ID'] = context.trace_id
+        
+        # Build command
+        cmd = [command] + args
+        
+        context.trace_manager.log_trace(f"Executing command: {' '.join(cmd)}")
+        
+        # Execute with timeout
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env
+        )
+        
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), 
+                timeout=30.0
+            )
+            
+            output = stdout.decode() + stderr.decode()
+            
+            # Log execution details
+            context.state_capture.log_command_execution(
+                command, args, output, process.returncode
+            )
+            
+            context.trace_manager.log_trace(
+                f"Command completed with return code: {process.returncode}",
+                {"output_length": len(output)}
+            )
+            
+            return output
+            
+        except asyncio.TimeoutError:
+            process.kill()
+            raise asyncio.TimeoutError(f"Command '{command}' timed out")
+
+
+class TestExecutor:
+    """Executor for test steps."""
+    
+    def __init__(self):
+        self.command_executor = CommandExecutor()
+    
+    async def execute_step(self, step: TestStep, context: TestContext, 
+                          step_index: int) -> StepResult:
+        """Execute a single test step."""
+        start_time = time.time()
+        
+        context.trace_manager.log_trace(f"=== STEP {step_index + 1}: {step.action} ===")
+        
+        try:
+            if step.action == "cli_command":
+                output = await self.command_executor.execute_cli_command(
+                    step.command, step.args, context
+                )
+            else:
+                raise ValueError(f"Unknown action type: {step.action}")
+            
+            # Validate expected output
+            if step.expected_output_contains:
+                for expected in step.expected_output_contains:
+                    if expected not in output:
+                        return StepResult(
+                            step_index=step_index,
+                            status=TestStatus.FAILED,
+                            duration=time.time() - start_time,
+                            output=output,
+                            error=f"Expected output '{expected}' not found"
+                        )
+            
+            if step.expected_output_not_contains:
+                for forbidden in step.expected_output_not_contains:
+                    if forbidden in output:
+                        return StepResult(
+                            step_index=step_index,
+                            status=TestStatus.FAILED,
+                            duration=time.time() - start_time,
+                            output=output,
+                            error=f"Forbidden output '{forbidden}' found"
+                        )
+            
+            return StepResult(
+                step_index=step_index,
+                status=TestStatus.PASSED,
+                duration=time.time() - start_time,
+                output=output
+            )
+            
+        except asyncio.TimeoutError:
+            return StepResult(
+                step_index=step_index,
+                status=TestStatus.TIMEOUT,
+                duration=time.time() - start_time,
+                output="",
+                error="Step execution timed out"
+            )
+        except Exception as e:
+            return StepResult(
+                step_index=step_index,
+                status=TestStatus.ERROR,
+                duration=time.time() - start_time,
+                output="",
+                error=str(e)
+            )
+
+
+class AssertionValidator:
+    """Validator for test assertions using polymorphic execution."""
+    
+    def __init__(self):
+        self.assertion_factory = AssertionFactory()
+    
+    async def validate_assertions(self, assertion_configs: List[Dict[str, Any]], 
+                                 context: TestContext) -> List[AssertionResult]:
+        """Validate all assertions using polymorphic execution."""
+        results = []
+        
+        context.trace_manager.log_trace("=== ASSERTIONS ===")
+        
+        for assertion_config in assertion_configs:
+            try:
+                assertion = self.assertion_factory.create_assertion(assertion_config)
+                context.trace_manager.log_trace(f"Validating: {assertion}")
+                
+                result = await assertion.execute(context)
+                results.append(result)
+                
+                status_symbol = "✓" if result.status == TestStatus.PASSED else "✗"
+                context.trace_manager.log_trace(f"{status_symbol} {result.message}")
+                
+            except Exception as e:
+                # Create error result for failed assertion creation
+                error_result = AssertionResult(
+                    assertion=None,
+                    status=TestStatus.ERROR,
+                    message=f"Failed to create assertion: {str(e)}",
+                    duration=0.0
+                )
+                results.append(error_result)
+                context.trace_manager.log_trace(f"✗ {error_result.message}")
+        
+        return results
