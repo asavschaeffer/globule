@@ -1,0 +1,131 @@
+test_cases:
+  - id: "TC-005"
+    name: "View Today's Thoughts"
+    description: "User views today's thoughts using the today command"
+    category: "core_functionality"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "essential"
+      showcase:
+        enabled: true
+        priority: "high"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "today"]
+        timeout: 15
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Today's thoughts displayed"
+          contains: ["Today's Thoughts"]
+      
+      showcase:
+        - type: "cli_output"
+          description: "Today's thoughts displayed"
+          contains: ["Today's Thoughts"]
+        
+        - type: "log_entry"
+          description: "Query engine accessed"
+          contains: ["QueryEngine"]
+          log_level: "INFO"
+
+  - id: "TC-006"
+    name: "Generate Daily Report"
+    description: "User generates a daily summary report"
+    category: "core_functionality"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "essential"
+      showcase:
+        enabled: true
+        priority: "high"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "report"]
+        timeout: 30
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Daily summary generated"
+          contains: ["Daily Summary"]
+      
+      showcase:
+        - type: "cli_output"
+          description: "Daily summary generated"
+          contains: ["Daily Summary"]
+        
+        - type: "log_entry"
+          description: "Synthesis engine initialized"
+          contains: ["SynthesisEngine"]
+          log_level: "INFO"
+
+  - id: "TC-007"
+    name: "View Database Statistics"
+    description: "User views database statistics"
+    category: "core_functionality"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "medium"
+      showcase:
+        enabled: true
+        priority: "high"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "stats"]
+        timeout: 10
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Database statistics displayed"
+          contains: ["Database Statistics"]
+      
+      showcase:
+        - type: "cli_output"
+          description: "Database statistics displayed"
+          contains: ["Database Statistics"]
+        
+        - type: "log_entry"
+          description: "Statistics query executed"
+          contains: ["QueryEngine", "get_stats"]
+          log_level: "INFO"
+
+  - id: "TC-008"
+    name: "View Configuration"
+    description: "User views current configuration"
+    category: "core_functionality"
+    mode_config:
+      tutorial:
+        enabled: true
+        priority: "medium"
+      showcase:
+        enabled: true
+        priority: "medium"
+    
+    steps:
+      - action: "cli_command"
+        command: "python"
+        args: ["-m", "globule.cli", "config"]
+        timeout: 5
+        
+    assertions:
+      tutorial:
+        - type: "cli_output"
+          description: "Configuration displayed"
+          contains: ["Current Configuration"]
+      
+      showcase:
+        - type: "cli_output"
+          description: "Configuration displayed"
+          contains: ["Current Configuration", "LLM Provider", "Database Path"]
