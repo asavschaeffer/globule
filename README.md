@@ -1,193 +1,80 @@
-# Globule MVP - Usage Guide
+# Globule: Your Personal Thought-Processor
 
-Welcome to your semantic thought processor! 🎉
+Welcome to Globule, a command-line tool for capturing, understanding, and retrieving your thoughts. It's like a second brain, but on your local machine.
 
-## What We Built
+## Key Features
 
-A complete CLI-based thought capture and retrieval system that:
+*   **Instant Capture:** Jot down ideas, notes, and reminders with a single command.
+*   **Semantic Search:** Find what you're looking for based on meaning, not just keywords.
+*   **Daily Summaries:** Get a daily report of your thoughts and activities.
+*   **Local First:** Everything is stored on your machine, so your data is always private.
 
-- **Captures thoughts instantly** with `globule add`
-- **Understands meaning** using your local AI models
-- **Retrieves intelligently** with semantic search
-- **Generates summaries** of your daily thoughts
-- **Stores everything** in a local SQLite database
+## Getting Started
 
-## Project Structure
+Getting started with Globule is easy. Just follow these three steps:
 
-```
-globule/
-├── globule/
-│   ├── cli.py              # Command-line interface
-│   ├── config.py           # Configuration management
-│   ├── storage.py          # Database operations
-│   ├── embedding_engine.py # Semantic embeddings
-│   ├── parser_engine.py    # Text understanding
-│   ├── query_engine.py     # Search functionality
-│   ├── processor.py        # Main processing pipeline
-│   └── synthesis.py        # Report generation
-├── pyproject.toml          # Dependencies
-├── config.yaml             # Configuration file
-└── test_structure.py       # Structure verification
-```
+1.  **Install Dependencies:**
 
-## Installation & Setup
+    ```bash
+    poetry install
+    ```
 
-1.  **Install dependencies:**
+2.  **Configure Globule:**
 
-    - First, ensure Poetry is installed and configured in your system's PATH.
-    - Then, navigate to the project directory and run:
-      ```bash
-      poetry install
-      ```
+    ```bash
+    poetry run globule config
+    ```
 
-2.  **Create configuration:**
+3.  **Start Ollama:**
 
-```bash
-poetry run globule config
-```
+    ```bash
+    # In a separate terminal
+    ollama serve
+    ```
 
-3. **Make sure Ollama is running:**
+## Usage
 
-```bash
-# In another terminal
-ollama serve
-```
+Here are a few examples of how to use Globule:
 
-## Usage Examples
+*   **Add a thought:**
 
-### Adding Thoughts
+    ```bash
+    poetry run globule add "I had a great idea for a new project today."
+    ```
 
-```bash
-# Add a simple thought
-poetry run globule add "Meeting with Sarah about budget cuts"
+*   **Search for a thought:**
 
-# Add a complex thought
-poetry run globule add "Idea: Use reserved instances to save 20% on cloud costs. Sarah suggested this during budget meeting."
+    ```bash
+    poetry run globule search "new project idea"
+    ```
 
-# Add personal thoughts
-poetry run globule add "Dinner with family was great. Mom's cooking is amazing as always."
-```
+*   **Get a daily summary:**
 
-### Searching Thoughts
-
-```bash
-# Semantic search
-poetry run globule search "budget sarah"
-poetry run globule search "cost savings"
-poetry run globule search "family dinner"
-
-# Search with time filters (built into query parsing)
-poetry run globule search "budget today"
-poetry run globule search "meetings this week"
-```
-
-### Daily Views
-
-```bash
-# See today's thoughts
-poetry run globule today
-
-# Generate daily summary
-poetry run globule report
-
-# View database stats
-poetry run globule stats
-```
+    ```bash
+    poetry run globule report
+    ```
 
 ## How It Works
 
-1. **Instant Capture**: When you add a thought, it's immediately stored
-2. **Background Processing**: AI models process the text in parallel:
-   - **mxbai-embed-large** creates semantic embeddings
-   - **llama3.2:3b** extracts entities, categories, and sentiment
-3. **Intelligent Storage**: Everything is stored with rich metadata
-4. **Smart Retrieval**: Search uses semantic similarity, not just keywords
+Globule uses a combination of local AI models to understand and process your thoughts:
 
-## Configuration
+*   **mxbai-embed-large:** Creates semantic embeddings for each thought.
+*   **llama3.2:3b:** Extracts entities, categories, and sentiment.
 
-Edit `config.yaml` to customize:
+This allows Globule to perform intelligent searches and generate insightful summaries.
 
-```yaml
-llm_provider: local # Uses your local Ollama
-embedding_model: mxbai-embed-large:latest
-llm_model: llama3.2:3b
-db_path: globule.db
-embedding_base_url: http://localhost:11434
-llm_base_url: http://localhost:11434
-```
+## Roadmap
 
-## Advanced Features
+Here are some of the features we're planning to add to Globule:
 
-### Domain Detection
+*   **Web Interface:** A simple web UI for viewing and managing your thoughts.
+*   **Mobile App:** A mobile app for capturing thoughts on the go.
+*   **Cloud Sync:** The ability to sync your thoughts across multiple devices.
 
-The system automatically categorizes thoughts:
+## Contributing
 
-- **work**: meetings, projects, deadlines
-- **personal**: family, friends, hobbies
-- **other**: general thoughts
+We welcome contributions from the community. If you'd like to contribute, please fork the repository and submit a pull request.
 
-### Sentiment Analysis
+## License
 
-Tracks emotional tone:
-
-- **positive**: excited, happy, great
-- **negative**: frustrated, problem, issue
-- **neutral**: informational thoughts
-
-### Entity Recognition
-
-Extracts people, places, and concepts from your thoughts.
-
-## Example Workflow
-
-```bash
-# Morning thoughts
-poetry run globule add "Team standup at 9am. Need to discuss API refactoring."
-poetry run globule add "Coffee shop idea: loyalty program using QR codes"
-
-# Afternoon check-in
-poetry run globule search "api"
-poetry run globule search "coffee"
-
-# Evening summary
-poetry run globule report
-```
-
-## Files Created
-
-- `globule.db` - Your thoughts database
-- `globule.log` - System logs
-- `config.yaml` - Configuration
-- `.cache/` - Temporary files
-
-## Troubleshooting
-
-1. **"Module not found" errors**: Run `poetry install`
-2. **Ollama connection issues**: Check `ollama list` and `ollama serve`
-3. **Slow processing**: Normal for first run (downloading models)
-4. **Empty search results**: Add more thoughts first!
-
-## Next Steps
-
-1. **Try it out**: Add 10-15 thoughts throughout your day
-2. **Experiment**: Search for different concepts
-3. **Generate reports**: Use `globule report` to see summaries
-4. **Customize**: Edit `config.yaml` for your preferences
-
-## Performance Notes
-
-- **Input capture**: <50ms (instant feedback)
-- **Background processing**: 1-3 seconds per thought
-- **Search**: Very fast once embeddings are generated
-- **Reports**: Generated in real-time
-
-## Tips for Best Results
-
-1. **Be descriptive**: "Meeting with Sarah about budget" vs "meeting"
-2. **Include context**: "Budget cut needed due to Q3 shortfall"
-3. **Use natural language**: Write as you would speak
-4. **Regular use**: The more you use it, the better it gets
-
----
-
-Have fun with your semantic thought processor! The system learns from your patterns and becomes more useful over time. 🚀
+Globule is licensed under the MIT License. See the `LICENSE` file for more information.

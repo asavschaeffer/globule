@@ -14,11 +14,23 @@ from .synthesis import SynthesisEngine
 
 console = Console()
 
+class AppContext:
+    """A context object to hold shared resources."""
+    def __init__(self):
+        try:
+            self.config = load_config()
+            self.storage = SQLiteStorage(self.config.db_path)
+        except Exception:
+            # Config command will handle creation
+            self.config = None
+            self.storage = None
+
 @click.group()
 @click.version_option()
-def cli():
+@click.pass_context
+def cli(ctx: click.Context):
     """Globule: A semantic thought processor for capturing and retrieving thoughts intelligently."""
-    pass
+    ctx.obj = AppContext()
 
 @cli.command()
 @click.argument('text')
@@ -41,14 +53,15 @@ def add(text: str):
 
 @cli.command()
 @click.argument('query')
-def search(query: str):
+@click.pass_context
+def search(ctx: click.Context, query: str):
     """Search for thoughts using semantic similarity."""
     console.print(Panel(f"🔍 Searching for: {query}", title="Search", border_style="blue"))
     
     async def search_thoughts():
         try:
-            config = load_config()
-            storage = SQLiteStorage(config.db_path)
+            config = ctx.obj.config
+            storage = ctx.obj.storage
             embedder = await create_embedder(use_ollama=config.embedding_provider == "local")
             query_engine = QueryEngine(storage, embedder)
             
@@ -71,14 +84,15 @@ def search(query: str):
     asyncio.run(search_thoughts())
 
 @cli.command()
-def today():
+@click.pass_context
+def today(ctx: click.Context):
     """Show today's thoughts."""
     console.print(Panel("📅 Today's Thoughts", title="Daily View", border_style="cyan"))
     
     async def show_today():
         try:
-            config = load_config()
-            storage = SQLiteStorage(config.db_path)
+            config = ctx.obj.config
+            storage = ctx.obj.storage
             embedder = await create_embedder(use_ollama=config.embedding_provider == "local")
             query_engine = QueryEngine(storage, embedder)
             
@@ -91,14 +105,15 @@ def today():
     asyncio.run(show_today())
 
 @cli.command()
-def report():
+@click.pass_context
+def report(ctx: click.Context):
     """Generate a daily summary report."""
     console.print(Panel("📊 Daily Summary", title="Report", border_style="magenta"))
     
     async def generate_report():
         try:
-            config = load_config()
-            storage = SQLiteStorage(config.db_path)
+            config = ctx.obj.config
+            storage = ctx.obj.storage
             embedder = await create_embedder(use_ollama=config.embedding_provider == "local")
             query_engine = QueryEngine(storage, embedder)
             synthesis_engine = SynthesisEngine(query_engine, use_llm=config.llm_provider == "local")
@@ -114,14 +129,15 @@ def report():
     asyncio.run(generate_report())
 
 @cli.command()
-def stats():
+@click.pass_context
+def stats(ctx: click.Context):
     """Show database statistics."""
     console.print(Panel("📈 Database Statistics", title="Stats", border_style="yellow"))
     
     async def show_stats():
         try:
-            config = load_config()
-            storage = SQLiteStorage(config.db_path)
+            config = ctx.obj.config
+            storage = ctx.obj.storage
             embedder = await create_embedder(use_ollama=config.embedding_provider == "local")
             query_engine = QueryEngine(storage, embedder)
             
@@ -134,21 +150,22 @@ def stats():
     asyncio.run(show_stats())
 
 @cli.command()
-def config():
+@click.pass_context
+def config(ctx: click.Context):
     """Show or create configuration."""
-    try:
-        config = load_config()
+    app_config = ctx.obj.config
+    if app_config:
         console.print(Panel("Current Configuration", border_style="blue"))
-        console.print(f"LLM Provider: {config.llm_provider}")
-        console.print(f"LLM Model: {config.llm_model}")
-        console.print(f"Embedding Provider: {config.embedding_provider}")
-        console.print(f"Embedding Model: {config.embedding_model}")
-        console.print(f"Database Path: {config.db_path}")
-        console.print(f"Report Template: {config.report_template}")
-    except Exception as e:
-        console.print(f"[yellow]No config found, creating default...[/yellow]")
+        console.print(f"LLM Provider: {app_config.llm_provider}")
+        console.print(f"LLM Model: {app_config.llm_model}")
+        console.print(f"Embedding Provider: {app_config.embedding_provider}")
+        console.print(f"Embedding Model: {app_config.embedding_model}")
+        console.print(f"Database Path: {app_config.db_path}")
+        console.print(f"Report Template: {app_config.report_template}")
+    else:
+        console.print("[yellow]No config found, creating default...[/yellow]")
         create_default_config()
-        console.print(f"[green]Created config.yaml[/green]")
+        console.print("[green]Created config.yaml[/green]")
 
 if __name__ == '__main__':
     cli()
