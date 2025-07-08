@@ -644,3 +644,174 @@ class StateCapture:
     def get_last_created_globule(self) -> Optional[Globule]:
         """Get the last created globule."""
         return self.last_created_globule
+
+
+# Test Context System
+class TestContext:
+    """Isolated test environment manager."""
+    
+    def __init__(self, trace_id: str, test_case_id: str, mode: str):
+        self.trace_id = trace_id
+        self.test_case_id = test_case_id
+        self.mode = mode
+        self.temp_db_path = f"temp_globule_test_{trace_id}.db"
+        self.temp_config_path = f"temp_config_{trace_id}.yaml"
+        self.artifacts_dir = f"test_runs/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{mode}/{test_case_id}"
+        self.start_time = datetime.now()
+        
+        # Initialize sub-components
+        self.mock_registry = MockRegistry()
+        self.component_factory = None  # Will be set in __aenter__
+        self.state_capture = StateCapture(self.artifacts_dir)
+        self.resource_manager = ResourceManager()
+        self.trace_manager = TraceManager(trace_id)
+        self.config = None
+    
+    async def __aenter__(self):
+        """Setup isolated test environment."""
+        # Create artifacts directory
+        Path(self.artifacts_dir).mkdir(parents=True, exist_ok=True)
+        
+        # Setup temporary database
+        await self._setup_temp_database()
+        
+        # Setup temporary configuration
+        self.config = await self._setup_temp_config()
+        
+        # Initialize dependency injection
+        self.component_factory = ComponentFactory(self.config, self.mock_registry)
+        
+        # Initialize tracing
+        await self.trace_manager.initialize()
+        
+        # Capture initial state
+        await self.state_capture.capture_initial_state()
+        
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Cleanup test environment."""
+        # Capture final state
+        await self.state_capture.capture_final_state()
+        
+        # Clean up resources
+        await self.resource_manager.cleanup()
+        
+        # Remove temporary files
+        Path(self.temp_db_path).unlink(missing_ok=True)
+        Path(self.temp_config_path).unlink(missing_ok=True)
+        
+        # Close tracing
+        await self.trace_manager.close()
+    
+    async def _setup_temp_database(self):
+        """Create isolated database for test."""
+        # Copy schema from main database or create fresh
+        storage = SQLiteStorage(self.temp_db_path)
+        await storage._init_db()
+    
+    async def _setup_temp_config(self) -> Config:
+        """Create sandboxed configuration."""
+        # Load base config
+        base_config = load_config()
+        
+        # Override with test-specific settings
+        test_config = base_config.model_copy()
+        test_config.db_path = self.temp_db_path
+        
+        # Save to temporary file
+        test_config.save_to_file(self.temp_config_path)
+        
+        return test_config
+    
+    async def setup_for_test_case(self, test_case: TestCase, mode: str):
+        """Setup context for specific test case."""
+        # Get assertions for this mode
+        assertions_config = test_case.assertions.get(mode, [])
+        
+        # Create assertion objects
+        assertions = []
+        for assertion_config in assertions_config:
+            assertion = AssertionFactory.create_assertion(assertion_config)
+            assertions.append(assertion)
+        
+        # Register state capture requirements
+        self.state_capture.register_assertion_requirements(assertions)
+        
+        # Capture initial targeted state
+        await self.state_capture.capture_targeted_state(self)
+
+
+class ResourceManager:
+    """Manager for test resources and cleanup."""
+    
+    def __init__(self):
+        self.resources = []
+        self.cleanup_tasks = []
+    
+    def register_resource(self, resource: Any):
+        """Register a resource for cleanup."""
+        self.resources.append(resource)
+    
+    def register_cleanup_task(self, task: callable):
+        """Register a cleanup task."""
+        self.cleanup_tasks.append(task)
+    
+    async def cleanup(self):
+        """Clean up all registered resources."""
+        # Run cleanup tasks
+        for task in reversed(self.cleanup_tasks):
+            try:
+                if asyncio.iscoroutinefunction(task):
+                    await task()
+                else:
+                    task()
+            except Exception as e:
+                print(f"Cleanup task failed: {e}")
+        
+        # Clean up resources
+        for resource in reversed(self.resources):
+            try:
+                if hasattr(resource, 'close'):
+                    if asyncio.iscoroutinefunction(resource.close):
+                        await resource.close()
+                    else:
+                        resource.close()
+            except Exception as e:
+                print(f"Resource cleanup failed: {e}")
+        
+        self.resources.clear()
+        self.cleanup_tasks.clear()
+
+
+class TraceManager:
+    """Manager for test execution tracing."""
+    
+    def __init__(self, trace_id: str):
+        self.trace_id = trace_id
+        self.trace_entries = []
+    
+    async def initialize(self):
+        """Initialize tracing."""
+        self.log_trace("Glass Engine initialized", {"trace_id": self.trace_id})
+    
+    async def close(self):
+        """Close tracing."""
+        self.log_trace("Glass Engine closed", {"trace_id": self.trace_id})
+    
+    def log_trace(self, message: str, details: Optional[Dict[str, Any]] = None):
+        """Log a trace entry."""
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "trace_id": self.trace_id,
+            "message": message,
+            "details": details or {}
+        }
+        self.trace_entries.append(entry)
+        
+        # Also log to console in showcase mode
+        print(f"[GLASS ENGINE][trace_id: {self.trace_id}] {message}")
+    
+    def get_trace_entries(self) -> List[Dict[str, Any]]:
+        """Get all trace entries."""
+        return self.trace_entries.copy()
