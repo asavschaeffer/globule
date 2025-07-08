@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -973,3 +974,315 @@ class AssertionValidator:
                 context.trace_manager.log_trace(f"✗ {error_result.message}")
         
         return results
+
+
+# Test Case Loading System
+class TestCaseLoader:
+    """Load test cases from directory structure."""
+    
+    def __init__(self, test_cases_dir: str = "tests/glass_engine/test_cases"):
+        self.test_cases_dir = Path(test_cases_dir)
+        self.loaded_cases: Dict[str, TestCase] = {}
+        self.categories: Dict[str, List[str]] = {}
+    
+    async def load_test_cases(self, filter_mode: str = None, 
+                             test_id: str = None, 
+                             category: str = None) -> List[TestCase]:
+        """Load test cases with filtering."""
+        if not self.loaded_cases:
+            await self._load_all_test_cases()
+        
+        # Filter by specific test ID
+        if test_id:
+            if test_id not in self.loaded_cases:
+                raise ValueError(f"Test case {test_id} not found")
+            return [self.loaded_cases[test_id]]
+        
+        # Filter by category
+        if category:
+            if category not in self.categories:
+                raise ValueError(f"Category {category} not found")
+            test_ids = self.categories[category]
+            filtered_cases = [self.loaded_cases[tid] for tid in test_ids]
+        else:
+            filtered_cases = list(self.loaded_cases.values())
+        
+        # Filter by mode
+        if filter_mode:
+            mode_filtered = []
+            for test_case in filtered_cases:
+                mode_config = getattr(test_case.mode_config, filter_mode, None)
+                if mode_config and mode_config.enabled:
+                    mode_filtered.append(test_case)
+            filtered_cases = mode_filtered
+        
+        return filtered_cases
+    
+    async def _load_all_test_cases(self):
+        """Load all test cases from directory structure."""
+        if not self.test_cases_dir.exists():
+            raise FileNotFoundError(f"Test cases directory not found: {self.test_cases_dir}")
+        
+        for yaml_file in self.test_cases_dir.rglob("*.yaml"):
+            category = yaml_file.parent.name
+            test_cases = await self._load_test_cases_from_file(yaml_file)
+            
+            for test_case in test_cases:
+                self.loaded_cases[test_case.id] = test_case
+                
+                # Track categories
+                if category not in self.categories:
+                    self.categories[category] = []
+                self.categories[category].append(test_case.id)
+    
+    async def _load_test_cases_from_file(self, yaml_file: Path) -> List[TestCase]:
+        """Load test cases from a single YAML file."""
+        with open(yaml_file, 'r') as f:
+            data = yaml.safe_load(f)
+        
+        test_cases = []
+        for case_data in data.get('test_cases', []):
+            test_case = self._parse_test_case(case_data)
+            test_cases.append(test_case)
+        
+        return test_cases
+    
+    def _parse_test_case(self, case_data: Dict[str, Any]) -> TestCase:
+        """Parse test case data into TestCase object."""
+        # Parse mode config
+        mode_config_data = case_data.get('mode_config', {})
+        mode_config = ModeConfig(
+            tutorial=ModeSettings(**mode_config_data.get('tutorial', {})),
+            showcase=ModeSettings(**mode_config_data.get('showcase', {}))
+        )
+        
+        # Parse steps
+        steps = []
+        for step_data in case_data.get('steps', []):
+            step = TestStep(**step_data)
+            steps.append(step)
+        
+        return TestCase(
+            id=case_data['id'],
+            name=case_data['name'],
+            description=case_data['description'],
+            category=case_data.get('category', 'general'),
+            mode_config=mode_config,
+            steps=steps,
+            assertions=case_data.get('assertions', {}),
+            edge_cases=case_data.get('edge_cases'),
+            setup_hooks=case_data.get('setup_hooks'),
+            teardown_hooks=case_data.get('teardown_hooks'),
+            timeout=case_data.get('timeout', 30),
+            retry_count=case_data.get('retry_count', 0)
+        )
+
+
+# Main Glass Engine Orchestrator
+class GlassOrchestrator:
+    """Main orchestrator for Glass Engine test execution."""
+    
+    def __init__(self, config: Config):
+        self.config = config
+        self.test_loader = TestCaseLoader()
+        self.test_executor = TestExecutor()
+        self.assertion_validator = AssertionValidator()
+        self.console = Console()
+        
+    async def run(self, mode: str, test_id: Optional[str] = None, 
+                  category: Optional[str] = None) -> TestRunResult:
+        """Main orchestration method."""
+        run_id = generate_run_id()
+        start_time = time.time()
+        
+        self.console.print(Panel(
+            f"🧪 Glass Engine Test Run - {mode.title()} Mode",
+            title="Glass Engine",
+            border_style="blue"
+        ))
+        
+        try:
+            # Load test cases
+            test_cases = await self.test_loader.load_test_cases(
+                filter_mode=mode, 
+                test_id=test_id, 
+                category=category
+            )
+            
+            if not test_cases:
+                self.console.print("[yellow]No test cases found matching criteria[/yellow]")
+                return TestRunResult(
+                    run_id=run_id,
+                    mode=mode,
+                    total_tests=0,
+                    passed_tests=0,
+                    failed_tests=0,
+                    error_tests=0,
+                    skipped_tests=0,
+                    total_duration=time.time() - start_time,
+                    test_results=[],
+                    artifacts_dir=""
+                )
+            
+            self.console.print(f"Found {len(test_cases)} test case(s) to run")
+            
+            # Execute tests
+            results = []
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=self.console
+            ) as progress:
+                
+                for test_case in test_cases:
+                    task = progress.add_task(f"Running {test_case.id}: {test_case.name}")
+                    
+                    result = await self._execute_single_test(test_case, mode)
+                    results.append(result)
+                    
+                    progress.update(task, completed=True)
+            
+            # Calculate summary
+            total_tests = len(results)
+            passed_tests = sum(1 for r in results if r.status == TestStatus.PASSED)
+            failed_tests = sum(1 for r in results if r.status == TestStatus.FAILED)
+            error_tests = sum(1 for r in results if r.status == TestStatus.ERROR)
+            skipped_tests = sum(1 for r in results if r.status == TestStatus.SKIPPED)
+            
+            # Generate report
+            await self._display_results(results, mode)
+            
+            return TestRunResult(
+                run_id=run_id,
+                mode=mode,
+                total_tests=total_tests,
+                passed_tests=passed_tests,
+                failed_tests=failed_tests,
+                error_tests=error_tests,
+                skipped_tests=skipped_tests,
+                total_duration=time.time() - start_time,
+                test_results=results,
+                artifacts_dir=f"test_runs/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{mode}"
+            )
+            
+        except Exception as e:
+            self.console.print(f"[red]Error during test execution: {e}[/red]")
+            raise
+    
+    async def _execute_single_test(self, test_case: TestCase, mode: str) -> TestResult:
+        """Execute a single test case with full isolation."""
+        trace_id = generate_trace_id()
+        
+        async with TestContext(trace_id, test_case.id, mode) as context:
+            # Setup context for this test case
+            await context.setup_for_test_case(test_case, mode)
+            
+            # Execute test steps
+            step_results = []
+            for i, step in enumerate(test_case.steps):
+                step_result = await self.test_executor.execute_step(
+                    step, context, i
+                )
+                step_results.append(step_result)
+                
+                if step_result.status == TestStatus.FAILED:
+                    break
+            
+            # Validate assertions
+            assertion_results = await self.assertion_validator.validate_assertions(
+                test_case.assertions.get(mode, []), context
+            )
+            
+            # Determine overall test status
+            test_status = self._calculate_test_status(step_results, assertion_results)
+            
+            return TestResult(
+                test_case_id=test_case.id,
+                status=test_status,
+                duration=time.time() - context.start_time.timestamp(),
+                trace_id=trace_id,
+                start_time=context.start_time,
+                end_time=datetime.now(),
+                step_results=step_results,
+                assertion_results=assertion_results,
+                artifacts_path=context.artifacts_dir
+            )
+    
+    def _calculate_test_status(self, step_results: List[StepResult], 
+                              assertion_results: List[AssertionResult]) -> TestStatus:
+        """Calculate overall test status from step and assertion results."""
+        # Check for errors first
+        if any(r.status == TestStatus.ERROR for r in step_results + assertion_results):
+            return TestStatus.ERROR
+        
+        # Check for timeouts
+        if any(r.status == TestStatus.TIMEOUT for r in step_results):
+            return TestStatus.TIMEOUT
+        
+        # Check for failures
+        if any(r.status == TestStatus.FAILED for r in step_results + assertion_results):
+            return TestStatus.FAILED
+        
+        # All passed
+        return TestStatus.PASSED
+    
+    async def _display_results(self, results: List[TestResult], mode: str):
+        """Display test results in a formatted table."""
+        if not results:
+            return
+        
+        table = Table(title=f"Test Results - {mode.title()} Mode")
+        table.add_column("Test ID", style="cyan")
+        table.add_column("Status", style="bold")
+        table.add_column("Duration", style="yellow")
+        table.add_column("Steps", style="blue")
+        table.add_column("Assertions", style="green")
+        table.add_column("Artifacts", style="dim")
+        
+        for result in results:
+            # Status with color
+            if result.status == TestStatus.PASSED:
+                status = "[green]✓ PASSED[/green]"
+            elif result.status == TestStatus.FAILED:
+                status = "[red]✗ FAILED[/red]"
+            elif result.status == TestStatus.ERROR:
+                status = "[red]⚠ ERROR[/red]"
+            elif result.status == TestStatus.TIMEOUT:
+                status = "[yellow]⏱ TIMEOUT[/yellow]"
+            else:
+                status = "[dim]- SKIPPED[/dim]"
+            
+            # Step summary
+            passed_steps = sum(1 for r in result.step_results if r.status == TestStatus.PASSED)
+            total_steps = len(result.step_results)
+            steps_summary = f"{passed_steps}/{total_steps}"
+            
+            # Assertion summary
+            passed_assertions = sum(1 for r in result.assertion_results if r.status == TestStatus.PASSED)
+            total_assertions = len(result.assertion_results)
+            assertions_summary = f"{passed_assertions}/{total_assertions}"
+            
+            table.add_row(
+                result.test_case_id,
+                status,
+                f"{result.duration:.2f}s",
+                steps_summary,
+                assertions_summary,
+                result.artifacts_path
+            )
+        
+        self.console.print(table)
+        
+        # Summary
+        total_tests = len(results)
+        passed_tests = sum(1 for r in results if r.status == TestStatus.PASSED)
+        failed_tests = sum(1 for r in results if r.status == TestStatus.FAILED)
+        error_tests = sum(1 for r in results if r.status == TestStatus.ERROR)
+        
+        summary_text = f"[bold]Summary:[/bold] {passed_tests}/{total_tests} passed"
+        if failed_tests > 0:
+            summary_text += f", {failed_tests} failed"
+        if error_tests > 0:
+            summary_text += f", {error_tests} errors"
+        
+        self.console.print(summary_text)
