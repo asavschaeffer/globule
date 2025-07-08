@@ -420,3 +420,87 @@ def generate_trace_id() -> str:
 def generate_run_id() -> str:
     """Generate a unique run ID for test run."""
     return f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
+
+
+# Mock System for Dependency Injection
+class MockRegistry:
+    """Clean dependency injection-based mocking."""
+    
+    def __init__(self):
+        self.mocks: Dict[str, Any] = {}
+        self.active_mocks: Set[str] = set()
+    
+    def register_mock(self, component_name: str, mock_instance: Any):
+        """Register a mock instance for a component."""
+        self.mocks[component_name] = mock_instance
+        self.active_mocks.add(component_name)
+    
+    def has_mock(self, component_name: str) -> bool:
+        """Check if a mock is registered for a component."""
+        return component_name in self.active_mocks
+    
+    def get_mock(self, component_name: str) -> Any:
+        """Get mock instance for a component."""
+        if not self.has_mock(component_name):
+            raise ValueError(f"No mock registered for component: {component_name}")
+        return self.mocks[component_name]
+    
+    def clear_mocks(self):
+        """Clear all registered mocks."""
+        self.mocks.clear()
+        self.active_mocks.clear()
+
+
+class ComponentFactory:
+    """Factory for creating components with dependency injection."""
+    
+    def __init__(self, config: Config, mock_registry: Optional[MockRegistry] = None):
+        self.config = config
+        self.mock_registry = mock_registry or MockRegistry()
+    
+    async def create_parser(self) -> Parser:
+        """Create parser with optional mocking."""
+        if self.mock_registry.has_mock('parser'):
+            return self.mock_registry.get_mock('parser')
+        return await create_parser(use_ollama=self.config.llm_provider == "local")
+    
+    async def create_embedder(self) -> Embedder:
+        """Create embedder with optional mocking."""
+        if self.mock_registry.has_mock('embedder'):
+            return self.mock_registry.get_mock('embedder')
+        return await create_embedder(use_ollama=self.config.embedding_provider == "local")
+    
+    def create_storage(self) -> Storage:
+        """Create storage with optional mocking."""
+        if self.mock_registry.has_mock('storage'):
+            return self.mock_registry.get_mock('storage')
+        return SQLiteStorage(self.config.db_path)
+
+
+# Example Mock Implementations
+class MockParser:
+    """Mock parser for testing failure scenarios."""
+    
+    def __init__(self, should_fail: bool = False):
+        self.should_fail = should_fail
+    
+    async def parse_text(self, text: str) -> ParsedResult:
+        if self.should_fail:
+            raise RuntimeError("Simulated parser failure")
+        return ParsedResult(
+            domain="test",
+            category="note",
+            sentiment="neutral"
+        )
+
+
+class MockEmbedder:
+    """Mock embedder for testing scenarios."""
+    
+    def __init__(self, embedding_dim: int = 384):
+        self.embedding_dim = embedding_dim
+    
+    async def embed_text(self, text: str):
+        # Return deterministic embedding for testing
+        import numpy as np
+        return np.random.RandomState(hash(text) % 2**32).random(self.embedding_dim)
