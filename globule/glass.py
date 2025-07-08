@@ -504,3 +504,143 @@ class MockEmbedder:
         # Return deterministic embedding for testing
         import numpy as np
         return np.random.RandomState(hash(text) % 2**32).random(self.embedding_dim)
+
+
+# State Capture System
+class StateCapture:
+    """Minimal, assertion-driven state capture."""
+    
+    def __init__(self, artifacts_dir: str):
+        self.artifacts_dir = Path(artifacts_dir)
+        self.command_outputs: List[str] = []
+        self.log_buffer: List[str] = []
+        self.database_snapshots: Dict[str, Any] = {}
+        self.last_created_globule: Optional[Globule] = None
+        self.required_db_queries: Set[str] = set()
+        self.required_log_levels: Set[str] = set()
+        self.needs_embedding_check: bool = False
+    
+    def register_assertion_requirements(self, assertions: List[Assertion]):
+        """Register what state needs to be captured based on assertions."""
+        self.required_db_queries = set()
+        self.required_log_levels = set()
+        self.needs_embedding_check = False
+        
+        for assertion in assertions:
+            if isinstance(assertion, DatabaseRecordAssertion):
+                # Build the exact query needed for this assertion
+                query = f"SELECT * FROM {assertion.table} WHERE {assertion.condition}"
+                self.required_db_queries.add(query)
+            
+            elif isinstance(assertion, LogEntryAssertion):
+                if assertion.log_level:
+                    self.required_log_levels.add(assertion.log_level)
+            
+            elif isinstance(assertion, EmbeddingAssertion):
+                self.needs_embedding_check = True
+    
+    async def capture_initial_state(self):
+        """Capture initial targeted state."""
+        # Only capture state if we have specific requirements
+        pass
+    
+    async def capture_final_state(self):
+        """Capture final targeted state."""
+        # Only capture state if we have specific requirements
+        pass
+    
+    async def capture_targeted_state(self, context: 'TestContext'):
+        """Capture only the state required by assertions."""
+        # Capture database state for specific queries
+        if self.required_db_queries:
+            await self._capture_database_queries(context)
+        
+        # Capture log entries for specific levels
+        if self.required_log_levels:
+            await self._capture_log_entries()
+        
+        # Capture embedding state if needed
+        if self.needs_embedding_check:
+            await self._capture_embedding_state(context)
+    
+    async def _capture_database_queries(self, context: 'TestContext'):
+        """Execute and capture results of specific database queries."""
+        async with aiosqlite.connect(context.temp_db_path) as db:
+            for query in self.required_db_queries:
+                cursor = await db.execute(query)
+                rows = await cursor.fetchall()
+                
+                # Store query results
+                self.database_snapshots[query] = {
+                    'timestamp': datetime.now().isoformat(),
+                    'row_count': len(rows),
+                    'rows': rows[:10]  # Store first 10 rows for debugging
+                }
+    
+    async def _capture_log_entries(self):
+        """Capture log entries for specific levels."""
+        log_file = Path("globule.log")
+        if log_file.exists():
+            with open(log_file, 'r') as f:
+                lines = f.readlines()
+            
+            # Filter by required log levels
+            for level in self.required_log_levels:
+                filtered_lines = [line for line in lines if level in line]
+                self.log_buffer.extend(filtered_lines)
+    
+    async def _capture_embedding_state(self, context: 'TestContext'):
+        """Capture embedding state for the last created globule."""
+        # Get the most recent globule
+        async with aiosqlite.connect(context.temp_db_path) as db:
+            cursor = await db.execute(
+                "SELECT * FROM globules ORDER BY created_at DESC LIMIT 1"
+            )
+            row = await cursor.fetchone()
+            
+            if row:
+                storage = context.component_factory.create_storage()
+                self.last_created_globule = storage._row_to_globule(row)
+    
+    def log_command_execution(self, command: str, args: List[str], 
+                             output: str, return_code: int):
+        """Log command execution details."""
+        self.command_outputs.append(output)
+        
+        # Save to artifacts
+        command_log = {
+            'timestamp': datetime.now().isoformat(),
+            'command': command,
+            'args': args,
+            'output': output,
+            'return_code': return_code
+        }
+        
+        command_file = self.artifacts_dir / "command_history.json"
+        
+        # Ensure directory exists
+        command_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Append to command history
+        if command_file.exists():
+            with open(command_file, 'r') as f:
+                history = json.load(f)
+        else:
+            history = []
+        
+        history.append(command_log)
+        
+        with open(command_file, 'w') as f:
+            json.dump(history, f, indent=2)
+    
+    def get_last_command_output(self) -> str:
+        """Get output from the last executed command."""
+        return self.command_outputs[-1] if self.command_outputs else ""
+    
+    def get_log_content(self) -> str:
+        """Get captured log content."""
+        return '\n'.join(self.log_buffer)
+    
+    def get_last_created_globule(self) -> Optional[Globule]:
+        """Get the last created globule."""
+        return self.last_created_globule
