@@ -10,11 +10,13 @@ from uuid import uuid4
 import aiosqlite
 import msgpack
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class Globule(BaseModel):
     """Data model for a globule (thought entry)."""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     id: str
     content: str
     created_at: datetime

@@ -1,0 +1,11 @@
+db_path: globule.db
+embedding_base_url: http://localhost:11434
+embedding_model: mxbai-embed-large:latest
+embedding_provider: local
+embedding_timeout: 30
+llm_base_url: http://localhost:11434
+llm_model: llama3.2:3b
+llm_provider: local
+llm_timeout: 60
+max_cache_size: 1000
+report_template: daily.md

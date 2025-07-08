@@ -41,7 +41,7 @@ def test_structure():
     for file_path in required_files:
         if file_path.endswith('.py'):
             try:
-                with open(file_path, 'r') as f:
+                with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
                 
                 # Basic syntax check

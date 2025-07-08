@@ -32,18 +32,22 @@ globule/
 
 ## Installation & Setup
 
-1. **Install dependencies:**
-```bash
-export PATH="/home/asas/.local/bin:$PATH"
-poetry install
-```
+1.  **Install dependencies:**
 
-2. **Create configuration:**
+    - First, ensure Poetry is installed and configured in your system's PATH.
+    - Then, navigate to the project directory and run:
+      ```bash
+      poetry install
+      ```
+
+2.  **Create configuration:**
+
 ```bash
 poetry run globule config
 ```
 
 3. **Make sure Ollama is running:**
+
 ```bash
 # In another terminal
 ollama serve
@@ -52,6 +56,7 @@ ollama serve
 ## Usage Examples
 
 ### Adding Thoughts
+
 ```bash
 # Add a simple thought
 poetry run globule add "Meeting with Sarah about budget cuts"
@@ -64,6 +69,7 @@ poetry run globule add "Dinner with family was great. Mom's cooking is amazing a
 ```
 
 ### Searching Thoughts
+
 ```bash
 # Semantic search
 poetry run globule search "budget sarah"
@@ -76,6 +82,7 @@ poetry run globule search "meetings this week"
 ```
 
 ### Daily Views
+
 ```bash
 # See today's thoughts
 poetry run globule today
@@ -101,7 +108,7 @@ poetry run globule stats
 Edit `config.yaml` to customize:
 
 ```yaml
-llm_provider: local              # Uses your local Ollama
+llm_provider: local # Uses your local Ollama
 embedding_model: mxbai-embed-large:latest
 llm_model: llama3.2:3b
 db_path: globule.db
@@ -112,18 +119,23 @@ llm_base_url: http://localhost:11434
 ## Advanced Features
 
 ### Domain Detection
+
 The system automatically categorizes thoughts:
+
 - **work**: meetings, projects, deadlines
 - **personal**: family, friends, hobbies
 - **other**: general thoughts
 
 ### Sentiment Analysis
+
 Tracks emotional tone:
+
 - **positive**: excited, happy, great
 - **negative**: frustrated, problem, issue
 - **neutral**: informational thoughts
 
 ### Entity Recognition
+
 Extracts people, places, and concepts from your thoughts.
 
 ## Example Workflow

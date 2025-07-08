@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from globule.config import Config, create_default_config
 from globule.storage import SQLiteStorage, Globule, generate_id
-from datetime import datetime
+from datetime import datetime, timedelta
 
 async def test_basic_functionality():
     """Test basic functionality without heavy dependencies."""
@@ -57,7 +57,6 @@ async def test_basic_functionality():
             return False
         
         # Test temporal search
-        from datetime import datetime, timedelta
         now = datetime.now()
         start_date = now - timedelta(minutes=1)
         end_date = now + timedelta(minutes=1)
