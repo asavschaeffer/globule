@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(mkdir:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(dir \"C:\\Users\\18312\\.globule\")",
+      "Bash(dir:*)"
     ],
     "deny": []
   }
