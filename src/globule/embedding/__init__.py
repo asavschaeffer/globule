@@ -1,0 +1,1 @@
+"""Semantic embedding services for Globule."""

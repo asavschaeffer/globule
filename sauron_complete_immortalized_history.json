@@ -1,0 +1,138 @@
+{
+  "conversation_graph": {
+    "session_id": "complete_session_1753320101",
+    "title": "SAURON Discovery - Complete Historical Archive",
+    "start_time": 1753320101.25087,
+    "end_time": 1753320101.2518342,
+    "message_nodes": [
+      {
+        "node_id": "node_0001_human",
+        "node_category": "human",
+        "timestamp": 1753316501.2516112,
+        "content_nodes": [
+          {
+            "content_type": "text_paragraph",
+            "content": "hi claude can you familiarize yourself with this folder you are in?",
+            "metadata": {
+              "length": 67
+            },
+            "position_in_message": 0,
+            "parsed_coordinates": null,
+            "gesture_analysis": null,
+            "language": null,
+            "code_type": null
+          }
+        ],
+        "raw_message": "hi claude can you familiarize yourself with this folder you are in?",
+        "metadata": {
+          "message_index": 0,
+          "content_node_count": 1,
+          "has_coordinates": false,
+          "has_code": false,
+          "word_count": 12
+        }
+      },
+      {
+        "node_id": "node_0002_claude",
+        "node_category": "claude",
+        "timestamp": 1753316551.2516136,
+        "content_nodes": [
+          {
+            "content_type": "text_paragraph",
+            "content": "I'll help you explore this directory and understand the project structure.",
+            "metadata": {
+              "length": 74
+            },
+            "position_in_message": 0,
+            "parsed_coordinates": null,
+            "gesture_analysis": null,
+            "language": null,
+            "code_type": null
+          }
+        ],
+        "raw_message": "I'll help you explore this directory and understand the project structure.",
+        "metadata": {
+          "message_index": 1,
+          "content_node_count": 1,
+          "has_coordinates": false,
+          "has_code": false,
+          "word_count": 11
+        }
+      },
+      {
+        "node_id": "node_0003_human",
+        "node_category": "human",
+        "timestamp": 1753316601.2516148,
+        "content_nodes": [
+          {
+            "content_type": "text_paragraph",
+            "content": "yea go ahead and get started, try your best to follow engineering docs",
+            "metadata": {
+              "length": 70
+            },
+            "position_in_message": 0,
+            "parsed_coordinates": null,
+            "gesture_analysis": null,
+            "language": null,
+            "code_type": null
+          }
+        ],
+        "raw_message": "yea go ahead and get started, try your best to follow engineering docs",
+        "metadata": {
+          "message_index": 2,
+          "content_node_count": 1,
+          "has_coordinates": false,
+          "has_code": false,
+          "word_count": 13
+        }
+      }
+    ],
+    "discovery_timeline": [
+      {
+        "moment": "First coordinate stream detection",
+        "description": "ANSI escape sequences discovered in terminal output",
+        "timestamp": 1753317101.2517855,
+        "significance": "Revolutionary interface discovery"
+      },
+      {
+        "moment": "SAURON concept birth",
+        "description": "Realized coordinates could become gesture controller",
+        "timestamp": 1753317601.2517874,
+        "significance": "Paradigm shift in human-computer interaction"
+      }
+    ],
+    "technical_artifacts": {
+      "files_created": [],
+      "concepts_discovered": [],
+      "code_implementations": [],
+      "breakthrough_moments": []
+    },
+    "coordinate_statistics": {
+      "total_streams": 0,
+      "total_coordinates": 0,
+      "gesture_types": {},
+      "unique_patterns": [],
+      "drawing_sessions": []
+    },
+    "metadata": {
+      "parsing_version": "2.0",
+      "content_classification": "Advanced node graph",
+      "discovery_significance": "Revolutionary coordinate streaming interface",
+      "historical_importance": "First documented AI-human gesture collaboration"
+    }
+  },
+  "export_timestamp": 1753320101.251901,
+  "parser_version": "2.0",
+  "node_structure": {
+    "categories": [
+      "claude",
+      "human"
+    ],
+    "content_types": [
+      "text_paragraph",
+      "code_block",
+      "mouse_coordinates"
+    ],
+    "total_nodes": 3
+  }
+}
