@@ -338,6 +338,9 @@ class DebugGlassEngine(AbstractGlassEngine):
         # Parser component debugging
         await self._debug_parser_component()
         
+        # Ollama service debugging (Priority 3 enhancement)
+        await self._debug_ollama_service()
+        
         # Orchestrator debugging
         await self._debug_orchestrator_component()
     
@@ -527,6 +530,149 @@ class DebugGlassEngine(AbstractGlassEngine):
                 self.console.print("PARSER_DEBUG_ERROR:")
                 self.console.print(JSON.from_data(error_info, default=rich_json_default))
                 self.metrics.add_error(e, "parser_component_debug")
+    
+    async def _debug_ollama_service(self) -> None:
+        """
+        Debug Ollama service status and configuration.
+        
+        Priority 3 enhancement: Provides essential diagnostics for the core dependency
+        that would allow instant root cause analysis of parsing timeouts.
+        """
+        with self.trace_execution("ollama_service_debug", capture_locals=True):
+            try:
+                self.console.print("\n--- OLLAMA SERVICE DEBUG ---")
+                
+                import aiohttp
+                import subprocess
+                import json as json_lib
+                
+                ollama_debug_info = {
+                    "service_url": self.config.ollama_base_url,
+                    "configured_timeout": self.config.ollama_timeout,
+                    "parsing_model": self.config.default_parsing_model,
+                    "embedding_model": self.config.default_embedding_model
+                }
+                
+                # Test service connectivity
+                connectivity_start = time.perf_counter()
+                try:
+                    timeout = aiohttp.ClientTimeout(total=10.0)
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.get(f"{self.config.ollama_base_url}/api/tags") as response:
+                            connectivity_time = (time.perf_counter() - connectivity_start) * 1000
+                            
+                            if response.status == 200:
+                                data = await response.json()
+                                models = data.get("models", [])
+                                
+                                ollama_debug_info.update({
+                                    "service_status": "HEALTHY",
+                                    "connectivity_time_ms": connectivity_time,
+                                    "available_models": [model["name"] for model in models],
+                                    "model_details": {
+                                        model["name"]: {
+                                            "size_bytes": model.get("size", 0),
+                                            "modified": model.get("modified_at", "unknown"),
+                                            "family": model.get("details", {}).get("family", "unknown")
+                                        } for model in models
+                                    },
+                                    "parsing_model_available": self.config.default_parsing_model in [m["name"] for m in models],
+                                    "embedding_model_available": self.config.default_embedding_model in [m["name"] for m in models]
+                                })
+                            else:
+                                ollama_debug_info.update({
+                                    "service_status": "UNHEALTHY",
+                                    "http_status": response.status,
+                                    "connectivity_time_ms": connectivity_time
+                                })
+                                
+                except Exception as conn_error:
+                    ollama_debug_info.update({
+                        "service_status": "UNREACHABLE", 
+                        "connection_error": str(conn_error),
+                        "connectivity_time_ms": (time.perf_counter() - connectivity_start) * 1000
+                    })
+                
+                # Test Docker container status (if available)
+                try:
+                    docker_result = subprocess.run(
+                        ["docker", "ps", "-a", "--filter", "name=globule-ollama", "--format", "json"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    
+                    if docker_result.returncode == 0 and docker_result.stdout.strip():
+                        container_info = json_lib.loads(docker_result.stdout.strip())
+                        ollama_debug_info["docker_status"] = {
+                            "container_state": container_info.get("State", "unknown"),
+                            "container_status": container_info.get("Status", "unknown"),
+                            "image": container_info.get("Image", "unknown"),
+                            "ports": container_info.get("Ports", "unknown")
+                        }
+                        
+                        # Get recent Docker logs for diagnosis
+                        logs_result = subprocess.run(
+                            ["docker", "logs", "globule-ollama", "--tail", "10"],
+                            capture_output=True, text=True, timeout=5
+                        )
+                        
+                        if logs_result.returncode == 0:
+                            recent_logs = logs_result.stdout.strip().split('\n')[-5:]  # Last 5 lines
+                            ollama_debug_info["recent_docker_logs"] = recent_logs
+                            
+                            # Analyze logs for common issues
+                            log_analysis = []
+                            log_text = ' '.join(recent_logs).lower()
+                            
+                            if "vram" in log_text and "timeout" in log_text:
+                                log_analysis.append("DETECTED: VRAM recovery timeout (suggests model loading issues)")
+                            if "context canceled" in log_text:
+                                log_analysis.append("DETECTED: Client disconnection during model loading")
+                            if "timed out waiting" in log_text:
+                                log_analysis.append("DETECTED: Service timeout (possibly CPU-bound or resource constrained)")
+                            if "error" in log_text:
+                                log_analysis.append("DETECTED: Error conditions in recent logs")
+                                
+                            ollama_debug_info["log_analysis"] = log_analysis
+                            
+                except Exception as docker_error:
+                    ollama_debug_info["docker_debug_error"] = str(docker_error)
+                
+                # CPU-safe model detection
+                if ollama_debug_info.get("service_status") == "HEALTHY":
+                    try:
+                        cpu_safe_model = await self.parser.get_cpu_safe_model()
+                        model_speed_test = await self.parser._test_model_speed(self.config.default_parsing_model)
+                        
+                        ollama_debug_info.update({
+                            "cpu_safe_model_recommendation": cpu_safe_model,
+                            "current_model_speed_test": "FAST" if model_speed_test else "SLOW",
+                            "cpu_optimization_needed": not model_speed_test and cpu_safe_model != self.config.default_parsing_model
+                        })
+                        
+                    except Exception as cpu_test_error:
+                        ollama_debug_info["cpu_detection_error"] = str(cpu_test_error)
+                
+                self.console.print("OLLAMA_SERVICE_DEBUG:")
+                self.console.print(JSON.from_data(ollama_debug_info, default=rich_json_default))
+                
+                # Glass Engine diagnostic summary
+                if ollama_debug_info.get("service_status") == "UNHEALTHY":
+                    self.console.print("\n[red]🚨 DIAGNOSIS: Ollama service issues detected[/red]")
+                    if "log_analysis" in ollama_debug_info:
+                        for analysis in ollama_debug_info["log_analysis"]:
+                            self.console.print(f"[yellow]   {analysis}[/yellow]")
+                
+                self.variable_dumps["ollama_service_debug"] = ollama_debug_info
+                
+            except Exception as e:
+                error_info = {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "traceback": traceback.format_exc()
+                }
+                self.console.print("OLLAMA_DEBUG_ERROR:")
+                self.console.print(JSON.from_data(error_info, default=rich_json_default))
+                self.metrics.add_error(e, "ollama_service_debug")
     
     async def _debug_orchestrator_component(self) -> None:
         """Deep debug analysis of orchestrator component."""

@@ -6,7 +6,12 @@
       "Bash(dir \"C:\\Users\\18312\\.globule\")",
       "Bash(dir:*)",
       "Bash(sed:*)",
-      "Bash(timeout 15 python -m globule.cli.main:*)"
+      "Bash(timeout 15 python -m globule.cli.main:*)",
+      "Bash(timeout 30 python -m globule.cli.main:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker-compose:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(timeout 45 python -m globule.cli.main:*)"
     ],
     "deny": []
   }

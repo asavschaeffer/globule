@@ -116,6 +116,94 @@ Be precise and analytical. Focus on semantic meaning over surface features.
             
         return False
 
+    async def get_cpu_safe_model(self) -> str:
+        """
+        Get CPU-safe model for systems without GPU acceleration.
+        
+        Automatically detects available lightweight models and returns
+        the most appropriate one for CPU-only execution.
+        """
+        try:
+            await self._ensure_session()
+            url = f"{self.config.ollama_base_url}/api/tags"
+            
+            async with self.session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    models = [model["name"] for model in data.get("models", [])]
+                    
+                    # Priority order: fastest to slowest for CPU
+                    cpu_safe_models = ["tinyllama", "phi3:mini", "gemma2:2b", "llama3.2:1b"]
+                    
+                    for model in cpu_safe_models:
+                        if any(model in available for available in models):
+                            self.logger.info(f"CPU-safe mode: Using {model} for faster processing")
+                            return model
+                    
+                    # Fallback to configured model if no CPU-safe alternatives
+                    return self.config.default_parsing_model
+                    
+        except Exception as e:
+            self.logger.warning(f"CPU-safe model detection failed: {e}")
+            return self.config.default_parsing_model
+
+    async def health_check_with_cpu_fallback(self) -> tuple[bool, str]:
+        """
+        Enhanced health check that detects optimal model for current system.
+        
+        Returns:
+            tuple: (is_healthy, optimal_model_name)
+        """
+        try:
+            await self._ensure_session()
+            url = f"{self.config.ollama_base_url}/api/tags"
+            
+            async with self.session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    models = [model["name"] for model in data.get("models", [])]
+                    
+                    # First try configured model
+                    if self.config.default_parsing_model in models:
+                        # Test if model loads quickly (indicates GPU acceleration)
+                        quick_model = await self._test_model_speed(self.config.default_parsing_model)
+                        if quick_model:
+                            return True, self.config.default_parsing_model
+                    
+                    # If slow or unavailable, find CPU-safe alternative
+                    cpu_model = await self.get_cpu_safe_model()
+                    cpu_model_available = any(cpu_model in available for available in models)
+                    
+                    return cpu_model_available, cpu_model
+                    
+        except Exception as e:
+            self.logger.warning(f"Enhanced health check failed: {e}")
+            
+        return False, self.config.default_parsing_model
+
+    async def _test_model_speed(self, model_name: str) -> bool:
+        """Test if model loads/responds quickly (indicates GPU acceleration)."""
+        try:
+            test_payload = {
+                "model": model_name,
+                "prompt": "Test",
+                "stream": False,
+                "options": {"max_tokens": 1}
+            }
+            
+            url = f"{self.config.ollama_base_url}/api/generate"
+            
+            # Set aggressive timeout for speed test
+            import aiohttp
+            timeout = aiohttp.ClientTimeout(total=5.0)  # 5 second max
+            
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, json=test_payload) as response:
+                    return response.status == 200
+                    
+        except Exception:
+            return False
+
     async def parse(self, text: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Parse text using Ollama LLM to extract structured information.
@@ -136,21 +224,27 @@ Be precise and analytical. Focus on semantic meaning over surface features.
         try:
             await self._ensure_session()
             
-            # ATTEMPT: Try LLM-based parsing first
+            # ATTEMPT: Intelligent model selection with CPU-safe fallback
             self.logger.info(f"ATTEMPT: Using 'ollama_parser' with model '{self.config.default_parsing_model}'...")
             
-            # Check if Ollama is available
-            if not await self.health_check():
+            # Enhanced health check with automatic CPU-safe detection
+            is_healthy, optimal_model = await self.health_check_with_cpu_fallback()
+            
+            if not is_healthy:
                 self.logger.warning(f"FAILURE: Ollama service unavailable at {self.config.ollama_base_url}")
                 self.logger.info("ACTION: Engaging fallback parser 'enhanced_fallback'")
                 result = await self._enhanced_fallback_parse(text)
                 self.logger.info(f"SUCCESS: Parsed with fallback. Confidence: {result['metadata']['confidence_score']:.2f}")
                 return result
             
-            # Perform LLM-based parsing
-            result = await self._llm_parse(text)
+            # Use optimal model (might be CPU-safe alternative)
+            if optimal_model != self.config.default_parsing_model:
+                self.logger.info(f"ACTION: CPU-safe mode detected, switching to '{optimal_model}' for better performance")
+            
+            # Perform LLM-based parsing with optimal model
+            result = await self._llm_parse(text, model_override=optimal_model)
             confidence = result.get('confidence_score', 0)
-            self.logger.info(f"SUCCESS: LLM parsing completed. Confidence: {confidence:.2f}")
+            self.logger.info(f"SUCCESS: LLM parsing completed with '{optimal_model}'. Confidence: {confidence:.2f}")
             
             return self._format_result(result)
             
@@ -161,12 +255,13 @@ Be precise and analytical. Focus on semantic meaning over surface features.
             self.logger.info(f"SUCCESS: Parsed with fallback. Confidence: {result['metadata']['confidence_score']:.2f}")
             return result
 
-    async def _llm_parse(self, text: str) -> Dict[str, Any]:
+    async def _llm_parse(self, text: str, model_override: str = None) -> Dict[str, Any]:
         """Perform LLM-based parsing using Ollama."""
+        model_to_use = model_override or self.config.default_parsing_model
         prompt = self.parsing_prompt.format(text=text[:2000])  # Limit context length
         
         payload = {
-            "model": self.config.default_parsing_model,
+            "model": model_to_use,
             "prompt": prompt,
             "stream": False,
             "options": {
