@@ -151,6 +151,23 @@ async def draft(topic: Optional[str], limit: int) -> None:
         raise click.Abort()
 
 
+@cli.command()
+async def tutorial() -> None:
+    """Run the Glass Engine tutorial to see how Globule works under the hood."""
+    
+    try:
+        # Import tutorial here to avoid startup overhead
+        from globule.tutorial.glass_engine_ascii import run_glass_engine_tutorial
+        
+        # Run the Glass Engine tutorial
+        await run_glass_engine_tutorial()
+        
+    except Exception as e:
+        logger.error(f"Failed to run tutorial: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
 def main():
     """Entry point for the CLI"""
     # Convert click commands to async
@@ -162,6 +179,7 @@ def main():
     # Make commands async-compatible
     cli.commands['add'].callback = async_command(cli.commands['add'].callback)
     cli.commands['draft'].callback = async_command(cli.commands['draft'].callback)
+    cli.commands['tutorial'].callback = async_command(cli.commands['tutorial'].callback)
     
     cli()
 
