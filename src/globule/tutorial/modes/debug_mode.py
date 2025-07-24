@@ -33,6 +33,7 @@ from typing import Optional, Dict, Any, List, Callable
 from datetime import datetime
 from contextlib import contextmanager
 from dataclasses import asdict
+from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
@@ -43,6 +44,19 @@ from rich.tree import Tree
 
 from globule.tutorial.glass_engine_core import AbstractGlassEngine, GlassEngineMode
 from globule.core.models import EnrichedInput
+
+
+def rich_json_default(o: Any) -> Any:
+    """Custom JSON serializer for rich.json.JSON that handles special types."""
+    if isinstance(o, datetime):
+        return o.isoformat()
+    if isinstance(o, Path):
+        return o.as_posix()
+    if hasattr(o, 'as_dict'):
+        return o.as_dict()
+    if hasattr(o, '__dict__'):
+        return o.__dict__
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
 
 
 class ExecutionTrace:
@@ -287,7 +301,7 @@ class DebugGlassEngine(AbstractGlassEngine):
             }
             
             self.console.print("\n--- RAW CONFIGURATION DATA ---")
-            self.console.print(JSON.from_data(config_dict))
+            self.console.print(JSON.from_data(config_dict, default=rich_json_default))
             
             # Component initialization states
             self.console.print("\n--- COMPONENT INITIALIZATION STATES ---")
@@ -356,7 +370,7 @@ class DebugGlassEngine(AbstractGlassEngine):
                 }
                 
                 self.console.print("STORAGE_DEBUG_DATA:")
-                self.console.print(JSON.from_data(storage_debug_info))
+                self.console.print(JSON.from_data(storage_debug_info, default=rich_json_default))
                 
                 # Raw SQL schema inspection (if possible)
                 if hasattr(self.storage, '_connection') and self.storage._connection:
@@ -364,7 +378,7 @@ class DebugGlassEngine(AbstractGlassEngine):
                         # This is implementation-specific debugging
                         schema_info = await self._inspect_database_schema()
                         self.console.print("DATABASE_SCHEMA:")
-                        self.console.print(JSON.from_data(schema_info))
+                        self.console.print(JSON.from_data(schema_info, default=rich_json_default))
                     except Exception as e:
                         self.console.print(f"SCHEMA_INSPECTION_ERROR: {e}")
                 
@@ -377,7 +391,7 @@ class DebugGlassEngine(AbstractGlassEngine):
                     "traceback": traceback.format_exc()
                 }
                 self.console.print("STORAGE_DEBUG_ERROR:")
-                self.console.print(JSON.from_data(error_info))
+                self.console.print(JSON.from_data(error_info, default=rich_json_default))
                 self.metrics.add_error(e, "storage_component_debug")
     
     async def _inspect_database_schema(self) -> Dict[str, Any]:
@@ -452,7 +466,7 @@ class DebugGlassEngine(AbstractGlassEngine):
                         embedding_debug_info["test_embedding_error"] = str(embed_error)
                 
                 self.console.print("EMBEDDING_DEBUG_DATA:")
-                self.console.print(JSON.from_data(embedding_debug_info))
+                self.console.print(JSON.from_data(embedding_debug_info, default=rich_json_default))
                 
                 self.variable_dumps["embedding_debug"] = embedding_debug_info
                 
@@ -463,7 +477,7 @@ class DebugGlassEngine(AbstractGlassEngine):
                     "traceback": traceback.format_exc()
                 }
                 self.console.print("EMBEDDING_DEBUG_ERROR:")
-                self.console.print(JSON.from_data(error_info))
+                self.console.print(JSON.from_data(error_info, default=rich_json_default))
                 self.metrics.add_error(e, "embedding_component_debug")
     
     async def _debug_parser_component(self) -> None:
@@ -500,7 +514,7 @@ class DebugGlassEngine(AbstractGlassEngine):
                     parser_debug_info["test_parsing_error"] = str(parse_error)
                 
                 self.console.print("PARSER_DEBUG_DATA:")
-                self.console.print(JSON.from_data(parser_debug_info))
+                self.console.print(JSON.from_data(parser_debug_info, default=rich_json_default))
                 
                 self.variable_dumps["parser_debug"] = parser_debug_info
                 
@@ -511,7 +525,7 @@ class DebugGlassEngine(AbstractGlassEngine):
                     "traceback": traceback.format_exc()
                 }
                 self.console.print("PARSER_DEBUG_ERROR:")
-                self.console.print(JSON.from_data(error_info))
+                self.console.print(JSON.from_data(error_info, default=rich_json_default))
                 self.metrics.add_error(e, "parser_component_debug")
     
     async def _debug_orchestrator_component(self) -> None:
@@ -531,7 +545,7 @@ class DebugGlassEngine(AbstractGlassEngine):
                 }
                 
                 self.console.print("ORCHESTRATOR_DEBUG_DATA:")
-                self.console.print(JSON.from_data(orchestrator_debug_info))
+                self.console.print(JSON.from_data(orchestrator_debug_info, default=rich_json_default))
                 
                 self.variable_dumps["orchestrator_debug"] = orchestrator_debug_info
                 
@@ -542,7 +556,7 @@ class DebugGlassEngine(AbstractGlassEngine):
                     "traceback": traceback.format_exc()
                 }
                 self.console.print("ORCHESTRATOR_DEBUG_ERROR:")
-                self.console.print(JSON.from_data(error_info))
+                self.console.print(JSON.from_data(error_info, default=rich_json_default))
                 self.metrics.add_error(e, "orchestrator_component_debug")
     
     async def _trace_complete_pipeline(self) -> None:
@@ -553,13 +567,20 @@ class DebugGlassEngine(AbstractGlassEngine):
         
         self.console.print(f"TRACING_INPUT: {test_input}")
         
+        def json_default(o):
+            if isinstance(o, datetime):
+                return o.isoformat()
+            if hasattr(o, 'as_posix'): # Handle pathlib.Path objects
+                return o.as_posix()
+            raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+
         with self.trace_execution("complete_pipeline_trace", capture_locals=True):
             # Create enriched input with tracing
             enriched_input = self.create_test_input(test_input, "debug_pipeline_trace")
             
             self.console.print("\nENRICHED_INPUT_STRUCTURE:")
             enriched_input_dict = asdict(enriched_input)
-            self.console.print(JSON.from_data(enriched_input_dict))
+            self.console.print(JSON.from_data(enriched_input_dict, default=rich_json_default))
             
             # Process with detailed tracing
             pipeline_start = time.perf_counter()
@@ -597,7 +618,7 @@ class DebugGlassEngine(AbstractGlassEngine):
                 }
                 
                 self.console.print("\nPROCESSED_GLOBULE_COMPLETE_STRUCTURE:")
-                self.console.print(JSON.from_data(globule_debug_info))
+                self.console.print(JSON.from_data(globule_debug_info, default=rich_json_default))
                 
                 self.variable_dumps["pipeline_trace"] = {
                     "input": enriched_input_dict,
@@ -624,7 +645,7 @@ class DebugGlassEngine(AbstractGlassEngine):
                 }
                 
                 self.console.print("PIPELINE_EXECUTION_ERROR:")
-                self.console.print(JSON.from_data(error_info))
+                self.console.print(JSON.from_data(error_info, default=rich_json_default))
                 
                 self.metrics.add_error(e, "complete_pipeline_trace")
                 self.metrics.test_results.append({
@@ -655,12 +676,12 @@ class DebugGlassEngine(AbstractGlassEngine):
                     }
             
             self.console.print("PERFORMANCE_COUNTERS_SUMMARY:")
-            self.console.print(JSON.from_data(perf_summary))
+            self.console.print(JSON.from_data(perf_summary, default=rich_json_default))
             
             # Execution trace summary
             trace_summary = self.execution_trace.get_trace_summary()
             self.console.print("\nEXECUTION_TRACE_SUMMARY:")
-            self.console.print(JSON.from_data(trace_summary))
+            self.console.print(JSON.from_data(trace_summary, default=rich_json_default))
             
             # Memory analysis
             current_memory = self.process.memory_info().rss / 1024 / 1024
@@ -672,7 +693,7 @@ class DebugGlassEngine(AbstractGlassEngine):
             }
             
             self.console.print("\nMEMORY_ANALYSIS:")
-            self.console.print(JSON.from_data(memory_analysis))
+            self.console.print(JSON.from_data(memory_analysis, default=rich_json_default))
             
             self.variable_dumps["performance_analysis"] = {
                 "performance_counters": perf_summary,
@@ -746,7 +767,7 @@ class DebugGlassEngine(AbstractGlassEngine):
             }
             
             self.console.print("RESOURCE_CONSUMPTION_DATA:")
-            self.console.print(JSON.from_data(resource_data))
+            self.console.print(JSON.from_data(resource_data, default=rich_json_default))
             
             self.variable_dumps["resource_analysis"] = resource_data
     
@@ -791,7 +812,7 @@ class DebugGlassEngine(AbstractGlassEngine):
             }
             
             self.console.print("DATA_STRUCTURE_INSPECTION:")
-            self.console.print(JSON.from_data(structure_data))
+            self.console.print(JSON.from_data(structure_data, default=rich_json_default))
             
             self.variable_dumps["data_structure_inspection"] = structure_data
     
@@ -811,7 +832,7 @@ class DebugGlassEngine(AbstractGlassEngine):
         self.console.print(f"TOTAL_TRACE_POINTS: {len(self.execution_trace.traces)}")
         
         for i, trace in enumerate(self.execution_trace.traces):
-            self.console.print(f"TRACE_{i:03d}: {JSON.from_data(trace)}")
+            self.console.print(f"TRACE_{i:03d}: {JSON.from_data(trace, default=rich_json_default)}")
         
         # Performance counters complete dump
         self.console.print("\n--- PERFORMANCE COUNTERS COMPLETE DUMP ---")
@@ -822,22 +843,22 @@ class DebugGlassEngine(AbstractGlassEngine):
         self.console.print("\n--- VARIABLE DUMPS COMPLETE ---")
         for dump_name, dump_data in self.variable_dumps.items():
             self.console.print(f"{dump_name.upper()}_DUMP:")
-            self.console.print(JSON.from_data(dump_data))
+            self.console.print(JSON.from_data(dump_data, default=rich_json_default))
         
         # Metrics summary
         self.console.print("\n--- METRICS SUMMARY ---")
         metrics_dict = self.metrics.to_dict()
-        self.console.print(JSON.from_data(metrics_dict))
+        self.console.print(JSON.from_data(metrics_dict, default=rich_json_default))
         
         # Test results raw
         self.console.print("\n--- TEST RESULTS RAW ---")
         for test_result in self.metrics.test_results:
-            self.console.print(JSON.from_data(test_result))
+            self.console.print(JSON.from_data(test_result, default=rich_json_default))
         
         # Final system state
         final_system_state = self._capture_system_state()
         self.console.print("\n--- FINAL SYSTEM STATE ---")
-        self.console.print(JSON.from_data(final_system_state))
+        self.console.print(JSON.from_data(final_system_state, default=rich_json_default))
         
         # Debug mode specific summary
         debug_summary = {
@@ -852,7 +873,7 @@ class DebugGlassEngine(AbstractGlassEngine):
         }
         
         self.console.print("\n--- DEBUG_MODE_SUMMARY ---")
-        self.console.print(JSON.from_data(debug_summary))
+        self.console.print(JSON.from_data(debug_summary, default=rich_json_default))
         
         self.console.print("\n=== DEBUG MODE COMPLETE ===")
         self.console.print("RAW_DATA_FIDELITY: MAXIMUM")
