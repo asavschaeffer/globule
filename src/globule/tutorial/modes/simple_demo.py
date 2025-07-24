@@ -48,6 +48,11 @@ class SimpleDemoGlassEngine(AbstractGlassEngine):
                 "category": "Personal Reflection",
                 "input": "I feel like I'm constantly switching between different tools for note-taking, and it's becoming overwhelming. Need a unified system that actually works for my scattered thinking.",
                 "context": "Personal domain classification and sentiment analysis"
+            },
+            {
+                "category": "Fast Success Test",
+                "input": "Quick test for LLM parsing speed.",
+                "context": "Lightweight scenario designed to succeed with fast models - demonstrates full LLM integration when available"
             }
         ]
         
@@ -61,7 +66,11 @@ class SimpleDemoGlassEngine(AbstractGlassEngine):
         
         # Phase 1: Welcome
         self.console.print(Panel.fit(
-            "[bold blue]Globule Demo: Professional System Showcase[/bold blue]",
+            "[bold blue]Globule Demo: Professional System Showcase[/bold blue]\n\n"
+            "[dim]This demo showcases both SUCCESS and FAILURE paths:\n"
+            "- LLM parsing (when Ollama + fast model available)\n"
+            "- Intelligent fallback parsing (when offline)\n"
+            "- Granular performance metrics for diagnosis[/dim]",
             title="Glass Engine Demo Mode"
         ))
         
@@ -91,8 +100,14 @@ class SimpleDemoGlassEngine(AbstractGlassEngine):
         config_table.add_row("Storage Directory", str(storage_dir))
         config_table.add_row("Ollama URL", self.config.ollama_base_url)
         config_table.add_row("Embedding Model", self.config.default_embedding_model)
+        config_table.add_row("Parsing Model", self.config.default_parsing_model)
         
         self.console.print(config_table)
+        
+        # Glass Engine educational note
+        self.console.print("\n[dim]TIP: Glass Engine Tip: For fast SUCCESS demos, try:")
+        self.console.print("[dim]   ollama pull tinyllama    # 650MB, very fast")
+        self.console.print("[dim]   Then set default_parsing_model: 'tinyllama' in config.yaml[/dim]")
     
     async def _process_demo_scenarios(self) -> None:
         """Process the demo scenarios."""
@@ -109,16 +124,34 @@ class SimpleDemoGlassEngine(AbstractGlassEngine):
                     f"demo_scenario_{i}"
                 )
                 
-                # Process with timing
-                start_time = datetime.now()
+                # Process with detailed timing breakdown
+                self.console.print(f"[yellow]PROCESSING[/yellow] Starting globule processing...")
+                
+                total_start = datetime.now()
                 result = await self.orchestrator.process_globule(enriched_input)
-                processing_time = (datetime.now() - start_time).total_seconds() * 1000
+                processing_time = (datetime.now() - total_start).total_seconds() * 1000
                 
-                # Store the result
+                # Extract detailed timing from orchestration
+                timing_data = result.processing_time_ms
+                
+                # Store the result with timing
+                storage_start = datetime.now()
                 globule_id = await self.storage.store_globule(result)
+                storage_time = (datetime.now() - storage_start).total_seconds() * 1000
                 
-                # Show results
-                self.console.print(f"[green]SUCCESS[/green] Processed in {processing_time:.1f}ms")
+                # Show granular performance breakdown
+                self.console.print(f"[green]SUCCESS[/green] Total processing: {processing_time:.1f}ms")
+                
+                # Detailed timing breakdown (your suggestion!)
+                embed_time = timing_data.get('embedding_ms', 0)
+                parse_time = timing_data.get('parsing_ms', 0)
+                orchestration_time = timing_data.get('orchestration_ms', 0)
+                
+                self.console.print(f"[cyan]METRICS[/cyan] Embedding time: {embed_time:.1f}ms")
+                self.console.print(f"[cyan]METRICS[/cyan] Parsing time: {parse_time:.1f}ms")
+                self.console.print(f"[cyan]METRICS[/cyan] Storage time: {storage_time:.1f}ms")
+                self.console.print(f"[cyan]METRICS[/cyan] Orchestration overhead: {orchestration_time:.1f}ms")
+                
                 self.console.print(f"[green]SUCCESS[/green] Stored as globule: {str(globule_id)[:8]}...")
                 
                 if result.embedding is not None:

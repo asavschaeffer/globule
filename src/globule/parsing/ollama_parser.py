@@ -136,20 +136,30 @@ Be precise and analytical. Focus on semantic meaning over surface features.
         try:
             await self._ensure_session()
             
-            # Check if Ollama is available, fallback to enhanced mock if not
+            # ATTEMPT: Try LLM-based parsing first
+            self.logger.info(f"ATTEMPT: Using 'ollama_parser' with model '{self.config.default_parsing_model}'...")
+            
+            # Check if Ollama is available
             if not await self.health_check():
-                self.logger.warning("Ollama unavailable, using enhanced fallback parser")
-                return await self._enhanced_fallback_parse(text)
+                self.logger.warning(f"FAILURE: Ollama service unavailable at {self.config.ollama_base_url}")
+                self.logger.info("ACTION: Engaging fallback parser 'enhanced_fallback'")
+                result = await self._enhanced_fallback_parse(text)
+                self.logger.info(f"SUCCESS: Parsed with fallback. Confidence: {result['metadata']['confidence_score']:.2f}")
+                return result
             
             # Perform LLM-based parsing
             result = await self._llm_parse(text)
-            self.logger.info(f"Successfully parsed text with {result.get('confidence_score', 0):.2f} confidence")
+            confidence = result.get('confidence_score', 0)
+            self.logger.info(f"SUCCESS: LLM parsing completed. Confidence: {confidence:.2f}")
             
             return self._format_result(result)
             
         except Exception as e:
-            self.logger.error(f"LLM parsing failed: {e}, falling back to enhanced heuristics")
-            return await self._enhanced_fallback_parse(text)
+            self.logger.warning(f"FAILURE: LLM parsing error - {type(e).__name__}: {str(e)}")
+            self.logger.info("ACTION: Engaging fallback parser 'enhanced_fallback'")
+            result = await self._enhanced_fallback_parse(text)
+            self.logger.info(f"SUCCESS: Parsed with fallback. Confidence: {result['metadata']['confidence_score']:.2f}")
+            return result
 
     async def _llm_parse(self, text: str) -> Dict[str, Any]:
         """Perform LLM-based parsing using Ollama."""

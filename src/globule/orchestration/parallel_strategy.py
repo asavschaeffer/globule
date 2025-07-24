@@ -112,16 +112,20 @@ class ParallelOrchestrationEngine(OrchestrationEngine):
     
     async def _generate_embedding(self, text: str) -> tuple:
         """Generate embedding and return (embedding, time_ms)"""
+        logger.debug("TIMING: Starting embedding generation...")
         start_time = time.time()
         embedding = await self.embedding_provider.embed(text)
         processing_time = (time.time() - start_time) * 1000
+        logger.info(f"TIMING: Embedding completed in {processing_time:.1f}ms")
         return embedding, processing_time
     
     async def _parse_content(self, text: str, schema_config: Dict[str, Any] = None) -> tuple:
         """Parse content and return (parsed_data, time_ms)"""
+        logger.debug("TIMING: Starting content parsing...")
         start_time = time.time()
         parsed_data = await self.parsing_provider.parse(text, schema_config)
         processing_time = (time.time() - start_time) * 1000
+        logger.info(f"TIMING: Parsing completed in {processing_time:.1f}ms")
         return parsed_data, processing_time
     
     def _generate_file_decision(self, text: str, parsed_data: Dict[str, Any]) -> FileDecision:
