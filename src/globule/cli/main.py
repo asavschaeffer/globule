@@ -152,18 +152,49 @@ async def draft(topic: Optional[str], limit: int) -> None:
 
 
 @cli.command()
-async def tutorial() -> None:
-    """Run the Glass Engine tutorial to see how Globule works under the hood."""
+@click.option('--mode', '-m', 
+              type=click.Choice(['interactive', 'demo', 'debug']), 
+              default='demo',
+              help='Glass Engine mode: interactive (guided tutorial), demo (technical showcase), debug (raw system traces)')
+async def tutorial(mode: str) -> None:
+    """
+    Run the Glass Engine tutorial to see how Globule works under the hood.
+    
+    The Glass Engine provides three modes for different audiences:
+    
+    \b
+    • INTERACTIVE: Guided tutorial with hands-on learning (best for new users)
+    • DEMO: Professional technical showcase with automated examples (best for stakeholders)  
+    • DEBUG: Raw execution traces and system introspection (best for engineers/debugging)
+    
+    Each mode embodies the Glass Engine philosophy: tests become tutorials,
+    tutorials become showcases, showcases become tests. Complete transparency.
+    """
     
     try:
-        # Import tutorial here to avoid startup overhead
-        from globule.tutorial.glass_engine_ascii import run_glass_engine_tutorial
+        # Import Glass Engine core
+        from globule.tutorial.glass_engine_core import run_glass_engine, GlassEngineMode
         
-        # Run the Glass Engine tutorial
-        await run_glass_engine_tutorial()
+        # Map string to enum
+        mode_map = {
+            'interactive': GlassEngineMode.INTERACTIVE,
+            'demo': GlassEngineMode.DEMO,
+            'debug': GlassEngineMode.DEBUG
+        }
+        
+        # Run the selected Glass Engine mode
+        glass_mode = mode_map[mode]
+        metrics = await run_glass_engine(glass_mode)
+        
+        # Show brief completion summary
+        click.echo(f"\nGlass Engine {mode} mode completed in {metrics.total_duration_ms:.1f}ms")
+        click.echo(f"Status: {metrics.validation_status}")
+        
+        if metrics.error_log:
+            click.echo(f"Warnings/Errors: {len(metrics.error_log)}", err=True)
         
     except Exception as e:
-        logger.error(f"Failed to run tutorial: {e}")
+        logger.error(f"Failed to run Glass Engine tutorial: {e}")
         click.echo(f"Error: {e}", err=True)
         raise click.Abort()
 

@@ -40,15 +40,37 @@ You can browse and edit these files with any tool. No proprietary formats, no lo
 
 ## Getting Started
 
-Globule is currently in the architectural design phase. The following represents the intended installation process for the initial release.
+Globule Phase 1 is now functional! Here's how to get started:
 
 ```bash
-# Installation (via pip)
-pip install globule-cli
+# Clone and install from source
+git clone https://github.com/asavschaeffer/globule
+cd globule
+pip install -e .
 
-# First-time setup
-globule init
+# Learn how Globule works with the Glass Engine tutorial
+globule tutorial --mode=interactive
+
+# Start capturing your thoughts
+globule add "Your first thought here"
+
+# Draft content from your captured thoughts
+globule draft "your topic"
 ```
+
+## The Glass Engine: Transparent Software
+
+Globule features the **Glass Engine** - a revolutionary tutorial system that shows you exactly how the software works while you learn to use it. No black boxes, no guesswork, complete transparency.
+
+**Choose your learning style:**
+
+- 🎓 **New to Globule?** → `globule tutorial --mode=interactive` (guided hands-on learning)
+- 🎪 **Want to see capabilities?** → `globule tutorial --mode=demo` (professional showcase)  
+- 🔧 **Need technical details?** → `globule tutorial --mode=debug` (raw system analysis)
+
+The Glass Engine embodies our philosophy: *"Let the user see exactly how the pistons fire while teaching them to drive."*
+
+**📚 Learn more:** [Glass Engine Guide](docs/glass-engine-guide.md) | [Quick Start](docs/glass-engine-quick-start.md)
 
 ## The Vision: Where We're Going
 

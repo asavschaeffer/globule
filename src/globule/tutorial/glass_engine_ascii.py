@@ -287,7 +287,7 @@ class GlassEnginePhase1:
                 data_table.add_column("Type", style="dim")
                 
                 data_table.add_row("ID", str(globule.id), "INTEGER")
-                data_table.add_row("Content", globule.content[:100] + "..." if len(globule.content) > 100 else globule.content, "TEXT")
+                data_table.add_row("Content", globule.text[:100] + "..." if len(globule.text) > 100 else globule.text, "TEXT")
                 data_table.add_row("Created", globule.created_at.strftime("%Y-%m-%d %H:%M:%S"), "TIMESTAMP")
                 data_table.add_row("Embedding", f"[{len(globule.embedding)} dimensions]", "BLOB")
                 data_table.add_row("Parsed Data", str(globule.parsed_data)[:50] + "..." if globule.parsed_data else "None", "JSON")
@@ -346,7 +346,7 @@ class GlassEnginePhase1:
             display_table.add_column("Created", style="dim")
             
             for globule in globules:
-                preview = globule.content[:80] + "..." if len(globule.content) > 80 else globule.content
+                preview = globule.text[:80] + "..." if len(globule.text) > 80 else globule.text
                 display_table.add_row(
                     str(globule.id),
                     preview,
