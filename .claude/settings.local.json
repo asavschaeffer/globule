@@ -4,7 +4,8 @@
       "Bash(mkdir:*)",
       "Bash(python:*)",
       "Bash(dir \"C:\\Users\\18312\\.globule\")",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(sed:*)"
     ],
     "deny": []
   }

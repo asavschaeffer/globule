@@ -1,0 +1,22 @@
+╭───────────────────────────────────────────────────╮
+│ ✻ Welcome to Claude Code!                         │
+│                                                   │
+│   /help for help, /status for your current setup  │
+│                                                   │
+│   cwd: C:\Users\18312\Projects\globule            │
+╰───────────────────────────────────────────────────╯
+
+ Tips for getting started:
+
+ 1. Run /init to create a CLAUDE.md file with instructions for Claude
+ 2. Use Claude to help with file analysis, editing, bash commands and git
+ 3. Be as specific as you would with another engineer for the best results
+● Compact summary (ctrl+r to expand)
+  ⎿  Read src\globule\tutorial\modes\simple_demo.py (166 lines)
+  ⎿  Read src\globule\tutorial\glass_engine_core.py (516 lines)
+  ⎿  Read pyproject.toml (80 lines)
+  ⎿  Todo list read (7 items)
+
+> /compact 
+  ⎿  Compacted. ctrl+r to see full summary
+

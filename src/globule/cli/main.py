@@ -15,7 +15,7 @@ from typing import Optional
 from globule.core.models import EnrichedInput
 from globule.storage.sqlite_manager import SQLiteStorageManager
 from globule.embedding.ollama_provider import OllamaEmbeddingProvider
-from globule.parsing.mock_parser import MockOllamaParser
+from globule.parsing.ollama_parser import OllamaParser
 from globule.orchestration.parallel_strategy import ParallelOrchestrationEngine
 from globule.config.settings import get_config
 
@@ -76,7 +76,7 @@ async def add(text: str, verbose: bool) -> None:
             
             embedding_provider = MockEmbeddingProvider()
         
-        parsing_provider = MockOllamaParser()
+        parsing_provider = OllamaParser()
         orchestrator = ParallelOrchestrationEngine(
             embedding_provider, parsing_provider, storage
         )
@@ -116,6 +116,7 @@ async def add(text: str, verbose: bool) -> None:
         
         # Cleanup
         await embedding_provider.close()
+        await parsing_provider.close()
         await storage.close()
         
     except Exception as e:

@@ -164,8 +164,11 @@ class DemoGlassEngine(AbstractGlassEngine):
         """
         # Create impressive title display
         title_panel = Panel.fit(
-            "[bold blue]Globule: Professional System Demonstration[/bold blue]\n"
-            "[italic]Local-First AI Knowledge Management Platform[/italic]\n\n"
+            "[bold blue]Globule: Professional System Demonstration[/bold blue]
+"
+            "[italic]Local-First AI Knowledge Management Platform[/italic]
+
+"
             "[dim]Glass Engine Demo Mode - Complete System Showcase[/dim]",
             title="Executive Briefing",
             border_style="blue"
@@ -208,11 +211,18 @@ class DemoGlassEngine(AbstractGlassEngine):
         
         # Key metrics and benchmarks (will be populated during demo)
         metrics_preview = Panel(
-            "[bold]Live System Metrics[/bold]\n\n"
-            "• Processing Speed: [cyan]Real-time analysis[/cyan]\n"
-            "• Storage Efficiency: [cyan]Optimized SQLite with vectors[/cyan]\n"
-            "• AI Accuracy: [cyan]Production-ready embeddings[/cyan]\n"
-            "• System Reliability: [cyan]99%+ uptime capability[/cyan]\n\n"
+            "[bold]Live System Metrics[/bold]
+
+"
+            "• Processing Speed: [cyan]Real-time analysis[/cyan]
+"
+            "• Storage Efficiency: [cyan]Optimized SQLite with vectors[/cyan]
+"
+            "• AI Accuracy: [cyan]Production-ready embeddings[/cyan]
+"
+            "• System Reliability: [cyan]99%+ uptime capability[/cyan]
+
+"
             "[dim]Detailed metrics will be measured during live demonstration[/dim]",
             title="📊 Performance Preview"
         )
@@ -227,7 +237,8 @@ class DemoGlassEngine(AbstractGlassEngine):
         This section showcases the engineering excellence and thoughtful
         design decisions that make Globule robust and scalable.
         """
-        self.console.print("\n" + Panel.fit(
+        self.console.print("
+" + Panel.fit(
             "[bold purple]System Architecture Deep Dive[/bold purple]",
             title="Technical Excellence"
         ))
@@ -296,9 +307,16 @@ class DemoGlassEngine(AbstractGlassEngine):
         # Storage configuration
         storage_dir = self.config.get_storage_dir()
         storage_config = Panel(
-            f"[bold]Data Directory[/bold]\n{storage_dir}\n\n"
-            f"[bold]Database[/bold]\n{storage_dir}/globules.db\n\n"
-            f"[bold]Storage Type[/bold]\nLocal SQLite with vector extensions",
+            f"[bold]Data Directory[/bold]
+{storage_dir}
+
+"
+            f"[bold]Database[/bold]
+{storage_dir}/globules.db
+
+"
+            f"[bold]Storage Type[/bold]
+Local SQLite with vector extensions",
             title="💾 Storage Configuration",
             border_style="blue"
         )
@@ -306,9 +324,16 @@ class DemoGlassEngine(AbstractGlassEngine):
         
         # AI configuration
         ai_config = Panel(
-            f"[bold]Ollama Endpoint[/bold]\n{self.config.ollama_base_url}\n\n"
-            f"[bold]Embedding Model[/bold]\n{self.config.default_embedding_model}\n\n"
-            f"[bold]Parsing Model[/bold]\n{self.config.default_parsing_model}",
+            f"[bold]Ollama Endpoint[/bold]
+{self.config.ollama_base_url}
+
+"
+            f"[bold]Embedding Model[/bold]
+{self.config.default_embedding_model}
+
+"
+            f"[bold]Parsing Model[/bold]
+{self.config.default_parsing_model}",
             title="🧠 AI Configuration",
             border_style="green"
         )
@@ -316,9 +341,16 @@ class DemoGlassEngine(AbstractGlassEngine):
         
         # Performance configuration
         perf_config = Panel(
-            f"[bold]Max Concurrent[/bold]\n{self.config.max_concurrent_requests}\n\n"
-            f"[bold]Cache Size[/bold]\n{self.config.embedding_cache_size}\n\n"
-            f"[bold]Timeout[/bold]\n{self.config.ollama_timeout}s",
+            f"[bold]Max Concurrent[/bold]
+{self.config.max_concurrent_requests}
+
+"
+            f"[bold]Cache Size[/bold]
+{self.config.embedding_cache_size}
+
+"
+            f"[bold]Timeout[/bold]
+{self.config.ollama_timeout}s",
             title="⚡ Performance Tuning",
             border_style="yellow"
         )
@@ -328,13 +360,14 @@ class DemoGlassEngine(AbstractGlassEngine):
         self.console.print(Columns(config_panels, equal=True, expand=True))
     
     async def _execute_processing_scenarios(self) -> None:
-        \"\"\"
+        """
         Execute multiple processing scenarios to showcase system capabilities.
         
         This section demonstrates how Globule handles diverse content types
         and use cases with consistent quality and performance.
-        \"\"\"
-        self.console.print("\\n" + Panel.fit(
+        """
+        self.console.print("\
+" + Panel.fit(
             "[bold magenta]Multi-Scenario Processing Showcase[/bold magenta]",
             title="Capability Demonstration"
         ))
@@ -342,12 +375,17 @@ class DemoGlassEngine(AbstractGlassEngine):
         scenario_results = []
         
         for i, scenario in enumerate(self.demo_scenarios, 1):
-            self.console.print(f"\\n[bold cyan]Scenario {i}: {scenario['category']}[/bold cyan]")
+            self.console.print(f"\
+[bold cyan]Scenario {i}: {scenario['category']}[/bold cyan]")
             
             # Show scenario context
             context_panel = Panel(
-                f"[bold]Input:[/bold] {scenario['input']}\\n\\n"
-                f"[bold]Context:[/bold] {scenario['context']}\\n\\n"
+                f"[bold]Input:[/bold] {scenario['input']}\
+\
+"
+                f"[bold]Context:[/bold] {scenario['context']}\
+\
+"
                 f"[bold]Expected Insights:[/bold] {', '.join(scenario['expected_insights'])}",
                 title=f"📋 Scenario {i} Setup",
                 border_style="dim"
@@ -367,7 +405,7 @@ class DemoGlassEngine(AbstractGlassEngine):
         self.add_showcase_component("processing_scenarios")
     
     async def _process_scenario_with_metrics(self, scenario: Dict[str, Any]) -> Dict[str, Any]:
-        \"\"\"
+        """
         Process a demo scenario while collecting comprehensive metrics.
         
         Args:
@@ -375,7 +413,7 @@ class DemoGlassEngine(AbstractGlassEngine):
             
         Returns:
             Dict containing processing results and performance metrics
-        \"\"\"
+        """
         start_time = datetime.now()
         
         # Create enriched input
@@ -430,7 +468,7 @@ class DemoGlassEngine(AbstractGlassEngine):
                 }
     
     async def _display_scenario_results(self, scenario: Dict[str, Any], result: Dict[str, Any], scenario_num: int) -> None:
-        \"\"\"Display comprehensive results for a processed scenario.\"\"\"
+        """Display comprehensive results for a processed scenario."""
         
         if not result["success"]:
             error_panel = Panel(
@@ -473,8 +511,10 @@ class DemoGlassEngine(AbstractGlassEngine):
         if result["file_decision"]:
             decision = result["file_decision"]
             org_panel = Panel(
-                f"[bold]Suggested Path:[/bold] {decision.semantic_path / decision.filename}\\n"
-                f"[bold]Confidence:[/bold] {decision.confidence:.1%}\\n"
+                f"[bold]Suggested Path:[/bold] {decision.semantic_path / decision.filename}\
+"
+                f"[bold]Confidence:[/bold] {decision.confidence:.1%}\
+"
                 f"[bold]Reasoning:[/bold] Semantic organization based on content analysis",
                 title="📁 Smart Organization",
                 border_style="green"
@@ -501,9 +541,10 @@ class DemoGlassEngine(AbstractGlassEngine):
             self.console.print(breakdown_table)
     
     async def _analyze_scenario_performance(self, results: List[Dict[str, Any]]) -> None:
-        \"\"\"Analyze overall performance across all scenarios.\"\"\"
+        """Analyze overall performance across all scenarios."""
         
-        self.console.print("\\n" + Panel.fit(
+        self.console.print("\
+" + Panel.fit(
             "[bold green]📊 Cross-Scenario Performance Analysis[/bold green]",
             title="System Reliability Assessment"
         ))
@@ -548,13 +589,14 @@ class DemoGlassEngine(AbstractGlassEngine):
         })
     
     async def _conduct_performance_analysis(self) -> None:
-        \"\"\"
+        """
         Conduct comprehensive performance analysis and benchmarking.
         
         This section provides detailed performance metrics that stakeholders
         can use to assess system readiness and scalability.
-        \"\"\"
-        self.console.print("\\n" + Panel.fit(
+        """
+        self.console.print("\
+" + Panel.fit(
             "[bold yellow]⚡ Performance Benchmarking & Analysis[/bold yellow]",
             title="System Performance Assessment"
         ))
@@ -571,7 +613,7 @@ class DemoGlassEngine(AbstractGlassEngine):
         self.add_showcase_component("performance_analysis")
     
     async def _benchmark_individual_components(self) -> None:
-        \"\"\"Benchmark individual system components.\"\"\"
+        """Benchmark individual system components."""
         
         components_table = Table(title="🔧 Component Performance Benchmarks")
         components_table.add_column("Component", style="cyan")
@@ -613,9 +655,10 @@ class DemoGlassEngine(AbstractGlassEngine):
         self.console.print(components_table)
     
     async def _conduct_stress_testing(self) -> None:
-        \"\"\"Conduct basic stress testing to assess system limits.\"\"\"
+        """Conduct basic stress testing to assess system limits."""
         
-        self.console.print("\\n[bold]🔥 Stress Testing (Concurrent Operations)[/bold]")
+        self.console.print("\
+[bold]🔥 Stress Testing (Concurrent Operations)[/bold]")
         
         # Simulate concurrent processing
         concurrent_tasks = []
@@ -667,7 +710,7 @@ class DemoGlassEngine(AbstractGlassEngine):
             self.console.print(f"[yellow]⚠️  {len(failed_tasks)} tasks failed - see logs for details[/yellow]")
     
     async def _analyze_resource_usage(self) -> None:
-        \"\"\"Analyze system resource usage patterns.\"\"\"
+        """Analyze system resource usage patterns."""
         
         import psutil
         import os
@@ -699,13 +742,14 @@ class DemoGlassEngine(AbstractGlassEngine):
         self.console.print(resource_table)
     
     async def _showcase_advanced_capabilities(self) -> None:
-        \"\"\"
+        """
         Showcase advanced features and upcoming capabilities.
         
         This section demonstrates the system's potential and roadmap
         to build excitement about future developments.
-        \"\"\"
-        self.console.print("\\n" + Panel.fit(
+        """
+        self.console.print("\
+" + Panel.fit(
             "[bold blue]🚀 Advanced Capabilities & Future Roadmap[/bold blue]",
             title="Innovation Showcase"
         ))
@@ -726,12 +770,20 @@ class DemoGlassEngine(AbstractGlassEngine):
         
         # Phase 2 preview
         phase2_preview = Panel(
-            "[bold]🔮 Phase 2: Core Intelligence (Coming Soon)[/bold]\\n\\n"
-            "• **Vector Search**: Find thoughts by semantic similarity\\n"
-            "• **Intelligent Clustering**: Automatic topic grouping\\n"
-            "• **Real AI Parsing**: Advanced content analysis\\n"
-            "• **Contextual Retrieval**: Smart related content discovery\\n"
-            "• **Interactive Synthesis**: AI-assisted drafting\\n\\n"
+            "[bold]🔮 Phase 2: Core Intelligence (Coming Soon)[/bold]\
+\
+"
+            "• **Vector Search**: Find thoughts by semantic similarity\
+"
+            "• **Intelligent Clustering**: Automatic topic grouping\
+"
+            "• **Real AI Parsing**: Advanced content analysis\
+"
+            "• **Contextual Retrieval**: Smart related content discovery\
+"
+            "• **Interactive Synthesis**: AI-assisted drafting\
+\
+"
             "[dim]Phase 1 provides the foundation - Phase 2 adds the intelligence[/dim]",
             title="Future Capabilities",
             border_style="blue"
@@ -744,7 +796,7 @@ class DemoGlassEngine(AbstractGlassEngine):
         self.add_showcase_component("advanced_capabilities")
     
     async def _demonstrate_extensibility(self) -> None:
-        \"\"\"Demonstrate system extensibility and integration potential.\"\"\"
+        """Demonstrate system extensibility and integration potential."""
         
         extensibility_tree = Tree("🔧 Extensibility & Integration Points")
         
@@ -772,13 +824,14 @@ class DemoGlassEngine(AbstractGlassEngine):
         self.console.print(extensibility_tree)
     
     async def _demonstrate_integration_possibilities(self) -> None:
-        \"\"\"
+        """
         Demonstrate real-world integration scenarios.
         
         This section shows how Globule fits into existing workflows
         and enhances productivity in practical ways.
-        \"\"\"
-        self.console.print("\\n" + Panel.fit(
+        """
+        self.console.print("\
+" + Panel.fit(
             "[bold green]🔗 Integration & Workflow Demonstration[/bold green]",
             title="Real-World Applications"
         ))
@@ -813,8 +866,11 @@ class DemoGlassEngine(AbstractGlassEngine):
         
         for use_case in use_cases:
             use_case_panel = Panel(
-                f"[bold]{use_case['description']}[/bold]\\n\\n"
-                f"[cyan]Integrates with:[/cyan] {', '.join(use_case['tools'])}\\n"
+                f"[bold]{use_case['description']}[/bold]\
+\
+"
+                f"[cyan]Integrates with:[/cyan] {', '.join(use_case['tools'])}\
+"
                 f"[green]Key Benefit:[/green] {use_case['benefit']}",
                 title=use_case["title"],
                 border_style="dim"
@@ -823,15 +879,27 @@ class DemoGlassEngine(AbstractGlassEngine):
         
         # Command-line workflow examples
         workflow_examples = Panel(
-            "[bold]🖥️  Example Command Workflows[/bold]\\n\\n"
-            "[cyan]Daily Capture:[/cyan]\\n"
-            "• `globule add \"$(pbpaste)\"` - Capture from clipboard\\n"
-            "• `globule add --source=meeting \"Key insight from standup\"`\\n\\n"
-            "[cyan]Content Creation:[/cyan]\\n"
-            "• `globule draft \"artificial intelligence\"` - Start AI article\\n"
-            "• `globule export --format=markdown --topic=\"productivity\"`\\n\\n"
-            "[cyan]Knowledge Exploration:[/cyan]\\n"
-            "• `globule search --semantic \"machine learning concepts\"`\\n"
+            "[bold]🖥️  Example Command Workflows[/bold]\
+\
+"
+            "[cyan]Daily Capture:[/cyan]\
+"
+            "• `globule add \"$(pbpaste)\"` - Capture from clipboard\
+"
+            "• `globule add --source=meeting \"Key insight from standup\"`\
+\
+"
+            "[cyan]Content Creation:[/cyan]\
+"
+            "• `globule draft \"artificial intelligence\"` - Start AI article\
+"
+            "• `globule export --format=markdown --topic=\"productivity\"`\
+\
+"
+            "[cyan]Knowledge Exploration:[/cyan]\
+"
+            "• `globule search --semantic \"machine learning concepts\"`\
+"
             "• `globule cluster --topic=\"business strategy\" --depth=3`",
             title="Productivity Workflows",
             border_style="green"
@@ -841,13 +909,14 @@ class DemoGlassEngine(AbstractGlassEngine):
         self.add_showcase_component("integration_possibilities")
     
     async def _assess_system_scalability(self) -> None:
-        \"\"\"
+        """
         Assess and demonstrate system scalability characteristics.
         
         This section addresses stakeholder concerns about growth
         and long-term viability of the system.
-        \"\"\"
-        self.console.print("\\n" + Panel.fit(
+        """
+        self.console.print("\
+" + Panel.fit(
             "[bold purple]📈 Scalability & Growth Assessment[/bold purple]",
             title="Long-Term Viability"
         ))
@@ -894,19 +963,36 @@ class DemoGlassEngine(AbstractGlassEngine):
         
         # Growth roadmap
         roadmap_panel = Panel(
-            "[bold]🗺️  Growth Roadmap[/bold]\\n\\n"
-            "[cyan]Phase 1 (Current):[/cyan] Foundation & Core Functionality\\n"
-            "• Local-first architecture established\\n"
-            "• Basic AI processing pipeline\\n"
-            "• Glass Engine tutorial system\\n\\n"
-            "[cyan]Phase 2 (Q2 2025):[/cyan] Intelligence & Semantic Features\\n"
-            "• Advanced vector search\\n"
-            "• Intelligent clustering\\n"
-            "• Real-time synthesis\\n\\n"
-            "[cyan]Phase 3 (Q4 2025):[/cyan] Collaboration & Scale\\n"
-            "• Team knowledge sharing\\n"
-            "• Advanced integrations\\n"
-            "• Enterprise deployment\\n\\n"
+            "[bold]🗺️  Growth Roadmap[/bold]\
+\
+"
+            "[cyan]Phase 1 (Current):[/cyan] Foundation & Core Functionality\
+"
+            "• Local-first architecture established\
+"
+            "• Basic AI processing pipeline\
+"
+            "• Glass Engine tutorial system\
+\
+"
+            "[cyan]Phase 2 (Q2 2025):[/cyan] Intelligence & Semantic Features\
+"
+            "• Advanced vector search\
+"
+            "• Intelligent clustering\
+"
+            "• Real-time synthesis\
+\
+"
+            "[cyan]Phase 3 (Q4 2025):[/cyan] Collaboration & Scale\
+"
+            "• Team knowledge sharing\
+"
+            "• Advanced integrations\
+"
+            "• Enterprise deployment\
+\
+"
             "[dim]Each phase builds on previous foundations while maintaining backwards compatibility[/dim]",
             title="Strategic Development Timeline",
             border_style="purple"
@@ -916,13 +1002,14 @@ class DemoGlassEngine(AbstractGlassEngine):
         self.add_showcase_component("scalability_assessment")
     
     def present_results(self) -> None:
-        \"\"\"
+        """
         Present comprehensive demo results in professional format.
         
         This method provides a polished summary that stakeholders can use
         to make informed decisions about Globule adoption and investment.
-        \"\"\"
-        self.console.print("\\n" + "=" * 80)
+        """
+        self.console.print("\
+" + "=" * 80)
         self.console.print(Panel.fit(
             "[bold blue]📋 Professional Demo: Executive Summary[/bold blue]",
             title="Glass Engine Results"
@@ -944,7 +1031,7 @@ class DemoGlassEngine(AbstractGlassEngine):
         self._present_recommendations()
     
     def _present_executive_summary(self) -> None:
-        \"\"\"Present high-level executive summary.\"\"\"
+        """Present high-level executive summary."""
         
         # Key achievements
         achievements = [
@@ -957,14 +1044,15 @@ class DemoGlassEngine(AbstractGlassEngine):
         ]
         
         achievements_panel = Panel(
-            "\\n".join(achievements),
+            "\
+".join(achievements),
             title="🎯 Key Achievements",
             border_style="green"
         )
         self.console.print(achievements_panel)
     
     def _present_technical_validation(self) -> None:
-        \"\"\"Present technical validation summary.\"\"\"
+        """Present technical validation summary."""
         
         validation_table = Table(title="🔧 Technical Validation Summary")
         validation_table.add_column("Component", style="cyan")
@@ -997,7 +1085,7 @@ class DemoGlassEngine(AbstractGlassEngine):
         self.console.print(validation_table)
     
     def _present_performance_benchmarks(self) -> None:
-        \"\"\"Present performance benchmarking results.\"\"\"
+        """Present performance benchmarking results."""
         
         if not self.performance_benchmarks:
             return
@@ -1006,8 +1094,10 @@ class DemoGlassEngine(AbstractGlassEngine):
         
         # Processing performance
         proc_panel = Panel(
-            f"[bold]Average:[/bold] {self.performance_benchmarks.get('avg_processing_time_ms', 0):.1f}ms\\n"
-            f"[bold]Range:[/bold] {self.performance_benchmarks.get('min_processing_time_ms', 0):.1f}ms - {self.performance_benchmarks.get('max_processing_time_ms', 0):.1f}ms\\n"
+            f"[bold]Average:[/bold] {self.performance_benchmarks.get('avg_processing_time_ms', 0):.1f}ms\
+"
+            f"[bold]Range:[/bold] {self.performance_benchmarks.get('min_processing_time_ms', 0):.1f}ms - {self.performance_benchmarks.get('max_processing_time_ms', 0):.1f}ms\
+"
             f"[bold]Throughput:[/bold] ~{60000/self.performance_benchmarks.get('avg_processing_time_ms', 1):.1f} thoughts/minute",
             title="⚡ Processing Performance",
             border_style="yellow"
@@ -1016,8 +1106,10 @@ class DemoGlassEngine(AbstractGlassEngine):
         
         # AI quality metrics
         ai_panel = Panel(
-            f"[bold]Embedding Quality:[/bold] {self.performance_benchmarks.get('avg_embedding_confidence', 0):.1%}\\n"
-            f"[bold]Parsing Accuracy:[/bold] {self.performance_benchmarks.get('avg_parsing_confidence', 0):.1%}\\n"
+            f"[bold]Embedding Quality:[/bold] {self.performance_benchmarks.get('avg_embedding_confidence', 0):.1%}\
+"
+            f"[bold]Parsing Accuracy:[/bold] {self.performance_benchmarks.get('avg_parsing_confidence', 0):.1%}\
+"
             f"[bold]Success Rate:[/bold] {self.performance_benchmarks.get('success_rate', 0):.1f}%",
             title="🧠 AI Quality Metrics",
             border_style="blue"
@@ -1027,7 +1119,7 @@ class DemoGlassEngine(AbstractGlassEngine):
         self.console.print(Columns(perf_panels, equal=True, expand=True))
     
     def _present_showcase_summary(self) -> None:
-        \"\"\"Present summary of showcased components.\"\"\"
+        """Present summary of showcased components."""
         
         showcase_table = Table(title="🎪 Component Showcase Summary")
         showcase_table.add_column("Component", style="cyan")
@@ -1052,22 +1144,39 @@ class DemoGlassEngine(AbstractGlassEngine):
         self.console.print(showcase_table)
     
     def _present_recommendations(self) -> None:
-        \"\"\"Present next steps and recommendations.\"\"\"
+        """Present next steps and recommendations."""
         
         recommendations_panel = Panel(
-            "[bold]🚀 Recommended Next Steps[/bold]\\n\\n"
-            "[cyan]Immediate Actions:[/cyan]\\n"
-            "• Deploy Globule in pilot project or personal workflow\\n"
-            "• Gather user feedback and usage patterns\\n"
-            "• Evaluate integration requirements\\n\\n"
-            "[cyan]Short Term (1-3 months):[/cyan]\\n"
-            "• Scale to team or department usage\\n"
-            "• Customize configuration for specific use cases\\n"
-            "• Prepare for Phase 2 intelligence features\\n\\n"
-            "[cyan]Long Term (3-12 months):[/cyan]\\n"
-            "• Consider enterprise deployment strategies\\n"
-            "• Evaluate custom development opportunities\\n"
-            "• Plan integration with existing systems\\n\\n"
+            "[bold]🚀 Recommended Next Steps[/bold]\
+\
+"
+            "[cyan]Immediate Actions:[/cyan]\
+"
+            "• Deploy Globule in pilot project or personal workflow\
+"
+            "• Gather user feedback and usage patterns\
+"
+            "• Evaluate integration requirements\
+\
+"
+            "[cyan]Short Term (1-3 months):[/cyan]\
+"
+            "• Scale to team or department usage\
+"
+            "• Customize configuration for specific use cases\
+"
+            "• Prepare for Phase 2 intelligence features\
+\
+"
+            "[cyan]Long Term (3-12 months):[/cyan]\
+"
+            "• Consider enterprise deployment strategies\
+"
+            "• Evaluate custom development opportunities\
+"
+            "• Plan integration with existing systems\
+\
+"
             "[dim]Contact the Globule team for implementation support and custom development[/dim]",
             title="Strategic Recommendations",
             border_style="green"

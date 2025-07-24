@@ -62,7 +62,7 @@ from rich.syntax import Syntax
 from globule.config.settings import get_config
 from globule.storage.sqlite_manager import SQLiteStorageManager
 from globule.embedding.ollama_provider import OllamaEmbeddingProvider
-from globule.parsing.mock_parser import MockOllamaParser
+from globule.parsing.ollama_parser import OllamaParser
 from globule.orchestration.parallel_strategy import ParallelOrchestrationEngine
 from globule.core.models import EnrichedInput, ProcessedGlobule
 
@@ -191,7 +191,7 @@ class AbstractGlassEngine(abc.ABC):
         # Core Globule components - initialized in async context
         self.storage: Optional[SQLiteStorageManager] = None
         self.embedding_provider: Optional[OllamaEmbeddingProvider] = None
-        self.parser: Optional[MockOllamaParser] = None  
+        self.parser: Optional[OllamaParser] = None  
         self.orchestrator: Optional[ParallelOrchestrationEngine] = None
         
         # State tracking
@@ -284,7 +284,7 @@ class AbstractGlassEngine(abc.ABC):
             
             # Initialize AI providers
             self.embedding_provider = OllamaEmbeddingProvider()
-            self.parser = MockOllamaParser()
+            self.parser = OllamaParser()
             
             # Initialize orchestration engine
             self.orchestrator = ParallelOrchestrationEngine(
@@ -347,6 +347,9 @@ class AbstractGlassEngine(abc.ABC):
         
         if self.embedding_provider:
             await self.embedding_provider.close()
+        
+        if self.parser:
+            await self.parser.close()
         
         if self.storage:
             await self.storage.close()
@@ -462,12 +465,12 @@ class GlassEngineFactory:
         """
         # Import mode implementations here to avoid circular imports
         from globule.tutorial.modes.interactive_mode import InteractiveGlassEngine
-        from globule.tutorial.modes.demo_mode import DemoGlassEngine  
+        from globule.tutorial.modes.simple_demo import SimpleDemoGlassEngine  
         from globule.tutorial.modes.debug_mode import DebugGlassEngine
         
         mode_map = {
             GlassEngineMode.INTERACTIVE: InteractiveGlassEngine,
-            GlassEngineMode.DEMO: DemoGlassEngine,
+            GlassEngineMode.DEMO: SimpleDemoGlassEngine,
             GlassEngineMode.DEBUG: DebugGlassEngine
         }
         

@@ -26,7 +26,7 @@ from rich.tree import Tree
 from globule.config.settings import get_config
 from globule.storage.sqlite_manager import SQLiteStorageManager
 from globule.embedding.ollama_provider import OllamaEmbeddingProvider
-from globule.parsing.mock_parser import MockOllamaParser
+from globule.parsing.ollama_parser import OllamaParser
 from globule.orchestration.parallel_strategy import ParallelOrchestrationEngine
 from globule.core.models import EnrichedInput
 
@@ -44,7 +44,7 @@ class GlassEnginePhase1:
         self.settings = get_config()
         self.storage = SQLiteStorageManager()
         self.embedding_provider = OllamaEmbeddingProvider()
-        self.parser = MockOllamaParser()
+        self.parser = OllamaParser()
         self.orchestrator = ParallelOrchestrationEngine(
             embedding_provider=self.embedding_provider,
             parsing_provider=self.parser,
