@@ -238,6 +238,102 @@ async def search(query: str, limit: int, threshold: float, verbose: bool) -> Non
 
 
 @cli.command()
+@click.option('--min-globules', '-m', default=5, help='Minimum globules required for clustering')
+@click.option('--verbose', '-v', is_flag=True, help='Show detailed cluster analysis')
+@click.option('--export', '-e', help='Export results to JSON file')
+async def cluster(min_globules: int, verbose: bool, export: Optional[str]) -> None:
+    """
+    Discover semantic clusters and themes in your thoughts.
+    
+    This command demonstrates Phase 2 clustering capabilities by automatically
+    grouping related content and identifying common themes across your knowledge base.
+    
+    Examples:
+    \b
+    globule cluster                          # Basic clustering
+    globule cluster --min-globules 3        # Lower threshold
+    globule cluster --verbose               # Detailed analysis
+    globule cluster --export clusters.json  # Save results
+    """
+    try:
+        # Initialize components
+        storage = SQLiteStorageManager()
+        await storage.initialize()
+        
+        from globule.clustering.semantic_clustering import SemanticClusteringEngine
+        clustering_engine = SemanticClusteringEngine(storage)
+        
+        click.echo(f"CLUSTERING: Analyzing semantic patterns in your thoughts...")
+        click.echo(f"PARAMS: min_globules={min_globules}")
+        
+        # Perform clustering analysis
+        analysis = await clustering_engine.analyze_semantic_clusters(min_globules)
+        
+        if not analysis.clusters:
+            click.echo("NO CLUSTERS: Insufficient data for clustering analysis.")
+            click.echo(f"TIP: You need at least {min_globules} thoughts with embeddings.")
+            click.echo("     Add more content with 'globule add' and try again.")
+            return
+        
+        # Display results
+        click.echo(f"\nSUCCESS: Discovered {len(analysis.clusters)} semantic clusters:\n")
+        
+        for i, cluster in enumerate(analysis.clusters, 1):
+            confidence_pct = cluster.confidence_score * 100
+            confidence_bar = "=" * int(cluster.confidence_score * 15)
+            
+            click.echo(f"{i}. {cluster.label} [{confidence_pct:.1f}% {confidence_bar}]")
+            click.echo(f"   {cluster.description}")
+            click.echo(f"   SIZE: {cluster.size} thoughts | DOMAINS: {', '.join(cluster.domains)}")
+            
+            if cluster.keywords:
+                click.echo(f"   KEYWORDS: {', '.join(cluster.keywords[:5])}")
+            
+            if verbose:
+                click.echo(f"   ID: {cluster.id}")
+                click.echo(f"   CREATED: {cluster.created_at}")
+                
+                if cluster.representative_samples:
+                    click.echo(f"   SAMPLES:")
+                    for sample in cluster.representative_samples[:2]:
+                        click.echo(f"     - {sample}")
+                
+                if cluster.theme_analysis:
+                    temporal = cluster.theme_analysis.get('temporal', {})
+                    if temporal.get('span_days'):
+                        click.echo(f"   TEMPORAL: {temporal['span_days']} day span")
+            
+            click.echo()  # Blank line between clusters
+        
+        # Show analysis summary
+        click.echo(f"ANALYSIS SUMMARY:")
+        click.echo(f"  Method: {analysis.clustering_method}")
+        click.echo(f"  Quality Score: {analysis.silhouette_score:.3f}")
+        click.echo(f"  Processing Time: {analysis.processing_time_ms:.1f}ms")
+        click.echo(f"  Total Thoughts Analyzed: {analysis.total_globules}")
+        
+        if verbose and analysis.quality_metrics:
+            click.echo(f"\nDETAILED METRICS:")
+            for metric, value in analysis.quality_metrics.items():
+                click.echo(f"  {metric}: {value}")
+        
+        # Export if requested
+        if export:
+            import json
+            with open(export, 'w') as f:
+                json.dump(analysis.to_dict(), f, indent=2)
+            click.echo(f"\nEXPORTED: Results saved to {export}")
+        
+        # Cleanup
+        await storage.close()
+        
+    except Exception as e:
+        logger.error(f"Clustering failed: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+@cli.command()
 @click.option('--mode', '-m', 
               type=click.Choice(['interactive', 'demo', 'debug']), 
               default='demo',
@@ -297,6 +393,7 @@ def main():
     cli.commands['add'].callback = async_command(cli.commands['add'].callback)
     cli.commands['draft'].callback = async_command(cli.commands['draft'].callback)
     cli.commands['search'].callback = async_command(cli.commands['search'].callback)
+    cli.commands['cluster'].callback = async_command(cli.commands['cluster'].callback)
     cli.commands['tutorial'].callback = async_command(cli.commands['tutorial'].callback)
     
     cli()

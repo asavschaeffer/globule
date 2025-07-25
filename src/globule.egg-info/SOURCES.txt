@@ -9,6 +9,8 @@ src/globule.egg-info/requires.txt
 src/globule.egg-info/top_level.txt
 src/globule/cli/__init__.py
 src/globule/cli/main.py
+src/globule/clustering/__init__.py
+src/globule/clustering/semantic_clustering.py
 src/globule/config/__init__.py
 src/globule/config/settings.py
 src/globule/core/__init__.py
@@ -35,4 +37,5 @@ src/globule/tutorial/modes/demo_mode.py
 src/globule/tutorial/modes/interactive_mode.py
 src/globule/tutorial/modes/simple_demo.py
 tests/test_ollama_parser.py
+tests/test_vector_search.py
 tests/test_walking_skeleton.py
