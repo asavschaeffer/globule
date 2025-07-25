@@ -83,7 +83,10 @@ class SimpleDemoGlassEngine(AbstractGlassEngine):
         # Phase 4: Vector Search Demonstration
         await self._demonstrate_vector_search()
         
-        # Phase 5: Results
+        # Phase 5: Clustering Demonstration
+        await self._demonstrate_clustering()
+        
+        # Phase 6: Results
         self.console.print(Panel.fit(
             "[bold green]Demo Complete![/bold green]",
             title="Success"
@@ -279,6 +282,62 @@ class SimpleDemoGlassEngine(AbstractGlassEngine):
             self.metrics.add_error(e, "vector_search_demo")
             self.metrics.test_results.append({
                 "test": "vector_search_demo",
+                "success": False,
+                "error": str(e)
+            })
+    
+    async def _demonstrate_clustering(self) -> None:
+        """Phase 2: Demonstrate semantic clustering."""
+        self.console.print("\n[bold]Phase 2: Semantic Clustering Demo[/bold]")
+        self.console.print("[dim]Demonstrating automatic theme detection...[/dim]")
+        
+        try:
+            from globule.clustering.semantic_clustering import SemanticClusteringEngine
+            clustering_engine = SemanticClusteringEngine(self.storage)
+            
+            self.console.print("\n[yellow]PROCESSING[/yellow] Analyzing semantic clusters...")
+            analysis = await clustering_engine.analyze_semantic_clusters(min_globules=3)
+            
+            if analysis.clusters:
+                self.console.print(f"[green]SUCCESS[/green] Discovered {len(analysis.clusters)} semantic clusters:")
+                
+                cluster_table = Table(title="Semantic Clusters")
+                cluster_table.add_column("Cluster Label", style="cyan")
+                cluster_table.add_column("Size", style="green")
+                cluster_table.add_column("Keywords", style="yellow")
+                cluster_table.add_column("Confidence", style="dim")
+                
+                for cluster in analysis.clusters:
+                    cluster_table.add_row(
+                        cluster.label,
+                        str(cluster.size),
+                        ', '.join(cluster.keywords[:3]),
+                        f"{cluster.confidence_score:.2f}"
+                    )
+                
+                self.console.print(cluster_table)
+                self.console.print(f"Overall Quality (Silhouette Score): {analysis.silhouette_score:.3f}")
+
+                self.metrics.test_results.append({
+                    "test": "clustering_demo",
+                    "clusters_found": len(analysis.clusters),
+                    "success": True,
+                    "silhouette_score": analysis.silhouette_score
+                })
+            else:
+                self.console.print("[yellow]INFO[/yellow] Not enough related content to form distinct clusters.")
+                self.metrics.test_results.append({
+                    "test": "clustering_demo",
+                    "clusters_found": 0,
+                    "success": True,
+                    "note": "Not enough data to form clusters."
+                })
+
+        except Exception as e:
+            self.console.print(f"[red]ERROR[/red] Clustering failed: {e}")
+            self.metrics.add_error(e, "clustering_demo")
+            self.metrics.test_results.append({
+                "test": "clustering_demo",
                 "success": False,
                 "error": str(e)
             })
