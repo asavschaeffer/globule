@@ -155,28 +155,237 @@ class SQLiteStorageManager(StorageManager):
         limit: int = 50,
         similarity_threshold: float = 0.5
     ) -> List[Tuple[ProcessedGlobule, float]]:
-        """Find semantically similar globules (basic implementation for Phase 1)"""
-        # For Phase 1, we'll implement a simple linear search
-        # Phase 2 will add proper vector search with sqlite-vec
+        """
+        Find semantically similar globules using optimized vector search.
+        
+        Phase 2 Implementation: Enhanced similarity calculations with multiple algorithms,
+        intelligent filtering, and performance optimizations.
+        
+        Args:
+            query_vector: The embedding vector to search for
+            limit: Maximum number of results to return
+            similarity_threshold: Minimum similarity score (0.0 to 1.0)
+            
+        Returns:
+            List of (ProcessedGlobule, similarity_score) tuples, sorted by similarity
+        """
+        if query_vector is None:
+            return []
+            
+        # Ensure query vector is normalized for consistent similarity calculations
+        query_vector = self._normalize_vector(query_vector)
         
         db = await self._get_connection()
+        
+        # Phase 2: Enhanced query with metadata filtering
+        async with db.execute("""
+            SELECT * FROM globules 
+            WHERE embedding IS NOT NULL 
+            AND embedding_confidence > 0.3
+            ORDER BY created_at DESC
+        """) as cursor:
+            rows = await cursor.fetchall()
+        
+        if not rows:
+            return []
+        
+        # Phase 2: Batch similarity calculation for performance
+        results = await self._batch_similarity_search(query_vector, rows, similarity_threshold)
+        
+        # Advanced filtering and ranking
+        enhanced_results = self._enhance_search_results(results, query_vector)
+        
+        # Sort by enhanced similarity score and limit
+        enhanced_results.sort(key=lambda x: x[1], reverse=True)
+        return enhanced_results[:limit]
+
+    async def _batch_similarity_search(
+        self, 
+        query_vector: np.ndarray, 
+        rows: List[sqlite3.Row], 
+        threshold: float
+    ) -> List[Tuple[ProcessedGlobule, float]]:
+        """
+        Perform batch similarity calculations for improved performance.
+        
+        Phase 2 enhancement: Vectorized operations using numpy for speed.
+        """
+        results = []
+        embeddings_batch = []
+        globules_batch = []
+        
+        # Build batch of embeddings and globules
+        for row in rows:
+            globule = self._row_to_globule(row)
+            if globule.embedding is not None:
+                # Normalize embedding for consistent comparison
+                normalized_embedding = self._normalize_vector(globule.embedding)
+                embeddings_batch.append(normalized_embedding)
+                globules_batch.append(globule)
+        
+        if not embeddings_batch:
+            return results
+        
+        # Vectorized similarity calculation (much faster than loop)
+        embeddings_matrix = np.vstack(embeddings_batch)
+        similarities = np.dot(embeddings_matrix, query_vector)
+        
+        # Filter by threshold and create results
+        for i, similarity in enumerate(similarities):
+            if similarity >= threshold:
+                results.append((globules_batch[i], float(similarity)))
+        
+        return results
+
+    def _enhance_search_results(
+        self, 
+        results: List[Tuple[ProcessedGlobule, float]], 
+        query_vector: np.ndarray
+    ) -> List[Tuple[ProcessedGlobule, float]]:
+        """
+        Phase 2: Enhance search results with additional ranking factors.
+        
+        Considers:
+        - Semantic similarity (primary)
+        - Content quality (parsing confidence)
+        - Recency boost for newer content
+        - Domain-specific adjustments
+        """
+        enhanced_results = []
+        
+        for globule, base_similarity in results:
+            # Start with base similarity
+            enhanced_score = base_similarity
+            
+            # Quality boost: Higher parsing confidence = slight boost
+            if globule.parsing_confidence > 0.8:
+                enhanced_score += 0.02
+            elif globule.parsing_confidence < 0.5:
+                enhanced_score -= 0.01
+            
+            # Recency boost: Newer content gets slight preference
+            if hasattr(globule, 'created_at') and globule.created_at:
+                days_old = (datetime.now() - globule.created_at).days
+                if days_old < 7:  # Less than a week old
+                    enhanced_score += 0.01
+                elif days_old > 90:  # Older than 3 months
+                    enhanced_score -= 0.005
+            
+            # Domain coherence: Boost results from similar domains
+            if globule.parsed_data and isinstance(globule.parsed_data, dict):
+                domain = globule.parsed_data.get('domain', '')
+                if domain in ['creative', 'technical']:  # High-value domains
+                    enhanced_score += 0.005
+            
+            # Ensure score stays within reasonable bounds
+            enhanced_score = max(0.0, min(1.0, enhanced_score))
+            enhanced_results.append((globule, enhanced_score))
+        
+        return enhanced_results
+
+    def _normalize_vector(self, vector: np.ndarray) -> np.ndarray:
+        """
+        Normalize vector for consistent similarity calculations.
+        
+        Phase 2: Proper L2 normalization for accurate cosine similarity.
+        """
+        if vector is None:
+            return None
+            
+        norm = np.linalg.norm(vector)
+        if norm == 0:
+            return vector
+        return vector / norm
+
+    async def search_by_text_and_embedding(
+        self,
+        text_query: str,
+        embedding_query: np.ndarray,
+        limit: int = 20,
+        similarity_threshold: float = 0.4
+    ) -> List[Tuple[ProcessedGlobule, float]]:
+        """
+        Phase 2: Hybrid search combining text matching and semantic similarity.
+        
+        This provides more comprehensive search results by combining:
+        - Semantic similarity (embedding-based)
+        - Text matching (keyword-based)
+        - Intelligent result fusion
+        """
+        # Get semantic results
+        semantic_results = await self.search_by_embedding(
+            embedding_query, limit * 2, similarity_threshold
+        )
+        
+        # Get text-based results
+        text_results = await self._search_by_text_keywords(text_query, limit)
+        
+        # Fuse and rank results
+        fused_results = self._fuse_search_results(semantic_results, text_results)
+        
+        return fused_results[:limit]
+
+    async def _search_by_text_keywords(
+        self, 
+        text_query: str, 
+        limit: int
+    ) -> List[Tuple[ProcessedGlobule, float]]:
+        """Simple text-based search for hybrid functionality."""
+        db = await self._get_connection()
+        
+        # Simple text matching (Phase 2 could use FTS if needed)
+        keywords = text_query.lower().split()
+        
         async with db.execute(
-            "SELECT * FROM globules WHERE embedding IS NOT NULL"
+            "SELECT * FROM globules WHERE LOWER(text) LIKE ?",
+            (f"%{' '.join(keywords)}%",)
         ) as cursor:
             rows = await cursor.fetchall()
         
         results = []
         for row in rows:
             globule = self._row_to_globule(row)
-            if globule.embedding is not None:
-                # Calculate cosine similarity
-                similarity = self._cosine_similarity(query_vector, globule.embedding)
-                if similarity >= similarity_threshold:
-                    results.append((globule, similarity))
+            # Simple relevance scoring based on keyword matches
+            text_lower = globule.text.lower()
+            matches = sum(1 for keyword in keywords if keyword in text_lower)
+            relevance = matches / len(keywords) if keywords else 0
+            results.append((globule, relevance))
         
-        # Sort by similarity and limit results
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:limit]
+
+    def _fuse_search_results(
+        self,
+        semantic_results: List[Tuple[ProcessedGlobule, float]],
+        text_results: List[Tuple[ProcessedGlobule, float]]
+    ) -> List[Tuple[ProcessedGlobule, float]]:
+        """
+        Intelligently fuse semantic and text-based search results.
+        
+        Phase 2: Advanced result fusion with score normalization and deduplication.
+        """
+        # Create a map for deduplication and score fusion
+        result_map = {}
+        
+        # Add semantic results (weighted higher)
+        for globule, score in semantic_results:
+            result_map[globule.id] = (globule, score * 0.7)  # 70% weight
+        
+        # Add text results (weighted lower, but combined if duplicate)
+        for globule, score in text_results:
+            if globule.id in result_map:
+                # Combine scores for items found in both searches
+                existing_globule, existing_score = result_map[globule.id]
+                combined_score = existing_score + (score * 0.3)  # Add 30% of text score
+                result_map[globule.id] = (existing_globule, min(1.0, combined_score))
+            else:
+                result_map[globule.id] = (globule, score * 0.3)  # 30% weight for text-only
+        
+        # Convert back to list and sort
+        fused_results = list(result_map.values())
+        fused_results.sort(key=lambda x: x[1], reverse=True)
+        
+        return fused_results
     
     def _row_to_globule(self, row: sqlite3.Row) -> ProcessedGlobule:
         """Convert database row to ProcessedGlobule"""

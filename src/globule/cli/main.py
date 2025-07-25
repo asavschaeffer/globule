@@ -153,6 +153,91 @@ async def draft(topic: Optional[str], limit: int) -> None:
 
 
 @cli.command()
+@click.argument('query', required=True)
+@click.option('--limit', '-l', default=10, help='Maximum results to return')
+@click.option('--threshold', '-t', default=0.4, help='Minimum similarity threshold (0.0-1.0)')
+@click.option('--verbose', '-v', is_flag=True, help='Show detailed search results')
+async def search(query: str, limit: int, threshold: float, verbose: bool) -> None:
+    """
+    Search for similar thoughts using semantic vector search.
+    
+    This command demonstrates Phase 2 vector search capabilities by finding
+    semantically related content based on meaning rather than exact keywords.
+    
+    Examples:
+    \b
+    globule search "creative writing process"
+    globule search "system design patterns" --limit 5 --threshold 0.6
+    """
+    try:
+        # Initialize components
+        config = get_config()
+        storage = SQLiteStorageManager()
+        await storage.initialize()
+        
+        embedding_provider = OllamaEmbeddingProvider()
+        
+        click.echo(f"SEARCH: Searching for: '{query}'")
+        click.echo(f"PARAMS: limit={limit}, threshold={threshold}")
+        
+        # Generate query embedding
+        click.echo("EMBEDDING: Generating semantic embedding...")
+        query_embedding = await embedding_provider.embed(query)
+        
+        # Perform vector search
+        click.echo("SEARCH: Searching semantic database...")
+        results = await storage.search_by_embedding(query_embedding, limit, threshold)
+        
+        if not results:
+            click.echo("NO RESULTS: No similar thoughts found.")
+            click.echo("TIP: Try lowering the --threshold or adding more content with 'globule add'")
+            return
+        
+        # Display results
+        click.echo(f"\nSUCCESS: Found {len(results)} similar thoughts:\n")
+        
+        for i, (globule, similarity) in enumerate(results, 1):
+            # Format similarity score
+            similarity_pct = similarity * 100
+            similarity_bar = "=" * int(similarity * 20)  # Visual similarity bar
+            
+            click.echo(f"{i}. [{similarity_pct:.1f}% {similarity_bar}]")
+            
+            # Show content preview
+            preview = globule.text[:100] + "..." if len(globule.text) > 100 else globule.text
+            click.echo(f"   {preview}")
+            
+            if verbose:
+                # Show detailed metadata
+                click.echo(f"   CREATED: {globule.created_at}")
+                click.echo(f"   ID: {globule.id}")
+                
+                if globule.parsed_data:
+                    domain = globule.parsed_data.get('domain', 'unknown')
+                    category = globule.parsed_data.get('category', 'unknown')
+                    click.echo(f"   DOMAIN: {domain} | CATEGORY: {category}")
+                    
+                    if 'keywords' in globule.parsed_data:
+                        keywords = globule.parsed_data['keywords'][:3]  # Top 3 keywords
+                        click.echo(f"   KEYWORDS: {', '.join(keywords)}")
+            
+            click.echo()  # Blank line between results
+        
+        # Show search statistics
+        if verbose:
+            click.echo(f"STATS: Search completed in semantic space with {len(query_embedding)}-dimensional vectors")
+        
+        # Cleanup
+        await embedding_provider.close()
+        await storage.close()
+        
+    except Exception as e:
+        logger.error(f"Search failed: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+@cli.command()
 @click.option('--mode', '-m', 
               type=click.Choice(['interactive', 'demo', 'debug']), 
               default='demo',
@@ -211,6 +296,7 @@ def main():
     # Make commands async-compatible
     cli.commands['add'].callback = async_command(cli.commands['add'].callback)
     cli.commands['draft'].callback = async_command(cli.commands['draft'].callback)
+    cli.commands['search'].callback = async_command(cli.commands['search'].callback)
     cli.commands['tutorial'].callback = async_command(cli.commands['tutorial'].callback)
     
     cli()

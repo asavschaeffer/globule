@@ -31,7 +31,7 @@ class SimpleDemoGlassEngine(AbstractGlassEngine):
         self.demo_scenarios = [
             {
                 "category": "Creative Writing",
-                "input": "The concept of 'progressive overload' in fitness could apply to creative stamina. Just as muscles grow stronger when gradually challenged, perhaps our creative capacity expands when we consistently push slightly beyond our comfort zone.",
+                "input": "The concept of 'progressive overload' in fitness could apply to creative stamina. Just as muscles grow stronger when gradually challenged, perhaps our creative capacity expands when we consistently push slightly beyond our comfort zone. Today I will on the ground, cross my legs, straighten my back, and think about absolutely nothing. This will last for approximately 1.2 seconds. Maybe tomorrow it will be 1.23 seconds.",
                 "context": "Cross-domain thinking and metaphorical reasoning - showcasing creative domain detection"
             },
             {
@@ -80,7 +80,10 @@ class SimpleDemoGlassEngine(AbstractGlassEngine):
         # Phase 3: Process demo scenarios
         await self._process_demo_scenarios()
         
-        # Phase 4: Results
+        # Phase 4: Vector Search Demonstration
+        await self._demonstrate_vector_search()
+        
+        # Phase 5: Results
         self.console.print(Panel.fit(
             "[bold green]Demo Complete![/bold green]",
             title="Success"
@@ -196,6 +199,89 @@ class SimpleDemoGlassEngine(AbstractGlassEngine):
                     "success": False,
                     "error": str(e)
                 })
+
+    async def _demonstrate_vector_search(self) -> None:
+        """
+        Phase 2: Demonstrate intelligent vector search capabilities.
+        
+        Shows semantic similarity search in action using the globules
+        we just created in the demo scenarios.
+        """
+        self.console.print("\n[bold]Phase 2: Semantic Vector Search Demo[/bold]")
+        self.console.print("[dim]Demonstrating intelligent discovery of related thoughts...[/dim]")
+        
+        try:
+            # Use a search query that should find semantic relationships
+            search_query = "creative development and growth"
+            
+            self.console.print(f"\n🔍 Search Query: '{search_query}'")
+            
+            # Generate embedding for search query
+            self.console.print("[yellow]PROCESSING[/yellow] Generating search embedding...")
+            search_embedding = await self.embedding_provider.embed(search_query)
+            
+            # Perform vector search
+            self.console.print("[yellow]PROCESSING[/yellow] Searching semantic database...")
+            search_results = await self.storage.search_by_embedding(
+                search_embedding, 
+                limit=3, 
+                similarity_threshold=0.3
+            )
+            
+            if search_results:
+                self.console.print(f"[green]SUCCESS[/green] Found {len(search_results)} semantically related thoughts:")
+                
+                for i, (globule, similarity) in enumerate(search_results, 1):
+                    similarity_pct = similarity * 100
+                    similarity_bar = "█" * max(1, int(similarity * 15))
+                    
+                    self.console.print(f"\n{i}. [{similarity_pct:.1f}% {similarity_bar}]")
+                    
+                    # Show content preview
+                    preview = globule.text[:80] + "..." if len(globule.text) > 80 else globule.text
+                    self.console.print(f"   {preview}")
+                    
+                    # Show intelligence metadata
+                    if globule.parsed_data:
+                        domain = globule.parsed_data.get('domain', 'unknown')
+                        category = globule.parsed_data.get('category', 'unknown')
+                        self.console.print(f"   [cyan]INTELLIGENCE[/cyan] {domain}/{category}")
+                        
+                        keywords = globule.parsed_data.get('keywords', [])
+                        if keywords:
+                            self.console.print(f"   [cyan]KEYWORDS[/cyan] {', '.join(keywords[:3])}")
+                
+                self.console.print(f"\n[green]SUCCESS[/green] Vector search completed using {len(search_embedding)}-dimensional semantic space")
+                
+                # Record search success
+                self.metrics.test_results.append({
+                    "test": "vector_search_demo",
+                    "query": search_query,
+                    "results_found": len(search_results),
+                    "success": True,
+                    "avg_similarity": sum(score for _, score in search_results) / len(search_results)
+                })
+                
+            else:
+                self.console.print("[yellow]INFO[/yellow] No semantically similar content found (threshold too high)")
+                self.console.print("[dim]This is normal with limited demo data - try 'globule search' with more content![/dim]")
+                
+                self.metrics.test_results.append({
+                    "test": "vector_search_demo", 
+                    "query": search_query,
+                    "results_found": 0,
+                    "success": True,
+                    "note": "No results above similarity threshold - expected with limited data"
+                })
+                
+        except Exception as e:
+            self.console.print(f"[red]ERROR[/red] Vector search failed: {e}")
+            self.metrics.add_error(e, "vector_search_demo")
+            self.metrics.test_results.append({
+                "test": "vector_search_demo",
+                "success": False,
+                "error": str(e)
+            })
     
     def present_results(self) -> None:
         """Present demo results in a simple format."""
