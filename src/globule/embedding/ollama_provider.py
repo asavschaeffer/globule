@@ -118,10 +118,10 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
                     return False
                 
                 data = await response.json()
-                models = [model["name"] for model in data.get("models", [])]
+                available_models = [model["name"] for model in data.get("models", [])]
                 
-                # Check if our model is available
-                return self.model in models
+                # Check if our model is available, accounting for tags like ":latest"
+                return any(m.startswith(self.model) for m in available_models)
                 
         except Exception as e:
             logger.debug(f"Health check failed: {e}")

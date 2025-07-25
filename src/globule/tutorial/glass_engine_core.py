@@ -333,12 +333,19 @@ class AbstractGlassEngine(abc.ABC):
         except Exception as e:
             validation_results.append({"component": "parser", "status": "FAIL", "message": str(e)})
         
-        # Record validation results
-        self.metrics.test_results.extend(validation_results)
-        
+        # Log validation results for debugging, but don't add to test_results by default
+        self.logger.debug(f"System state validation results: {validation_results}")
+
         # Check if any critical components failed
         critical_failures = [r for r in validation_results if r["status"] == "FAIL"]
         if critical_failures:
+            # Add only critical failures to the main test results to trigger a FAIL status
+            for failure in critical_failures:
+                self.metrics.test_results.append({
+                    "test": f"component_check_{failure['component']}",
+                    "success": False,
+                    "error": failure['message']
+                })
             raise GlassEngineValidationError(f"Critical component validation failed: {critical_failures}")
     
     async def _cleanup_components(self) -> None:
