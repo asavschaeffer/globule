@@ -29,6 +29,7 @@ import inspect
 import time
 import psutil
 import os
+import numpy as np
 from typing import Optional, Dict, Any, List, Callable
 from datetime import datetime
 from contextlib import contextmanager
@@ -343,6 +344,12 @@ class DebugGlassEngine(AbstractGlassEngine):
         
         # Orchestrator debugging
         await self._debug_orchestrator_component()
+
+        # Phase 2: Vector Search debugging
+        await self._debug_vector_search_component()
+
+        # Phase 2: Clustering debugging
+        await self._debug_clustering_component()
     
     async def _debug_storage_component(self) -> None:
         """Deep debug analysis of storage component."""
@@ -1021,7 +1028,268 @@ class DebugGlassEngine(AbstractGlassEngine):
         self.console.print("\n--- DEBUG_MODE_SUMMARY ---")
         self.console.print(JSON.from_data(debug_summary, default=rich_json_default))
         
+        # Phase 2 Intelligence Summary
+        phase2_summary = {
+            "phase2_intelligence_features": {
+                "vector_search_debugging": "vector_search_debug" in self.variable_dumps,
+                "clustering_analysis_debugging": "clustering_debug" in self.variable_dumps,
+                "semantic_similarity_analysis": bool(self.variable_dumps.get("vector_search_debug", {}).get("individual_query_results")),
+                "cluster_quality_metrics": bool(self.variable_dumps.get("clustering_debug", {}).get("clustering_performance_metrics")),
+                "advanced_introspection_available": True
+            },
+            "phase2_debug_data_captured": {
+                "vector_search_queries_tested": len(self.variable_dumps.get("vector_search_debug", {}).get("individual_query_results", {})),
+                "clustering_thresholds_analyzed": len(self.variable_dumps.get("clustering_debug", {}).get("threshold_comparison", {})),
+                "semantic_clusters_discovered": sum(
+                    data.get("clusters_found", 0) 
+                    for data in self.variable_dumps.get("clustering_debug", {}).get("threshold_comparison", {}).values()
+                ),
+                "total_similarity_searches_performed": sum(
+                    data.get("results_count", 0)
+                    for data in self.variable_dumps.get("vector_search_debug", {}).get("individual_query_results", {}).values()
+                )
+            },
+            "glass_engine_philosophy_demonstration": {
+                "transparency_level": "MAXIMUM - Full algorithm internals exposed",
+                "educational_value": "COMPREHENSIVE - Complete Phase 2 system understanding",
+                "debugging_capability": "EXPERT - Direct access to clustering and search internals",
+                "trust_building": "COMPLETE - Every Phase 2 decision and metric visible"
+            }
+        }
+        
+        self.console.print("\n--- PHASE_2_INTELLIGENCE_DEBUG_SUMMARY ---")
+        self.console.print(JSON.from_data(phase2_summary, default=rich_json_default))
+        
         self.console.print("\n=== DEBUG MODE COMPLETE ===")
         self.console.print("RAW_DATA_FIDELITY: MAXIMUM")
-        self.console.print("ANALYSIS_DEPTH: COMPREHENSIVE")
+        self.console.print("ANALYSIS_DEPTH: COMPREHENSIVE") 
         self.console.print("DEBUG_INTERFACE: DIRECT_CODE_ACCESS")
+        self.console.print("PHASE_2_INTELLIGENCE: FULLY_DEBUGGABLE")
+
+    async def _debug_vector_search_component(self) -> None:
+        """Deep debug analysis of vector search component."""
+        self.console.print("\n--- VECTOR SEARCH COMPONENT DEBUG ---")
+        with self.trace_execution("vector_search_component_debug"):
+            try:
+                # Test multiple search queries to demonstrate semantic understanding
+                test_queries = [
+                    "creative development",
+                    "technical systems design", 
+                    "personal productivity methods"
+                ]
+                
+                all_search_results = {}
+                
+                for search_query in test_queries:
+                    self.console.print(f"VECTOR_SEARCH_QUERY: '{search_query}'")
+                    
+                    # Generate embedding with timing
+                    embed_start = datetime.now()
+                    query_embedding = await self.embedding_provider.embed(search_query)
+                    embed_time = (datetime.now() - embed_start).total_seconds() * 1000
+                    
+                    # Perform search with timing
+                    search_start = datetime.now()
+                    search_results = await self.storage.search_by_embedding(
+                        query_embedding, 
+                        limit=5, 
+                        similarity_threshold=0.3
+                    )
+                    search_time = (datetime.now() - search_start).total_seconds() * 1000
+                    
+                    # Analyze results quality
+                    result_analysis = {
+                        "query": search_query,
+                        "embedding_generation_ms": embed_time,
+                        "search_execution_ms": search_time,
+                        "query_embedding_dimension": len(query_embedding),
+                        "query_embedding_norm": float(np.linalg.norm(query_embedding)),
+                        "results_count": len(search_results),
+                        "similarity_range": {
+                            "min": min([s for _, s in search_results]) if search_results else 0,
+                            "max": max([s for _, s in search_results]) if search_results else 0,
+                            "avg": sum([s for _, s in search_results]) / len(search_results) if search_results else 0
+                        },
+                        "results": [
+                            {
+                                "globule_id": g.id,
+                                "similarity": float(s),
+                                "text_preview": g.text[:60] + "..." if len(g.text) > 60 else g.text,
+                                "domain": g.parsed_data.get('domain', 'unknown') if g.parsed_data else 'unknown',
+                                "created_at": g.created_at.isoformat() if g.created_at else None
+                            } for g, s in search_results
+                        ]
+                    }
+                    
+                    all_search_results[search_query] = result_analysis
+                    
+                    # Show immediate results for this query
+                    self.console.print(f"EMBEDDING_TIME: {embed_time:.2f}ms")
+                    self.console.print(f"SEARCH_TIME: {search_time:.2f}ms")
+                    self.console.print(f"RESULTS_FOUND: {len(search_results)}")
+                    
+                    if search_results:
+                        self.console.print("TOP_RESULTS:")
+                        for i, (globule, similarity) in enumerate(search_results[:3], 1):
+                            self.console.print(f"  {i}. [{similarity:.3f}] {globule.text[:50]}...")
+                    
+                    self.console.print("")  # Blank line between queries
+                
+                # Comprehensive debug output
+                comprehensive_debug_info = {
+                    "vector_search_system_analysis": {
+                        "embedding_provider_model": self.config.default_embedding_model,
+                        "storage_manager_type": type(self.storage).__name__,
+                        "test_queries_count": len(test_queries),
+                        "total_execution_time_ms": sum(
+                            data["embedding_generation_ms"] + data["search_execution_ms"] 
+                            for data in all_search_results.values()
+                        )
+                    },
+                    "individual_query_results": all_search_results,
+                    "performance_metrics": {
+                        "avg_embedding_time_ms": sum(
+                            data["embedding_generation_ms"] for data in all_search_results.values()
+                        ) / len(all_search_results),
+                        "avg_search_time_ms": sum(
+                            data["search_execution_ms"] for data in all_search_results.values()
+                        ) / len(all_search_results),
+                        "total_results_found": sum(
+                            data["results_count"] for data in all_search_results.values()
+                        )
+                    }
+                }
+                
+                self.console.print("COMPREHENSIVE_VECTOR_SEARCH_DEBUG_DATA:")
+                self.console.print(JSON.from_data(comprehensive_debug_info, default=rich_json_default))
+                self.variable_dumps["vector_search_debug"] = comprehensive_debug_info
+                
+            except Exception as e:
+                self.console.print(f"VECTOR_SEARCH_DEBUG_ERROR: {e}")
+                self.console.print(f"VECTOR_SEARCH_ERROR_TYPE: {type(e).__name__}")
+                import traceback
+                self.console.print(f"VECTOR_SEARCH_TRACEBACK: {traceback.format_exc()}")
+
+    async def _debug_clustering_component(self) -> None:
+        """Deep debug analysis of clustering component."""
+        self.console.print("\n--- CLUSTERING COMPONENT DEBUG ---")
+        with self.trace_execution("clustering_component_debug"):
+            try:
+                from globule.clustering.semantic_clustering import SemanticClusteringEngine
+                import numpy as np
+                
+                # Initialize clustering engine with detailed timing
+                engine_init_start = datetime.now()
+                clustering_engine = SemanticClusteringEngine(self.storage)
+                engine_init_time = (datetime.now() - engine_init_start).total_seconds() * 1000
+                
+                self.console.print(f"CLUSTERING_ENGINE_INIT_TIME: {engine_init_time:.2f}ms")
+                
+                # Run clustering analysis with multiple thresholds for comparison
+                min_globule_thresholds = [2, 3, 5]
+                all_analyses = {}
+                
+                for threshold in min_globule_thresholds:
+                    self.console.print(f"CLUSTERING_ANALYSIS_THRESHOLD: {threshold}")
+                    
+                    analysis_start = datetime.now()
+                    analysis = await clustering_engine.analyze_semantic_clusters(min_globules=threshold)
+                    analysis_time = (datetime.now() - analysis_start).total_seconds() * 1000
+                    
+                    # Extract detailed cluster analysis
+                    cluster_details = []
+                    for cluster in analysis.clusters:
+                        cluster_detail = {
+                            "cluster_id": cluster.id,
+                            "label": cluster.label,
+                            "description": cluster.description,
+                            "size": cluster.size,
+                            "confidence_score": cluster.confidence_score,
+                            "keywords": cluster.keywords,
+                            "domains": cluster.domains,
+                            "centroid_norm": float(np.linalg.norm(cluster.centroid)) if cluster.centroid is not None else 0,
+                            "representative_samples": cluster.representative_samples,
+                            "theme_analysis": cluster.theme_analysis,
+                            "created_at": cluster.created_at.isoformat(),
+                            "member_count": len(cluster.member_ids),
+                            "member_preview": cluster.member_ids[:5]  # First 5 member IDs
+                        }
+                        cluster_details.append(cluster_detail)
+                    
+                    analysis_summary = {
+                        "threshold": threshold,
+                        "analysis_time_ms": analysis_time,
+                        "clusters_found": len(analysis.clusters),
+                        "silhouette_score": analysis.silhouette_score,
+                        "total_globules_analyzed": analysis.total_globules,
+                        "optimal_k": analysis.optimal_k,
+                        "clustering_method": analysis.clustering_method,
+                        "processing_time_ms": analysis.processing_time_ms,
+                        "cross_cluster_relationships": analysis.cross_cluster_relationships,
+                        "temporal_patterns": analysis.temporal_patterns,
+                        "quality_metrics": analysis.quality_metrics,
+                        "detailed_clusters": cluster_details
+                    }
+                    
+                    all_analyses[f"threshold_{threshold}"] = analysis_summary
+                    
+                    # Show immediate results
+                    self.console.print(f"ANALYSIS_TIME: {analysis_time:.2f}ms")
+                    self.console.print(f"CLUSTERS_FOUND: {len(analysis.clusters)}")
+                    self.console.print(f"SILHOUETTE_SCORE: {analysis.silhouette_score:.3f}")
+                    self.console.print(f"GLOBULES_ANALYZED: {analysis.total_globules}")
+                    
+                    if analysis.clusters:
+                        self.console.print("TOP_CLUSTERS:")
+                        for i, cluster in enumerate(analysis.clusters[:3], 1):
+                            self.console.print(f"  {i}. [{cluster.confidence_score:.3f}] {cluster.label} ({cluster.size} thoughts)")
+                    
+                    self.console.print("")  # Blank line between analyses
+                
+                # Comprehensive clustering system debug data
+                comprehensive_clustering_debug = {
+                    "clustering_system_analysis": {
+                        "engine_class": "SemanticClusteringEngine",
+                        "initialization_time_ms": engine_init_time,
+                        "storage_backend": type(self.storage).__name__,
+                        "thresholds_tested": min_globule_thresholds,
+                        "total_analysis_time_ms": sum(
+                            data["analysis_time_ms"] for data in all_analyses.values()
+                        )
+                    },
+                    "threshold_comparison": all_analyses,
+                    "clustering_performance_metrics": {
+                        "avg_analysis_time_ms": sum(
+                            data["analysis_time_ms"] for data in all_analyses.values()
+                        ) / len(all_analyses),
+                        "best_silhouette_score": max(
+                            data["silhouette_score"] for data in all_analyses.values()
+                        ),
+                        "total_unique_clusters": len(set(
+                            cluster["cluster_id"] 
+                            for analysis in all_analyses.values() 
+                            for cluster in analysis["detailed_clusters"]
+                        )),
+                        "avg_cluster_confidence": sum(
+                            cluster["confidence_score"]
+                            for analysis in all_analyses.values()
+                            for cluster in analysis["detailed_clusters"]
+                        ) / sum(len(analysis["detailed_clusters"]) for analysis in all_analyses.values()) if any(analysis["detailed_clusters"] for analysis in all_analyses.values()) else 0
+                    },
+                    "algorithm_internals": {
+                        "clustering_methods_available": ["kmeans_with_intelligent_labeling", "agglomerative_fallback"],
+                        "embedding_dimension": len(analysis.clusters[0].centroid) if analysis.clusters and analysis.clusters[0].centroid is not None else 0,
+                        "quality_assessment_metrics": ["silhouette_score", "cluster_confidence", "cross_domain_score"],
+                        "labeling_strategy": "content_analysis_with_keyword_extraction"
+                    }
+                }
+                
+                self.console.print("COMPREHENSIVE_CLUSTERING_DEBUG_DATA:")
+                self.console.print(JSON.from_data(comprehensive_clustering_debug, default=rich_json_default))
+                self.variable_dumps["clustering_debug"] = comprehensive_clustering_debug
+                
+            except Exception as e:
+                self.console.print(f"CLUSTERING_DEBUG_ERROR: {e}")
+                self.console.print(f"CLUSTERING_ERROR_TYPE: {type(e).__name__}")
+                import traceback
+                self.console.print(f"CLUSTERING_TRACEBACK: {traceback.format_exc()}")
