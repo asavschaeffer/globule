@@ -309,6 +309,112 @@ class CanvasEditor(TextArea):
         if self.ai_parser is None:
             self.ai_parser = OllamaParser()
             await self.ai_parser._ensure_session()
+    
+    async def expand_selection(self) -> str:
+        """Expand selected text using AI Co-Pilot"""
+        if not self.ai_parser:
+            await self.init_ai_parser()
+        
+        # Get selected text or current line if no selection
+        selected_text = self.selected_text
+        if not selected_text.strip():
+            # Get current line as fallback
+            cursor_line = self.cursor_position[0] if hasattr(self, 'cursor_position') else 0
+            lines = self.text.split('\n')
+            if 0 <= cursor_line < len(lines):
+                selected_text = lines[cursor_line].strip()
+        
+        if not selected_text.strip():
+            return "No text selected to expand"
+        
+        # Construct expand prompt
+        expand_prompt = f"""
+Expand and elaborate on the following text. Keep the core meaning but add more detail, examples, or context. Make it more comprehensive while maintaining the original tone and style.
+
+Text to expand:
+{selected_text}
+
+Provide an expanded version:"""
+        
+        try:
+            # Make AI call to expand
+            result = await self._call_ai_for_text_operation(expand_prompt)
+            return result
+        except Exception as e:
+            return f"Error expanding text: {str(e)}"
+    
+    async def _call_ai_for_text_operation(self, prompt: str) -> str:
+        """Make AI call for text operations (expand/summarize)"""
+        try:
+            # Use the direct Ollama API call method from parser
+            url = f"{self.ai_parser.config.ollama_base_url}/api/generate"
+            
+            payload = {
+                "model": self.ai_parser.config.default_parsing_model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,  # Slightly higher for creative expansion
+                    "top_p": 0.9,
+                    "max_tokens": 500,  # Reasonable limit for text operations
+                }
+            }
+            
+            async with self.ai_parser.session.post(url, json=payload) as response:
+                if response.status != 200:
+                    raise Exception(f"AI request failed with status {response.status}")
+                    
+                data = await response.json()
+                ai_response = data.get("response", "").strip()
+                
+                # Clean up the response
+                return ai_response if ai_response else "AI returned empty response"
+                
+        except Exception as e:
+            # Fallback for when AI is unavailable
+            if "expand" in prompt.lower():
+                return f"[AI Unavailable] {self._fallback_expand(prompt)}"
+            else:
+                return f"[AI Unavailable] {self._fallback_summarize(prompt)}"
+    
+    def _fallback_expand(self, prompt: str) -> str:
+        """Fallback expansion when AI is unavailable"""
+        # Extract the original text from prompt
+        lines = prompt.split('\n')
+        text_lines = []
+        capture = False
+        for line in lines:
+            if "Text to expand:" in line:
+                capture = True
+                continue
+            elif "Provide an expanded version:" in line:
+                break
+            elif capture:
+                text_lines.append(line)
+        
+        original_text = '\n'.join(text_lines).strip()
+        return f"{original_text}\n\n[Expanded version would be generated here with AI assistance]"
+    
+    def _fallback_summarize(self, prompt: str) -> str:
+        """Fallback summarization when AI is unavailable"""
+        # Extract the original text from prompt
+        lines = prompt.split('\n')
+        text_lines = []
+        capture = False
+        for line in lines:
+            if "Text to summarize:" in line:
+                capture = True
+                continue
+            elif "Provide a concise summary:" in line:
+                break
+            elif capture:
+                text_lines.append(line)
+        
+        original_text = '\n'.join(text_lines).strip()
+        words = original_text.split()
+        # Simple summarization: take first quarter of words
+        summary_words = words[:len(words)//4] if len(words) > 20 else words[:10]
+        return ' '.join(summary_words) + "..."
 
 
 class StatusBar(Static):
@@ -421,6 +527,7 @@ class SynthesisApp(App):
         ("enter", "select_item", "Select/Add"),
         ("space", "toggle_expand", "Toggle"),
         ("ctrl+s", "save_draft", "Save"),
+        ("ctrl+e", "expand_text", "AI Expand"),
     ]
     
     def __init__(self, 
@@ -648,3 +755,48 @@ class SynthesisApp(App):
                 self.notify("Nothing to save - canvas is empty")
         except Exception as e:
             self.notify(f"Error saving draft: {e}")
+    
+    async def action_expand_text(self) -> None:
+        """AI Co-Pilot: Expand selected text"""
+        try:
+            canvas = self.query_one("#canvas-editor", CanvasEditor)
+            
+            # Check if canvas is focused
+            if self.focused != canvas:
+                self.notify("Focus on canvas editor first, then select text to expand")
+                return
+            
+            self.notify("AI Co-Pilot: Expanding text...")
+            
+            # Get expanded text from AI
+            expanded_result = await canvas.expand_selection()
+            
+            # Replace selected text with expanded version
+            if expanded_result and not expanded_result.startswith("Error") and not expanded_result.startswith("No text"):
+                # Replace selection with AI result
+                await self._replace_selection_with_result(canvas, expanded_result)
+                self.notify("✓ Text expanded successfully")
+            else:
+                self.notify(f"⚠ {expanded_result}")
+                
+        except Exception as e:
+            self.notify(f"Error expanding text: {e}")
+    
+    async def _replace_selection_with_result(self, canvas: CanvasEditor, ai_result: str) -> None:
+        """Replace selected text with AI result"""
+        try:
+            # Get current selection or cursor position
+            current_text = canvas.text
+            
+            # For now, append the result at the end since Textual selection handling is complex
+            # In production, this would properly replace the selection
+            if canvas.selected_text:
+                # If there's a selection, note it for user
+                canvas.text = current_text + f"\n\n--- AI Result ---\n{ai_result}\n--- End AI Result ---\n"
+            else:
+                # No selection, add at cursor position or end
+                canvas.text = current_text + f"\n\n{ai_result}\n"
+            
+        except Exception as e:
+            # Fallback: just append the result
+            canvas.text = canvas.text + f"\n\n{ai_result}\n"
