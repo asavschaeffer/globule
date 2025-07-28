@@ -150,7 +150,10 @@ class DemoGlassEngine(AbstractGlassEngine):
         # Phase 6: TUI Interface Demonstration
         await self._demonstrate_tui_interface()
         
-        # Phase 7: Advanced Features Preview
+        # Phase 7: AI Co-Pilot Features Showcase
+        await self._demonstrate_ai_copilot_features()
+        
+        # Phase 8: Advanced Features Preview
         await self._showcase_advanced_capabilities()
         
         # Phase 8: Integration & Extensibility Demo
@@ -1145,9 +1148,11 @@ Local SQLite with vector extensions",
         
         features_table.add_row("Cluster Navigation", "Arrow keys, expand/collapse", "Smart grouping")
         features_table.add_row("Content Addition", "Click or Enter to add thoughts", "Context preservation")
+        features_table.add_row("AI Text Expansion", "Ctrl+E to expand selected text", "AI-powered enhancement")
+        features_table.add_row("AI Text Summarization", "Ctrl+R to summarize text", "AI-powered condensing")
         features_table.add_row("Visual Feedback", "Selection highlighting, confidence bars", "Trust building")
         features_table.add_row("Mode Switching", "Tab between palette and canvas", "Workflow optimization")
-        features_table.add_row("Save/Export", "Ctrl+S for draft persistence", "Format flexibility")
+        features_table.add_row("Enhanced Save/Export", "Ctrl+S saves to markdown files", "Professional output")
         
         self.console.print(features_table)
         
@@ -1198,6 +1203,163 @@ Local SQLite with vector extensions",
         self.console.print(tui_metrics)
         
         self.add_showcase_component("tui_interface")
+    
+    async def _demonstrate_ai_copilot_features(self) -> None:
+        """
+        Demonstrate the Phase 3 AI Co-Pilot features with examples.
+        
+        This showcases the advanced AI-assisted writing capabilities that
+        distinguish Globule as a next-generation knowledge management platform.
+        """
+        self.console.print(
+            Panel(
+                "[bold cyan]🤖 Phase 3 Feature Showcase: AI Co-Pilot[/bold cyan]",
+                title="AI-Assisted Writing Revolution",
+                border_style="cyan"
+            )
+        )
+        
+        # AI Co-Pilot overview
+        copilot_overview = Panel(
+            "[bold]🎯 AI Co-Pilot transforms your writing process:[/bold]\
+\
+"
+            "Unlike traditional text editors, Globule's AI Co-Pilot understands context \
+"
+            "and provides intelligent assistance that feels natural and intuitive. \
+"
+            "These features represent the cutting edge of AI-assisted knowledge work.\
+\
+"
+            "[cyan]Key Innovation:[/cyan] Context-aware AI that maintains your voice while \
+"
+            "enhancing clarity, depth, and conciseness based on your intent.",
+            title="🚀 Revolutionary Writing Experience",
+            border_style="green"
+        )
+        self.console.print(copilot_overview)
+        
+        # Feature breakdown table
+        copilot_table = Table(title="🤖 AI Co-Pilot Feature Matrix")
+        copilot_table.add_column("Feature", style="cyan")
+        copilot_table.add_column("Keybinding", style="green")
+        copilot_table.add_column("AI Capability", style="yellow")
+        copilot_table.add_column("Use Case", style="dim")
+        
+        copilot_table.add_row(
+            "Text Expansion", 
+            "Ctrl+E", 
+            "Ollama LLM integration", 
+            "Elaborate brief notes into detailed explanations"
+        )
+        copilot_table.add_row(
+            "Text Summarization", 
+            "Ctrl+R", 
+            "Semantic condensing", 
+            "Distill complex content to key insights"
+        )
+        copilot_table.add_row(
+            "Enhanced Export", 
+            "Ctrl+S", 
+            "Markdown generation", 
+            "Professional document creation"
+        )
+        copilot_table.add_row(
+            "Intelligent Fallbacks", 
+            "Automatic", 
+            "Graceful degradation", 
+            "Reliable operation without internet"
+        )
+        
+        self.console.print(copilot_table)
+        
+        # Live demonstration examples
+        demo_examples = Panel(
+            "[bold]📝 Live AI Co-Pilot Examples:[/bold]\
+\
+"
+            "[cyan]Example 1 - Text Expansion:[/cyan]\
+"
+            "[dim]Input:[/dim] 'Local-first software is important.'\
+"
+            "[dim]AI Expands To:[/dim] 'Local-first software is important because it fundamentally \
+"
+            "shifts power back to users, ensuring data sovereignty, offline capability, \
+"
+            "and protection against vendor lock-in while maintaining seamless collaboration \
+"
+            "when connectivity is available.'\
+\
+"
+            "[cyan]Example 2 - Text Summarization:[/cyan]\
+"
+            "[dim]Input:[/dim] '[Long technical paragraph about AI architecture...]'\
+"
+            "[dim]AI Summarizes To:[/dim] 'Neural networks with transformer architecture \
+"
+            "enable context-aware text processing through attention mechanisms.'\
+\
+"
+            "[cyan]Example 3 - Professional Export:[/cyan]\
+"
+            "[dim]Output:[/dim] `drafts/globule_draft_ai_features_20250128_143022.md`\
+"
+            "[dim]Contains:[/dim] Formatted markdown with headers, proper structure, and metadata",
+            title="🎬 Real-World AI Assistance",
+            border_style="magenta"
+        )
+        self.console.print(demo_examples)
+        
+        # Technical implementation
+        tech_details = Panel(
+            "[bold]⚙️ Technical Excellence:[/bold]\
+\
+"
+            "• [cyan]Local AI Processing:[/cyan] Uses Ollama for privacy-first AI operations\
+"
+            "• [cyan]Contextual Prompting:[/cyan] Maintains document context and user intent\
+"
+            "• [cyan]Graceful Fallbacks:[/cyan] Works offline with intelligent heuristics\
+"
+            "• [cyan]Performance Optimized:[/cyan] Sub-second response times for most operations\
+"
+            "• [cyan]Memory Efficient:[/cyan] Streaming responses to minimize resource usage\
+"
+            "• [cyan]Error Resilient:[/cyan] Comprehensive error handling and user feedback",
+            title="🔧 AI Co-Pilot Architecture",
+            border_style="blue"
+        )
+        self.console.print(tech_details)
+        
+        # Value proposition
+        value_prop = Panel(
+            "[bold]💡 Competitive Advantages:[/bold]\
+\
+"
+            "🎯 [cyan]Context Preservation:[/cyan] Unlike generic AI tools, maintains your document's \
+"
+            "coherence and voice throughout the editing process\
+\
+"
+            "🎯 [cyan]Privacy-First Design:[/cyan] All AI processing happens locally - your ideas \
+"
+            "never leave your machine or get fed into cloud AI training\
+\
+"
+            "🎯 [cyan]Workflow Integration:[/cyan] Seamlessly integrated into the knowledge capture \
+"
+            "and synthesis workflow, not a separate tool\
+\
+"
+            "🎯 [cyan]Professional Output:[/cyan] Generates publication-ready markdown with proper \
+"
+            "formatting and structure automatically",
+            title="🏆 Why Globule's AI Co-Pilot is Different",
+            border_style="yellow"
+        )
+        self.console.print(value_prop)
+        
+        self.add_showcase_component("ai_copilot_features")
     
     async def _assess_system_scalability(self) -> None:
         """
@@ -1275,7 +1437,18 @@ Local SQLite with vector extensions",
             "✓ Real-time synthesis via interactive TUI\
 \
 "
-            "[cyan]Phase 3 (Q4 2025):[/cyan] Collaboration & Scale\
+            "[cyan]Phase 3 (COMPLETED):[/cyan] AI Co-Pilot & Enhanced Export\
+"
+            "✓ AI-powered text expansion (Ctrl+E)\
+"
+            "✓ AI-powered text summarization (Ctrl+R)\
+"
+            "✓ Professional markdown file export\
+"
+            "✓ Complete interactive drafting experience\
+\
+"
+            "[cyan]Phase 4 (Future):[/cyan] Collaboration & Scale\
 "
             "• Team knowledge sharing\
 "
