@@ -343,6 +343,48 @@ Provide an expanded version:"""
         except Exception as e:
             return f"Error expanding text: {str(e)}"
     
+    async def summarize_selection(self) -> str:
+        """Summarize selected text using AI Co-Pilot"""
+        if not self.ai_parser:
+            await self.init_ai_parser()
+        
+        # Get selected text or current paragraph
+        selected_text = self.selected_text
+        if not selected_text.strip():
+            # Get current paragraph as fallback
+            text_lines = self.text.split('\n')
+            cursor_line = self.cursor_position[0] if hasattr(self, 'cursor_position') else 0
+            
+            # Find paragraph boundaries
+            start_line = cursor_line
+            while start_line > 0 and text_lines[start_line-1].strip():
+                start_line -= 1
+            
+            end_line = cursor_line
+            while end_line < len(text_lines)-1 and text_lines[end_line+1].strip():
+                end_line += 1
+            
+            selected_text = '\n'.join(text_lines[start_line:end_line+1]).strip()
+        
+        if not selected_text.strip():
+            return "No text selected to summarize"
+        
+        # Construct summarize prompt
+        summarize_prompt = f"""
+Summarize the following text concisely. Capture the key points and main ideas in a shorter, clearer form. Maintain the essential meaning.
+
+Text to summarize:
+{selected_text}
+
+Provide a concise summary:"""
+        
+        try:
+            # Make AI call to summarize
+            result = await self._call_ai_for_text_operation(summarize_prompt)
+            return result
+        except Exception as e:
+            return f"Error summarizing text: {str(e)}"
+    
     async def _call_ai_for_text_operation(self, prompt: str) -> str:
         """Make AI call for text operations (expand/summarize)"""
         try:
@@ -528,6 +570,7 @@ class SynthesisApp(App):
         ("space", "toggle_expand", "Toggle"),
         ("ctrl+s", "save_draft", "Save"),
         ("ctrl+e", "expand_text", "AI Expand"),
+        ("ctrl+r", "summarize_text", "AI Summarize"),
     ]
     
     def __init__(self, 
@@ -781,6 +824,32 @@ class SynthesisApp(App):
                 
         except Exception as e:
             self.notify(f"Error expanding text: {e}")
+    
+    async def action_summarize_text(self) -> None:
+        """AI Co-Pilot: Summarize selected text"""
+        try:
+            canvas = self.query_one("#canvas-editor", CanvasEditor)
+            
+            # Check if canvas is focused
+            if self.focused != canvas:
+                self.notify("Focus on canvas editor first, then select text to summarize")
+                return
+            
+            self.notify("AI Co-Pilot: Summarizing text...")
+            
+            # Get summarized text from AI
+            summary_result = await canvas.summarize_selection()
+            
+            # Replace selected text with summary
+            if summary_result and not summary_result.startswith("Error") and not summary_result.startswith("No text"):
+                # Replace selection with AI result
+                await self._replace_selection_with_result(canvas, summary_result)
+                self.notify("✓ Text summarized successfully")
+            else:
+                self.notify(f"⚠ {summary_result}")
+                
+        except Exception as e:
+            self.notify(f"Error summarizing text: {e}")
     
     async def _replace_selection_with_result(self, canvas: CanvasEditor, ai_result: str) -> None:
         """Replace selected text with AI result"""
