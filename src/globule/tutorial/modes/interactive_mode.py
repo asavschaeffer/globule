@@ -101,10 +101,13 @@ class InteractiveGlassEngine(AbstractGlassEngine):
         # Phase 6: Interactive TUI Demonstration
         await self._guided_tui_experience()
         
-        # Phase 7: Retrieval and Advanced Features
+        # Phase 7: AI Co-Pilot Hands-On Experience
+        await self._guided_ai_copilot_exercise()
+        
+        # Phase 8: Retrieval and Advanced Features
         await self._guided_retrieval_exercise()
         
-        # Phase 8: Summary and Next Steps
+        # Phase 9: Summary and Next Steps
         await self._provide_learning_summary()
         
         self.logger.info("Interactive tutorial flow completed")
@@ -746,10 +749,13 @@ at the speed of thought.
         # Offer to launch the TUI
         if Confirm.ask("\nWould you like to launch the live TUI interface to try it yourself?"):
             self.console.print("\n[bold cyan]Launching interactive drafting session...[/bold cyan]")
-            self.console.print("[dim]This will open the two-pane interface where you can:")
+            self.console.print("[dim]This will open the Phase 3 AI-assisted interface where you can:")
             self.console.print("[dim]- Navigate clusters with arrow keys")
             self.console.print("[dim]- Press Enter to add thoughts to your draft")
             self.console.print("[dim]- Use Tab to switch between panes")
+            self.console.print("[dim]- Press Ctrl+E to expand text with AI Co-Pilot")
+            self.console.print("[dim]- Press Ctrl+R to summarize text with AI Co-Pilot")
+            self.console.print("[dim]- Press Ctrl+S to save as markdown file")
             self.console.print("[dim]- Press Q to return to tutorial[/dim]")
             
             try:
@@ -841,6 +847,145 @@ Try searching for concepts, themes, or ideas - even if the exact words don't app
                 
         except Exception as e:
             self.console.print(f"[yellow]Vector search not available: {e}[/yellow]")
+    
+    async def _guided_ai_copilot_exercise(self) -> None:
+        """
+        Guide users through the Phase 3 AI Co-Pilot features with hands-on exercises.
+        
+        This interactive section lets users experience the AI-assisted writing
+        capabilities that distinguish Globule's Phase 3 implementation.
+        """
+        self.console.print(
+            Panel(
+                "[bold cyan]🤖 Phase 3 Learning Module: AI Co-Pilot[/bold cyan]",
+                title="AI-Assisted Writing Experience",
+                border_style="cyan"
+            )
+        )
+        
+        # Introduction to AI Co-Pilot
+        intro_panel = Panel(
+            "[bold]Welcome to Globule's AI Co-Pilot![/bold]\n\n"
+            "Phase 3 introduces revolutionary AI-assisted writing capabilities that enhance "
+            "your knowledge work without compromising your ideas or privacy.\n\n"
+            "[cyan]What you'll learn:[/cyan]\n"
+            "• How AI text expansion enhances brief notes\n"
+            "• How AI summarization distills complex content\n"
+            "• How professional export creates publication-ready documents\n"
+            "• Why local AI processing protects your intellectual property",
+            title="🎯 Learning Objectives",
+            border_style="green"
+        )
+        self.console.print(intro_panel)
+        
+        # AI Co-Pilot features overview
+        features_table = Table(title="🤖 AI Co-Pilot Features")
+        features_table.add_column("Feature", style="cyan")
+        features_table.add_column("Keybinding", style="green")
+        features_table.add_column("Purpose", style="yellow")
+        features_table.add_column("AI Technology", style="dim")
+        
+        features_table.add_row(
+            "Text Expansion", 
+            "Ctrl+E", 
+            "Elaborate and enrich brief notes", 
+            "Ollama LLM with context prompting"
+        )
+        features_table.add_row(
+            "Text Summarization", 
+            "Ctrl+R", 
+            "Condense complex content to essentials", 
+            "Semantic analysis and key point extraction"
+        )
+        features_table.add_row(
+            "Enhanced Export", 
+            "Ctrl+S", 
+            "Generate professional markdown documents", 
+            "Structured formatting with metadata"
+        )
+        
+        self.console.print(features_table)
+        
+        # Interactive AI demonstration
+        if Confirm.ask("\nWould you like to see AI Co-Pilot in action with live examples?"):
+            await self._demonstrate_ai_copilot_live()
+        
+        # Privacy and local processing explanation
+        privacy_panel = Panel(
+            "[bold]🔒 Privacy-First AI Design:[/bold]\n\n"
+            "Unlike cloud-based AI tools, Globule's AI Co-Pilot:\n"
+            "• Runs entirely on your local machine using Ollama\n"
+            "• Never sends your ideas to external servers\n"
+            "• Doesn't contribute your content to AI training datasets\n"
+            "• Works completely offline once models are downloaded\n"
+            "• Gives you full control over your intellectual property\n\n"
+            "[cyan]This means you can confidently use AI assistance on sensitive work, "
+            "proprietary research, or personal thoughts without privacy concerns.[/cyan]",
+            title="🛡️ Your Ideas Stay Yours",
+            border_style="blue"
+        )
+        self.console.print(privacy_panel)
+        
+        # Offer hands-on experience
+        if Confirm.ask("\nWould you like to try the AI Co-Pilot features yourself in the TUI?"):
+            self.console.print("\n[bold cyan]Launching AI Co-Pilot experience...[/bold cyan]")
+            self.console.print("[dim]The TUI will open with Phase 3 AI features enabled.")
+            self.console.print("[dim]Try selecting some text and pressing Ctrl+E or Ctrl+R!")
+            self.console.print("[dim]Press Q when you're ready to continue the tutorial.[/dim]")
+            
+            try:
+                # Import and launch TUI with AI focus
+                from globule.tui.app import SynthesisApp
+                
+                # Create TUI app with emphasis on AI features
+                tui_app = SynthesisApp(storage_manager=self.storage, topic="ai copilot demo")
+                
+                # Brief pause for user to read instructions
+                await asyncio.sleep(2)
+                
+                # Launch TUI for AI Co-Pilot experience
+                await tui_app.run_async()
+                
+                self.console.print("\n[green]Welcome back to the tutorial![/green]")
+                
+            except Exception as e:
+                self.console.print(f"[yellow]TUI launch failed: {e}[/yellow]")
+                self.console.print("[dim]Continuing with tutorial...[/dim]")
+        
+        # Wrap up the AI Co-Pilot section
+        conclusion_panel = Panel(
+            "[bold]🎯 Key Takeaways:[/bold]\n\n"
+            "• AI Co-Pilot enhances your writing without replacing your voice\n"
+            "• Local AI processing ensures complete privacy and offline capability\n"
+            "• Professional export creates publication-ready documents\n"
+            "• These features work seamlessly within your knowledge capture workflow\n\n"
+            "[cyan]Next: We'll explore advanced search and retrieval capabilities![/cyan]",
+            title="✅ AI Co-Pilot Mastery",
+            border_style="green"
+        )
+        self.console.print(conclusion_panel)
+    
+    async def _demonstrate_ai_copilot_live(self) -> None:
+        """Demonstrate AI Co-Pilot with live examples."""
+        examples_panel = Panel(
+            "[bold]📝 Live AI Co-Pilot Examples:[/bold]\n\n"
+            "[cyan]Text Expansion Example:[/cyan]\n"
+            "[dim]Original:[/dim] 'Local-first software matters.'\n"
+            "[dim]AI Enhanced:[/dim] 'Local-first software matters because it fundamentally "
+            "shifts power from centralized platforms back to users, ensuring data sovereignty, "
+            "enabling offline productivity, and providing protection against vendor lock-in "
+            "while maintaining collaborative capabilities when connectivity is available.'\n\n"
+            "[cyan]Text Summarization Example:[/cyan]\n"
+            "[dim]Original:[/dim] '[Long paragraph about machine learning architectures...]\n"
+            "[dim]AI Summary:[/dim] 'Modern neural networks use transformer architectures "
+            "with attention mechanisms to process sequential data efficiently.'\n\n"
+            "[cyan]Professional Export Example:[/cyan]\n"
+            "[dim]Creates:[/dim] drafts/globule_draft_ai_demo_20250128_143500.md\n"
+            "[dim]With:[/dim] Proper headers, formatting, and metadata",
+            title="🎬 Real AI Assistance in Action",
+            border_style="magenta"
+        )
+        self.console.print(examples_panel)
     
     async def _guided_retrieval_exercise(self) -> None:
         """
