@@ -374,6 +374,9 @@ What would you like to add to your Globule?
         # Show the results educationally
         self._explain_processing_results(result, globule_id)
         
+        # Add a "learning moment" - this is Glass Engine philosophy in action
+        self._provide_learning_moment(result)
+        
         # Record the test result
         self.metrics.test_results.append({
             "test": "interactive_thought_processing",
@@ -438,6 +441,45 @@ What would you like to add to your Globule?
         # Database storage confirmation
         self.console.print(f"[green]✓ Saved to database with ID: {globule_id}[/green]")
         self.console.print("[dim]You can now find this thought when drafting related content![/dim]")
+    
+    def _provide_learning_moment(self, result) -> None:
+        """
+        Provide a deeper learning insight - Glass Engine philosophy in action.
+        
+        This method helps users understand the 'why' behind what just happened,
+        building trust through transparency about the system's decisions.
+        """
+        # Choose an insight based on what the system discovered
+        insights = []
+        
+        if result.embedding_confidence > 0.8:
+            insights.append("🧠 **High AI Confidence**: The system strongly understood your thought's meaning. This suggests your idea was clearly expressed and will be easy to find later.")
+        
+        if result.parsed_data:
+            domain = result.parsed_data.get('domain', 'general')
+            if domain != 'general':
+                insights.append(f"🎯 **Domain Detection**: Your thought was classified as '{domain}' - this helps Globule organize related ideas together automatically.")
+        
+        if result.file_decision and result.file_decision.confidence > 0.7:
+            insights.append("📁 **Smart Organization**: The system is confident about where this thought belongs in your knowledge structure.")
+        
+        # Always include a philosophical insight about what just happened
+        philosophical_insights = [
+            "🔍 **Transparency Principle**: You just saw every step of how your thought was processed - no black boxes, complete visibility.",
+            "🎓 **Learning Through Doing**: By processing your own thoughts, you understand how the system works better than any manual could teach.",
+            "🔗 **Semantic Understanding**: The AI didn't just store your words - it captured their meaning, creating connections you haven't even discovered yet."
+        ]
+        
+        # Combine specific insights with philosophical understanding
+        all_insights = insights + [philosophical_insights[len(insights) % len(philosophical_insights)]]
+        
+        if all_insights:
+            learning_panel = Panel(
+                "\n".join(all_insights),
+                title="💡 Learning Moment: Why This Matters",
+                border_style="dim blue"
+            )
+            self.console.print(learning_panel)
     
     async def _explore_data_processing_pipeline(self) -> None:
         """
