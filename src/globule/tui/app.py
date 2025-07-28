@@ -17,6 +17,7 @@ import asyncio
 from globule.core.interfaces import StorageManager
 from globule.core.models import ProcessedGlobule, SynthesisState, UIMode, GlobuleCluster
 from globule.clustering.semantic_clustering import SemanticClusteringEngine
+from globule.parsing.ollama_parser import OllamaParser
 
 
 class ClusterPalette(VerticalScroll):
@@ -267,6 +268,7 @@ class CanvasEditor(TextArea):
         super().__init__(content, **kwargs)
         self.incorporated_globules: Set[str] = set()
         self.can_focus = True
+        self.ai_parser: Optional[OllamaParser] = None
         
     def add_globule_content(self, globule: ProcessedGlobule) -> None:
         """Add globule content to canvas with context preservation"""
@@ -301,6 +303,12 @@ class CanvasEditor(TextArea):
         """Clear canvas content"""
         self.text = "# Draft Editor\n\nStart writing your draft here...\n\n"
         self.incorporated_globules.clear()
+    
+    async def init_ai_parser(self) -> None:
+        """Initialize AI parser for co-pilot functionality"""
+        if self.ai_parser is None:
+            self.ai_parser = OllamaParser()
+            await self.ai_parser._ensure_session()
 
 
 class StatusBar(Static):
