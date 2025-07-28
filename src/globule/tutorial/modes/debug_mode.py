@@ -289,6 +289,18 @@ class DebugGlassEngine(AbstractGlassEngine):
         self.console.print(f"MODE: {self.get_mode().value}")
         self.console.print(f"TRACE_DEPTH: MAXIMUM")
         
+        # Glass Engine transparency principle
+        transparency_panel = Panel(
+            "[bold]Glass Engine Transparency Principle[/bold]\n\n"
+            "What you're about to see is the complete internal state of Globule.\n"
+            "Every decision, every calculation, every data structure - nothing hidden.\n\n"
+            "[dim]This isn't just debugging data - it's a window into how AI systems "
+            "should work: completely transparent and understandable.[/dim]",
+            title="🔍 Why Debug Mode Matters",
+            border_style="dim"
+        )
+        self.console.print(transparency_panel)
+        
         with self.trace_execution("system_configuration_analysis"):
             # Raw configuration dump
             config_dict = {
