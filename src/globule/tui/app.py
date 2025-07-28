@@ -785,17 +785,37 @@ class SynthesisApp(App):
         self.notify(f"Added thought: {message.globule.text[:50]}...")
     
     def action_save_draft(self) -> None:
-        """Save current draft content"""
+        """Save current draft content to markdown file"""
         try:
             canvas = self.query_one("#canvas-editor", CanvasEditor)
             content = canvas.get_content()
             
-            if content.strip():
-                # For MVP, just show success message
-                # In production, this would save to file system
-                self.notify(f"Draft saved! ({len(content)} characters)")
-            else:
+            if not content.strip():
                 self.notify("Nothing to save - canvas is empty")
+                return
+            
+            # Generate filename with timestamp
+            import datetime
+            import os
+            
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            topic_part = self.topic.replace(" ", "_")[:20] if self.topic else "draft"
+            filename = f"globule_draft_{topic_part}_{timestamp}.md"
+            
+            # Save to current directory or drafts folder
+            drafts_dir = "drafts"
+            if not os.path.exists(drafts_dir):
+                os.makedirs(drafts_dir)
+            
+            filepath = os.path.join(drafts_dir, filename)
+            
+            # Write content to file
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            # Show success message with path
+            self.notify(f"✓ Draft saved to {filepath} ({len(content)} characters)")
+            
         except Exception as e:
             self.notify(f"Error saving draft: {e}")
     
