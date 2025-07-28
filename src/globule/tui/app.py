@@ -602,13 +602,15 @@ class SynthesisApp(App):
             with Vertical(id="canvas"):
                 yield Static("CANVAS: Draft Editor", classes="cluster-header")
                 yield CanvasEditor(
-                    "# Draft Editor\n\nWelcome to Globule Phase 2!\n\n" +
+                    "# Draft Editor\n\nWelcome to Globule Phase 3!\n\n" +
                     "INSTRUCTIONS:\n" +
                     "• Use Tab to switch between palette and canvas\n" +
                     "• Use arrow keys to navigate clusters and thoughts\n" +
                     "• Press Enter to expand clusters or add thoughts to canvas\n" +
                     "• Press Space to toggle cluster expansion\n" +
-                    "• Press Ctrl+S to save your draft\n\n" +
+                    "• Press Ctrl+S to save your draft\n" +
+                    "• Press Ctrl+E to expand selected text with AI Co-Pilot\n" +
+                    "• Press Ctrl+R to summarize selected text with AI Co-Pilot\n\n" +
                     "Start writing your draft below...\n\n", 
                     id="canvas-editor"
                 )
@@ -618,8 +620,8 @@ class SynthesisApp(App):
         yield Footer()
     
     async def on_mount(self) -> None:
-        """Phase 2: Load clusters and initialize two-pane interface"""
-        self.title = "Globule Phase 2: Semantic Synthesis"
+        """Phase 3: Load clusters and initialize AI-assisted interface"""
+        self.title = "Globule Phase 3: AI Co-Pilot"
         
         if self.topic:
             self.sub_title = f"Topic: {self.topic}"
