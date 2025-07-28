@@ -95,10 +95,16 @@ class InteractiveGlassEngine(AbstractGlassEngine):
         # Phase 4: Understanding Data Flow
         await self._explore_data_processing_pipeline()
         
-        # Phase 5: Retrieval and Synthesis
+        # Phase 5: Semantic Clustering Experience
+        await self._guided_clustering_exercise()
+        
+        # Phase 6: Interactive TUI Demonstration
+        await self._guided_tui_experience()
+        
+        # Phase 7: Retrieval and Advanced Features
         await self._guided_retrieval_exercise()
         
-        # Phase 6: Summary and Next Steps
+        # Phase 8: Summary and Next Steps
         await self._provide_learning_summary()
         
         self.logger.info("Interactive tutorial flow completed")
@@ -123,21 +129,31 @@ class InteractiveGlassEngine(AbstractGlassEngine):
 
 By the end of this tutorial, you'll understand:
 
-1. **How Globule captures your thoughts** - The complete process from input to storage
-2. **Where your data lives** - Transparent file organization and database structure  
-3. **How AI processes your ideas** - Embedding generation and semantic understanding
-4. **How to find related thoughts** - Retrieval and clustering mechanisms
-5. **Your privacy and control** - Local-first architecture and data ownership
+1. **How Globule captures your thoughts** - Real AI analysis with intelligent fallbacks
+2. **Where your data lives** - Transparent file organization and vector storage
+3. **How AI processes your ideas** - Advanced parsing, embedding, and classification
+4. **How to find related thoughts** - Semantic clustering and vector search
+5. **How to build drafts interactively** - The complete two-pane TUI experience
+6. **Your privacy and control** - Local-first architecture with no cloud dependencies
+
+## Phase 2 Capabilities You'll Experience
+
+✨ **Real Intelligence**: Ollama-powered content analysis
+🧠 **Semantic Understanding**: Vector embeddings and similarity search
+📊 **Smart Clustering**: Automatic theme detection and grouping
+🎨 **Interactive Drafting**: Live two-pane synthesis interface
+🔍 **Glass Engine Philosophy**: Complete transparency in how everything works
 
 ## Learning Approach
 
 This is a **hands-on tutorial** where you'll:
-- Type your own thoughts and see them processed live
-- Explore the system with guided exercises
-- Ask questions and get immediate answers
-- See exactly how everything works under the hood
+- Type your own thoughts and see them processed with real AI
+- Experience semantic clustering of your ideas
+- Use the interactive TUI for drafting
+- Explore advanced Phase 2 features
+- See exactly how the intelligence works under the hood
 
-Ready to begin your journey?
+Ready to experience the magic?
         """
         
         self.console.print(Panel(Markdown(objectives_md), title="Your Learning Journey"))
@@ -559,14 +575,281 @@ Would you like to see the raw data structures?
             
             self.console.print(field_explanations)
     
+    async def _guided_clustering_exercise(self) -> None:
+        """Guide users through experiencing semantic clustering."""
+        name = self.personalization_data.get("name", "Explorer")
+        
+        self.console.print(f"\n[bold magenta]Phase 2 Magic Time, {name}! Let's see how Globule discovers themes in your thoughts...[/bold magenta]")
+        
+        clustering_intro = """
+## Semantic Clustering: The Intelligence Behind Organization
+
+Now that you've captured some thoughts, Globule can do something amazing:
+**automatically discover hidden themes and connections** using AI.
+
+### How It Works:
+1. **Vector Analysis**: Each thought becomes a mathematical representation of its meaning
+2. **Similarity Detection**: AI finds thoughts that are conceptually related
+3. **Theme Discovery**: Groups emerge based on semantic patterns
+4. **Intelligent Labeling**: Clusters get meaningful names based on their content
+
+This isn't just keyword matching - it's genuine understanding of meaning!
+        """
+        
+        self.console.print(Panel(Markdown(clustering_intro), title="The Magic of Semantic Understanding"))
+        
+        # Check if we have enough thoughts for clustering
+        globules = await self.storage.get_recent_globules(limit=20)
+        
+        if len(globules) < 3:
+            self.console.print("[yellow]You need at least 3 thoughts for clustering. Let's add one more![/yellow]")
+            
+            # Suggest some clustering-friendly thoughts
+            suggestions = [
+                "The concept of flow state applies to both coding and creative writing",
+                "Local-first software gives users real ownership of their digital life",
+                "Teaching someone to think is more valuable than teaching facts",
+                "Progressive overload in fitness could apply to skill development",
+                "The best tools become invisible - you think with them, not about them"
+            ]
+            
+            self.console.print("\n[cyan]Here are some clustering-friendly suggestions:[/cyan]")
+            for i, suggestion in enumerate(suggestions, 1):
+                self.console.print(f"  {i}. {suggestion}")
+            
+            final_thought = Prompt.ask("\n[bold cyan]Add one more thought (or choose a number 1-5)[/bold cyan]")
+            
+            # Handle numeric choice
+            try:
+                choice_num = int(final_thought)
+                if 1 <= choice_num <= 5:
+                    final_thought = suggestions[choice_num - 1]
+            except ValueError:
+                pass  # Use their custom input
+            
+            # Process the final thought
+            await self._demonstrate_processing_with_narration(final_thought)
+            self.user_inputs.append(final_thought)
+        
+        # Now perform clustering analysis
+        self.console.print("\n[bold cyan]Analyzing your thoughts for semantic patterns...[/bold cyan]")
+        
+        try:
+            from globule.clustering.semantic_clustering import SemanticClusteringEngine
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=self.console
+            ) as progress:
+                
+                analysis_task = progress.add_task("Discovering semantic clusters...", total=None)
+                
+                # Initialize clustering engine
+                clustering_engine = SemanticClusteringEngine(self.storage)
+                
+                # Run clustering analysis
+                analysis = await clustering_engine.analyze_semantic_clusters(min_globules=2)
+                
+                progress.update(analysis_task, completed=True)
+            
+            # Display results
+            self.console.print("\n[bold green]✨ Clustering Analysis Complete![/bold green]")
+            
+            if analysis.clusters:
+                self.console.print(f"\n[bold]Discovered {len(analysis.clusters)} semantic clusters in your thoughts:[/bold]")
+                
+                for i, cluster in enumerate(analysis.clusters, 1):
+                    self.console.print(f"\n[cyan]Cluster {i}: {cluster.label}[/cyan]")
+                    self.console.print(f"  Size: {cluster.size} thoughts")
+                    self.console.print(f"  Confidence: {cluster.confidence_score:.1%}")
+                    self.console.print(f"  Keywords: {', '.join(cluster.keywords[:5])}")
+                    self.console.print(f"  Description: {cluster.description}")
+                    
+                    if cluster.representative_samples:
+                        self.console.print(f"  Sample: \"{cluster.representative_samples[0][:80]}...\"")
+                
+                # Educational moment
+                clustering_insight = Panel(
+                    "🧠 **What Just Happened**: Globule analyzed the *meaning* of your thoughts, not just keywords. "
+                    "It found patterns in how ideas relate to each other semantically. This is how you'll "
+                    "discover unexpected connections and themes in your knowledge over time.",
+                    title="🎆 The Magic Explained",
+                    border_style="dim blue"
+                )
+                self.console.print(clustering_insight)
+                
+            else:
+                self.console.print("[yellow]No distinct clusters found - your thoughts might be very diverse, which is great for creativity![/yellow]")
+                
+        except Exception as e:
+            self.console.print(f"[yellow]Clustering analysis not available: {e}[/yellow]")
+            self.console.print("[dim]This feature requires sufficient thoughts and AI processing capabilities.[/dim]")
+        
+        self.learning_checkpoints.append("clustering_experienced")
+    
+    async def _guided_tui_experience(self) -> None:
+        """Guide users through the interactive TUI experience."""
+        name = self.personalization_data.get("name", "Explorer")
+        
+        self.console.print(f"\n[bold purple]Time for the Grand Finale, {name}! Let's experience the complete Globule interface...[/bold purple]")
+        
+        tui_intro = """
+## The Interactive TUI: Where Everything Comes Together
+
+Globule's **two-pane interface** is where the magic becomes practical:
+
+### Left Pane: Semantic Palette
+- **Live clustering** of your thoughts by theme
+- **Expandable clusters** showing related ideas
+- **Smart navigation** with keyboard shortcuts
+- **Visual confidence indicators** for cluster quality
+
+### Right Pane: Canvas Editor
+- **Markdown-ready drafting** environment
+- **Click-to-add** thoughts from clusters
+- **Real-time synthesis** as you build your draft
+- **Integrated save** functionality
+
+### The Experience
+Watch your scattered thoughts transform into organized knowledge,
+then seamlessly flow into structured drafts. This is knowledge work
+at the speed of thought.
+        """
+        
+        self.console.print(Panel(Markdown(tui_intro), title="The Complete Experience"))
+        
+        # Show what the TUI looks like
+        tui_demo = """
+┌────────────────────────────────────┬───────────────────────────────────┐
+│ PALETTE: Semantic Clusters        │ CANVAS: Draft Editor              │
+├────────────────────────────────────┼───────────────────────────────────┤
+│                                    │                                   │
+│ ▶ Creative Thinking (3) [=======] │ # My Article Draft                │
+│   TAGS: creativity, flow, ideas    │                                   │
+│                                    │ ## Introduction                   │
+│ ▶ Local-First Tech (2) [======]   │                                   │
+│   TAGS: privacy, control, tools    │ The concept of flow state applies │
+│                                    │ to both coding and creative       │
+│ ▶ Learning Methods (2) [=====]    │ writing...                        │
+│   TAGS: education, thinking        │                                   │
+│                                    │ ## Core Ideas                     │
+│ [Tab] Switch Focus               │                                   │
+│ [Enter] Select/Add               │ [Ctrl+S] Save Draft               │
+│ [Space] Toggle Expand            │ [Tab] Switch to Palette           │
+│                                    │                                   │
+└────────────────────────────────────┴───────────────────────────────────┘
+        """
+        
+        self.console.print(Panel(tui_demo, title="Live TUI Interface Preview", border_style="green"))
+        
+        # Offer to launch the TUI
+        if Confirm.ask("\nWould you like to launch the live TUI interface to try it yourself?"):
+            self.console.print("\n[bold cyan]Launching interactive drafting session...[/bold cyan]")
+            self.console.print("[dim]This will open the two-pane interface where you can:")
+            self.console.print("[dim]- Navigate clusters with arrow keys")
+            self.console.print("[dim]- Press Enter to add thoughts to your draft")
+            self.console.print("[dim]- Use Tab to switch between panes")
+            self.console.print("[dim]- Press Q to return to tutorial[/dim]")
+            
+            try:
+                # Import and launch TUI
+                from globule.tui.app import SynthesisApp
+                
+                # Create TUI app with current storage
+                tui_app = SynthesisApp(storage_manager=self.storage, topic="tutorial session")
+                
+                # Brief pause for user to read instructions
+                await asyncio.sleep(2)
+                
+                # Launch TUI (this will block until user exits)
+                await tui_app.run_async()
+                
+                # Back to tutorial
+                self.console.print("\n[bold green]Welcome back to the tutorial![/bold green]")
+                self.console.print("[cyan]You've now experienced the complete Phase 2 interface![/cyan]")
+                
+            except Exception as e:
+                self.console.print(f"[yellow]Could not launch TUI: {e}[/yellow]")
+                self.console.print("[dim]You can try 'globule draft' from the command line after the tutorial.[/dim]")
+        else:
+            self.console.print("\n[cyan]No worries! You can launch the TUI anytime with 'globule draft'[/cyan]")
+        
+        # Always provide the learning moment
+        tui_insight = Panel(
+            "✨ **The Complete Vision Realized**: You've just seen how scattered thoughts become "
+            "structured knowledge. The TUI combines semantic clustering (AI understanding) with "
+            "interactive drafting (human creativity). This is knowledge work evolved.",
+            title="🎨 From Chaos to Creation",
+            border_style="dim purple"
+        )
+        self.console.print(tui_insight)
+        
+        self.learning_checkpoints.append("tui_experienced")
+    
+    async def _demonstrate_vector_search(self, globules: List) -> None:
+        """Demonstrate vector search capabilities."""
+        search_intro = """
+Vector search finds thoughts by **meaning**, not just keywords.
+Try searching for concepts, themes, or ideas - even if the exact words don't appear!
+        """
+        
+        self.console.print(Panel(search_intro, title="🔍 Semantic Search Demo"))
+        
+        # Get search query from user
+        search_query = Prompt.ask("[bold cyan]Enter a search concept or theme[/bold cyan]", default="creativity")
+        
+        try:
+            # Perform vector search
+            self.console.print(f"\n[dim]Searching for thoughts similar to '{search_query}'...[/dim]")
+            
+            # Generate embedding for query
+            query_embedding = await self.embedding_provider.embed(search_query)
+            
+            # Search for similar globules
+            search_results = await self.storage.search_by_embedding(
+                query_embedding, 
+                limit=5, 
+                similarity_threshold=0.3
+            )
+            
+            if search_results:
+                self.console.print(f"\n[bold green]Found {len(search_results)} semantically similar thoughts:[/bold green]")
+                
+                search_table = Table(title="Vector Search Results")
+                search_table.add_column("Similarity", style="green", width=10)
+                search_table.add_column("Thought", style="cyan")
+                
+                for globule, similarity in search_results:
+                    preview = globule.text[:70] + "..." if len(globule.text) > 70 else globule.text
+                    search_table.add_row(f"{similarity:.1%}", preview)
+                
+                self.console.print(search_table)
+                
+                # Explain the magic
+                search_insight = Panel(
+                    f"🎯 **Semantic Magic**: These results were found by meaning similarity to '{search_query}', "
+                    "not keyword matching. The AI understands conceptual relationships and finds related ideas "
+                    "even when different words are used.",
+                    title="How Vector Search Works",
+                    border_style="dim green"
+                )
+                self.console.print(search_insight)
+                
+            else:
+                self.console.print("[yellow]No similar thoughts found. Try adding more diverse content![/yellow]")
+                
+        except Exception as e:
+            self.console.print(f"[yellow]Vector search not available: {e}[/yellow]")
+    
     async def _guided_retrieval_exercise(self) -> None:
         """
-        Guide users through finding and working with their stored thoughts.
+        Guide users through advanced retrieval and Phase 2 search features.
         
-        This exercise teaches users how to retrieve and use their captured thoughts
-        for synthesis and drafting.
+        This exercise teaches users how to use vector search, clustering,
+        and other Phase 2 intelligence features.
         """
-        self.console.print("\n[bold green]Now let's see how to find and use your captured thoughts![/bold green]")
+        self.console.print("\n[bold green]Let's explore Globule's advanced search and retrieval capabilities![/bold green]")
         
         # Show what's in their database
         globules = await self.storage.get_recent_globules(limit=10)
@@ -576,40 +859,76 @@ Would you like to see the raw data structures?
             return
         
         retrieval_intro = """
-## Finding Your Thoughts
+## Phase 2 Retrieval: Beyond Keywords
 
-Globule provides several ways to find related thoughts:
+Globule offers multiple intelligent ways to find and connect your thoughts:
 
-1. **Recent Thoughts** - Show what you've captured lately
-2. **Semantic Search** - Find by meaning (Phase 2 feature)
-3. **Topic Clustering** - Group related ideas together
-4. **Full-Text Search** - Traditional keyword matching
+1. **Recent Thoughts** - Your latest captures with rich metadata
+2. **Vector Search** - Find by semantic meaning, not just keywords
+3. **Semantic Clustering** - AI-discovered thematic groups
+4. **Domain Filtering** - Browse by content type and category
+5. **Confidence Scoring** - See how well the AI understood each thought
 
-Let's explore what you've captured so far!
+### What Makes This Special
+- **Meaning-based**: Finds "flow state" when you search "optimal performance"
+- **Cross-domain**: Connects fitness concepts to creative work
+- **Evolving**: Gets smarter as you add more thoughts
+
+Let's explore your personal knowledge base!
         """
         
         self.console.print(Panel(Markdown(retrieval_intro), title="Retrieval Methods"))
         
-        # Show their recent thoughts
-        thoughts_table = Table(title=f"Your Recent Thoughts ({len(globules)} found)")
+        # Show their recent thoughts with Phase 2 metadata
+        thoughts_table = Table(title=f"Your Intelligent Knowledge Base ({len(globules)} thoughts)")
         thoughts_table.add_column("ID", style="dim", width=8)
         thoughts_table.add_column("Thought", style="cyan")
-        thoughts_table.add_column("When", style="dim")
+        thoughts_table.add_column("Domain", style="green", width=12)
+        thoughts_table.add_column("Category", style="yellow", width=10)
+        thoughts_table.add_column("Confidence", style="magenta", width=10)
+        thoughts_table.add_column("When", style="dim", width=12)
         
         for globule in globules:
-            preview = globule.text[:60] + "..." if len(globule.text) > 60 else globule.text
+            preview = globule.text[:50] + "..." if len(globule.text) > 50 else globule.text
             when = globule.created_at.strftime("%m/%d %H:%M")
-            thoughts_table.add_row(str(globule.id)[:8], preview, when)
+            
+            # Extract Phase 2 metadata
+            domain = "unknown"
+            category = "note"
+            confidence = "unknown"
+            
+            if globule.parsed_data:
+                domain = globule.parsed_data.get('domain', 'general')[:11]
+                category = globule.parsed_data.get('category', 'note')[:9]
+            
+            if globule.parsing_confidence is not None:
+                confidence = f"{globule.parsing_confidence:.1%}"
+            
+            thoughts_table.add_row(str(globule.id)[:8], preview, domain, category, confidence, when)
         
         self.console.print(thoughts_table)
         
+        # Phase 2 search demonstration
+        if len(globules) > 2 and Confirm.ask("\nWould you like to try semantic search?"):
+            await self._demonstrate_vector_search(globules)
+        
         # Interactive exploration
-        if Confirm.ask("Would you like to explore one of these thoughts in detail?"):
+        if Confirm.ask("\nWould you like to explore one of these thoughts in detail?"):
             await self._detailed_thought_exploration(globules)
         
-        # Simulate draft mode
-        if len(globules) > 1 and Confirm.ask("Want to see how these thoughts would appear in draft mode?"):
-            await self._simulate_draft_interface(globules)
+        # Advanced features teaser
+        if len(globules) > 1:
+            advanced_features = Panel(
+                "🔍 **Available from Command Line:**\n\n"
+                "• `globule search 'your query'` - Semantic search\n"
+                "• `globule cluster` - View clustering analysis\n"
+                "• `globule draft` - Launch interactive TUI\n"
+                "• `globule tutorial --demo` - See professional showcase\n"
+                "• `globule tutorial --debug` - Deep technical analysis",
+                title="🚀 More to Explore",
+                border_style="dim cyan"
+            )
+            self.console.print(advanced_features)
         
         self.learning_checkpoints.append("retrieval_explored")
     
@@ -704,18 +1023,22 @@ In this simulation, we'll show how your thoughts would be organized and presente
         
         self.console.print(f"\n[bold green]Congratulations, {name}! You've completed the interactive tutorial![/bold green]")
         
-        # Learning achievement summary
+        # Learning achievement summary with Phase 2 features
         achievements = []
         if "objectives_presented" in self.learning_checkpoints:
-            achievements.append("✓ Understood Globule's purpose and benefits")
+            achievements.append("✓ Understood Globule's Phase 2 intelligence capabilities")
         if "configuration_explored" in self.learning_checkpoints:
-            achievements.append("✓ Explored system configuration and local-first architecture")
+            achievements.append("✓ Explored local-first architecture with vector storage")
         if "thought_capture_completed" in self.learning_checkpoints:
-            achievements.append(f"✓ Successfully captured {len(self.user_inputs)} of your own thoughts")
+            achievements.append(f"✓ Experienced real AI processing with {len(self.user_inputs)} thoughts")
         if "pipeline_explored" in self.learning_checkpoints:
-            achievements.append("✓ Learned how the AI processing pipeline works")
+            achievements.append("✓ Learned how intelligent parsing and embedding works")
+        if "clustering_experienced" in self.learning_checkpoints:
+            achievements.append("✓ Witnessed semantic clustering in action")
+        if "tui_experienced" in self.learning_checkpoints:
+            achievements.append("✓ Experienced the complete two-pane interface")
         if "retrieval_explored" in self.learning_checkpoints:
-            achievements.append("✓ Discovered how to find and organize your thoughts")
+            achievements.append("✓ Discovered advanced search and retrieval features")
         
         achievements_panel = Panel(
             "\n".join(achievements),

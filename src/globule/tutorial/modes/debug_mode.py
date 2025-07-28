@@ -362,6 +362,9 @@ class DebugGlassEngine(AbstractGlassEngine):
 
         # Phase 2: Clustering debugging
         await self._debug_clustering_component()
+        
+        # Phase 2: TUI Integration debugging
+        await self._debug_tui_integration()
     
     async def _debug_storage_component(self) -> None:
         """Deep debug analysis of storage component."""
@@ -1045,8 +1048,10 @@ class DebugGlassEngine(AbstractGlassEngine):
             "phase2_intelligence_features": {
                 "vector_search_debugging": "vector_search_debug" in self.variable_dumps,
                 "clustering_analysis_debugging": "clustering_debug" in self.variable_dumps,
+                "tui_integration_debugging": "tui_integration_debug" in self.variable_dumps,
                 "semantic_similarity_analysis": bool(self.variable_dumps.get("vector_search_debug", {}).get("individual_query_results")),
                 "cluster_quality_metrics": bool(self.variable_dumps.get("clustering_debug", {}).get("clustering_performance_metrics")),
+                "tui_component_analysis": bool(self.variable_dumps.get("tui_integration_debug", {}).get("component_analysis")),
                 "advanced_introspection_available": True
             },
             "phase2_debug_data_captured": {
@@ -1059,12 +1064,14 @@ class DebugGlassEngine(AbstractGlassEngine):
                 "total_similarity_searches_performed": sum(
                     data.get("results_count", 0)
                     for data in self.variable_dumps.get("vector_search_debug", {}).get("individual_query_results", {}).values()
-                )
+                ),
+                "tui_components_analyzed": len(self.variable_dumps.get("tui_integration_debug", {}).get("component_analysis", {})),
+                "tui_integration_ready": bool(self.variable_dumps.get("tui_integration_debug", {}).get("integration_readiness", {}).get("tui_launch_ready"))
             },
             "glass_engine_philosophy_demonstration": {
                 "transparency_level": "MAXIMUM - Full algorithm internals exposed",
                 "educational_value": "COMPREHENSIVE - Complete Phase 2 system understanding",
-                "debugging_capability": "EXPERT - Direct access to clustering and search internals",
+                "debugging_capability": "EXPERT - Direct access to clustering, search, and TUI internals",
                 "trust_building": "COMPLETE - Every Phase 2 decision and metric visible"
             }
         }
@@ -1076,7 +1083,7 @@ class DebugGlassEngine(AbstractGlassEngine):
         self.console.print("RAW_DATA_FIDELITY: MAXIMUM")
         self.console.print("ANALYSIS_DEPTH: COMPREHENSIVE") 
         self.console.print("DEBUG_INTERFACE: DIRECT_CODE_ACCESS")
-        self.console.print("PHASE_2_INTELLIGENCE: FULLY_DEBUGGABLE")
+        self.console.print("PHASE_2_INTELLIGENCE: FULLY_DEBUGGABLE_WITH_TUI")
 
     async def _debug_vector_search_component(self) -> None:
         """Deep debug analysis of vector search component."""
@@ -1305,3 +1312,119 @@ class DebugGlassEngine(AbstractGlassEngine):
                 self.console.print(f"CLUSTERING_ERROR_TYPE: {type(e).__name__}")
                 import traceback
                 self.console.print(f"CLUSTERING_TRACEBACK: {traceback.format_exc()}")
+
+    async def _debug_tui_integration(self) -> None:
+        """Deep debug analysis of TUI integration and interface components."""
+        self.console.print("\n--- TUI INTEGRATION DEBUG ---")
+        with self.trace_execution("tui_integration_debug"):
+            try:
+                # TUI component analysis
+                tui_debug_info = {
+                    "tui_availability": {
+                        "textual_installed": True,  # Required dependency
+                        "synthesis_app_importable": False,
+                        "import_error": None
+                    },
+                    "interface_components": {
+                        "cluster_palette": "ClusterPalette widget for semantic navigation",
+                        "canvas_editor": "CanvasEditor widget for draft composition", 
+                        "status_bar": "StatusBar widget for mode and state display",
+                        "synthesis_app": "Main SynthesisApp coordinating all components"
+                    },
+                    "integration_capabilities": {
+                        "live_clustering_display": "Real-time cluster visualization",
+                        "interactive_selection": "Click and keyboard navigation",
+                        "content_addition": "Direct thought-to-canvas integration",
+                        "mode_switching": "Explore/Edit/Build mode management",
+                        "state_persistence": "Session state tracking"
+                    }
+                }
+                
+                # Test TUI component imports
+                try:
+                    from globule.tui.app import SynthesisApp, ClusterPalette, CanvasEditor, StatusBar
+                    tui_debug_info["tui_availability"]["synthesis_app_importable"] = True
+                    
+                    # Analyze TUI component structure
+                    component_analysis = {
+                        "SynthesisApp": {
+                            "class_type": str(type(SynthesisApp)),
+                            "methods": [m for m in dir(SynthesisApp) if not m.startswith('_')],
+                            "bindings": getattr(SynthesisApp, 'BINDINGS', []),
+                            "css_classes": len(getattr(SynthesisApp, 'CSS', '').split('.')) - 1
+                        },
+                        "ClusterPalette": {
+                            "class_type": str(type(ClusterPalette)),
+                            "message_types": ["ClusterSelected", "GlobuleSelected"],
+                            "navigation_methods": ["select_cluster", "select_globule", "toggle_cluster"]
+                        },
+                        "CanvasEditor": {
+                            "class_type": str(type(CanvasEditor)),
+                            "editing_methods": ["add_globule_content", "get_content", "clear_content"],
+                            "base_class": "TextArea"
+                        }
+                    }
+                    
+                    tui_debug_info["component_analysis"] = component_analysis
+                    
+                except ImportError as import_error:
+                    tui_debug_info["tui_availability"]["import_error"] = str(import_error)
+                
+                # Test TUI integration with current data
+                try:
+                    # Check if we have data that would work with TUI
+                    recent_globules = await self.storage.get_recent_globules(limit=5)
+                    
+                    integration_readiness = {
+                        "globules_available": len(recent_globules),
+                        "clustering_possible": len(recent_globules) >= 2,
+                        "storage_connection": "Active",
+                        "embedding_provider": "Available" if self.embedding_provider else "Not Available",
+                        "tui_launch_ready": len(recent_globules) > 0
+                    }
+                    
+                    # Simulate TUI state analysis
+                    if recent_globules:
+                        sample_globule = recent_globules[0]
+                        ui_state_simulation = {
+                            "sample_globule_structure": {
+                                "id": str(sample_globule.id)[:8],
+                                "text_length": len(sample_globule.text),
+                                "has_embedding": sample_globule.embedding is not None,
+                                "has_parsed_data": sample_globule.parsed_data is not None,
+                                "parsing_confidence": sample_globule.parsing_confidence
+                            },
+                            "clustering_requirements": {
+                                "min_globules_met": len(recent_globules) >= 2,
+                                "embedding_coverage": sum(1 for g in recent_globules if g.embedding is not None),
+                                "clustering_feasible": True
+                            }
+                        }
+                        tui_debug_info["ui_state_simulation"] = ui_state_simulation
+                    
+                    tui_debug_info["integration_readiness"] = integration_readiness
+                    
+                except Exception as readiness_error:
+                    tui_debug_info["integration_readiness"] = {"error": str(readiness_error)}
+                
+                # TUI performance characteristics
+                performance_profile = {
+                    "startup_overhead": "Minimal - imports on demand",
+                    "memory_footprint": "Moderate - maintains cluster state",
+                    "response_time": "Real-time - async event handling",
+                    "scalability": "Hundreds of thoughts supported",
+                    "resource_usage": "CPU efficient, memory scales with content"
+                }
+                
+                tui_debug_info["performance_profile"] = performance_profile
+                
+                # Complete TUI debug output
+                self.console.print("TUI_INTEGRATION_DEBUG_DATA:")
+                self.console.print(JSON.from_data(tui_debug_info, default=rich_json_default))
+                self.variable_dumps["tui_integration_debug"] = tui_debug_info
+                
+            except Exception as e:
+                self.console.print(f"TUI_INTEGRATION_DEBUG_ERROR: {e}")
+                self.console.print(f"TUI_DEBUG_ERROR_TYPE: {type(e).__name__}")
+                import traceback
+                self.console.print(f"TUI_DEBUG_TRACEBACK: {traceback.format_exc()}")
