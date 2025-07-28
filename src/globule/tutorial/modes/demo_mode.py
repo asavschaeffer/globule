@@ -164,11 +164,8 @@ class DemoGlassEngine(AbstractGlassEngine):
         """
         # Create impressive title display
         title_panel = Panel.fit(
-            "[bold blue]Globule: Professional System Demonstration[/bold blue]
-"
-            "[italic]Local-First AI Knowledge Management Platform[/italic]
-
-"
+            "[bold blue]Globule: Professional System Demonstration[/bold blue]\n"
+            "[italic]Local-First AI Knowledge Management Platform[/italic]\n\n"
             "[dim]Glass Engine Demo Mode - Complete System Showcase[/dim]",
             title="Executive Briefing",
             border_style="blue"
@@ -398,6 +395,9 @@ Local SQLite with vector extensions",
             
             # Display results professionally
             await self._display_scenario_results(scenario, result, i)
+            
+            # Glass Engine philosophy: Explain the "why" behind what just happened
+            self._explain_design_philosophy(scenario, result)
         
         # Summary analysis of all scenarios
         await self._analyze_scenario_performance(scenario_results)
@@ -540,6 +540,66 @@ Local SQLite with vector extensions",
             
             self.console.print(breakdown_table)
     
+    def _explain_design_philosophy(self, scenario: Dict[str, Any], result: Dict[str, Any]) -> None:
+        """
+        Explain the design philosophy behind what just happened.
+        
+        This embodies the Glass Engine principle of building trust through understanding
+        the 'why' behind system behavior, not just the 'what'.
+        """
+        if not result.get("success", False):
+            return  # Skip philosophy for failed scenarios
+        
+        # Choose insights based on what the demo revealed
+        insights = []
+        
+        # Processing time insight
+        processing_time = result.get("processing_time", 0)
+        if processing_time < 2000:  # Fast processing
+            insights.append(
+                "⚡ **Speed by Design**: Sub-2 second processing isn't accidental - it's designed for "
+                "the natural rhythm of human thought capture."
+            )
+        
+        # AI quality insight
+        if result.get("embedding_confidence", 0) > 0.8:
+            insights.append(
+                "🧠 **Quality Over Speed**: High AI confidence means the system prioritized "
+                "understanding over mere storage - your thoughts deserve nothing less."
+            )
+        
+        # Local-first insight
+        insights.append(
+            "🏠 **Local-First Philosophy**: This processing happened entirely on your machine. "
+            "No cloud, no tracking, no compromise - your thoughts remain yours."
+        )
+        
+        # Always include a scenario-specific insight
+        category = scenario.get("category", "").lower()
+        if "creative" in category:
+            insights.append(
+                "🎨 **Creativity Amplification**: The system recognizes creative thinking patterns "
+                "and preserves the nuance that makes ideas valuable."
+            )
+        elif "technical" in category:
+            insights.append(
+                "🔧 **Technical Precision**: Complex technical concepts are parsed with the depth "
+                "they deserve - no oversimplification."
+            )
+        elif "business" in category:
+            insights.append(
+                "💼 **Strategic Intelligence**: Business insights are captured with understanding "
+                "of context and implications - ready for decision-making."
+            )
+        
+        if insights:
+            philosophy_panel = Panel(
+                "\n\n".join(insights),
+                title="🎓 Design Philosophy: Why It Works This Way",
+                border_style="dim green"
+            )
+            self.console.print(philosophy_panel)
+    
     async def _analyze_scenario_performance(self, results: List[Dict[str, Any]]) -> None:
         """Analyze overall performance across all scenarios."""
         
@@ -663,7 +723,7 @@ Local SQLite with vector extensions",
         # Simulate concurrent processing
         concurrent_tasks = []
         test_inputs = [
-            "Concurrent processing test input number {i}".format(i=i) 
+            f"Concurrent processing test input number {i}" 
             for i in range(5)  # Conservative for demo
         ]
         
