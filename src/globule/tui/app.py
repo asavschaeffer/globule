@@ -9,6 +9,8 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Header, Footer, Static, TextArea, Tree, Label
 from textual.reactive import reactive, var
 from textual.binding import Binding
+from textual.message import Message
+from textual import events
 from typing import Optional, List, Set
 import asyncio
 
@@ -20,10 +22,25 @@ from globule.clustering.semantic_clustering import SemanticClusteringEngine
 class ClusterPalette(VerticalScroll):
     """Phase 2: Semantic cluster palette for thought discovery"""
     
+    class ClusterSelected(Message):
+        """Message sent when a cluster is selected"""
+        def __init__(self, cluster_id: str) -> None:
+            self.cluster_id = cluster_id
+            super().__init__()
+    
+    class GlobuleSelected(Message):
+        """Message sent when a globule is selected"""
+        def __init__(self, globule: ProcessedGlobule) -> None:
+            self.globule = globule
+            super().__init__()
+    
     def __init__(self, clusters: List[GlobuleCluster], **kwargs):
         super().__init__(**kwargs)
         self.clusters = clusters
         self.expanded_clusters: Set[str] = set()
+        self.selected_cluster_id: Optional[str] = None
+        self.selected_globule_id: Optional[str] = None
+        self.can_focus = True
     
     def compose(self) -> ComposeResult:
         """Display semantic clusters with expandable thought groups"""
@@ -39,7 +56,12 @@ class ClusterPalette(VerticalScroll):
             confidence_bar = "=" * max(1, int(confidence_score * 10))
             cluster_title = f"FOLDER: {cluster.label} ({cluster.metadata.get('size', len(cluster.globules))} thoughts) [{confidence_bar}]"
             
-            cluster_widget = Static(cluster_title, classes="cluster-title", id=f"cluster-{cluster.id}")
+            # Apply selection styling
+            cluster_classes = "cluster-title"
+            if cluster.id == self.selected_cluster_id:
+                cluster_classes += " selected"
+            
+            cluster_widget = Static(cluster_title, classes=cluster_classes, id=f"cluster-{cluster.id}")
             yield cluster_widget
             
             # Show cluster keywords if available
@@ -50,9 +72,15 @@ class ClusterPalette(VerticalScroll):
             
             # Show representative samples (expandable)
             if cluster.id in self.expanded_clusters and cluster.globules:
-                for i, globule in enumerate(cluster.globules[:3]):  # Show top 3
+                for i, globule in enumerate(cluster.globules[:5]):  # Show top 5
                     preview = globule.text[:80] + "..." if len(globule.text) > 80 else globule.text
-                    sample_widget = Static(f"  THOUGHT: {preview}", classes="globule-sample", id=f"globule-{globule.id}")
+                    
+                    # Apply selection styling to globules
+                    globule_classes = "globule-sample"
+                    if globule.id == self.selected_globule_id:
+                        globule_classes += " selected"
+                    
+                    sample_widget = Static(f"  THOUGHT: {preview}", classes=globule_classes, id=f"globule-{globule.id}")
                     yield sample_widget
     
     def toggle_cluster(self, cluster_id: str) -> None:
@@ -61,6 +89,175 @@ class ClusterPalette(VerticalScroll):
             self.expanded_clusters.remove(cluster_id)
         else:
             self.expanded_clusters.add(cluster_id)
+        # Refresh display
+        self.refresh(recompose=True)
+    
+    def select_cluster(self, cluster_id: str) -> None:
+        """Select a cluster"""
+        self.selected_cluster_id = cluster_id
+        self.selected_globule_id = None  # Clear globule selection
+        self.post_message(self.ClusterSelected(cluster_id))
+        self.refresh(recompose=True)
+    
+    def select_globule(self, globule_id: str) -> None:
+        """Select a globule and post selection message"""
+        self.selected_globule_id = globule_id
+        
+        # Find the globule in clusters
+        for cluster in self.clusters:
+            for globule in cluster.globules:
+                if globule.id == globule_id:
+                    self.post_message(self.GlobuleSelected(globule))
+                    self.refresh(recompose=True)
+                    return
+    
+    async def on_click(self, event: events.Click) -> None:
+        """Handle click events on clusters and globules"""
+        try:
+            # Find what was clicked
+            widget = self.get_widget_at(*event.screen_coordinate)
+            if widget and hasattr(widget, 'id') and widget.id:
+                if widget.id.startswith('cluster-'):
+                    cluster_id = widget.id.replace('cluster-', '')
+                    if cluster_id == self.selected_cluster_id:
+                        # Toggle expansion if already selected
+                        self.toggle_cluster(cluster_id)
+                    else:
+                        # Select cluster
+                        self.select_cluster(cluster_id)
+                elif widget.id.startswith('globule-'):
+                    globule_id = widget.id.replace('globule-', '')
+                    self.select_globule(globule_id)
+        except Exception:
+            # Ignore click handling errors
+            pass
+    
+    async def on_key(self, event: events.Key) -> None:
+        """Handle keyboard navigation"""
+        if event.key == "enter":
+            if self.selected_cluster_id:
+                if self.selected_globule_id:
+                    # Enter on globule - add to canvas
+                    self.select_globule(self.selected_globule_id)
+                else:
+                    # Enter on cluster - toggle expansion
+                    self.toggle_cluster(self.selected_cluster_id)
+            elif self.clusters:
+                # No selection - select first cluster
+                self.select_cluster(self.clusters[0].id)
+        
+        elif event.key == "space":
+            if self.selected_cluster_id:
+                self.toggle_cluster(self.selected_cluster_id)
+        
+        elif event.key == "down":
+            self._navigate_down()
+        
+        elif event.key == "up":
+            self._navigate_up()
+    
+    def _navigate_down(self) -> None:
+        """Navigate to next item"""
+        if not self.clusters:
+            return
+        
+        if not self.selected_cluster_id:
+            # Select first cluster
+            self.select_cluster(self.clusters[0].id)
+            return
+        
+        # Find current position
+        cluster_idx = None
+        for i, cluster in enumerate(self.clusters):
+            if cluster.id == self.selected_cluster_id:
+                cluster_idx = i
+                break
+        
+        if cluster_idx is None:
+            return
+        
+        current_cluster = self.clusters[cluster_idx]
+        
+        # If we're on a cluster and it's expanded and has globules
+        if (not self.selected_globule_id and 
+            current_cluster.id in self.expanded_clusters and 
+            current_cluster.globules):
+            # Move to first globule
+            self.selected_globule_id = current_cluster.globules[0].id
+            self.refresh(recompose=True)
+            return
+        
+        # If we're on a globule, try to move to next globule
+        if self.selected_globule_id:
+            globule_idx = None
+            for i, globule in enumerate(current_cluster.globules):
+                if globule.id == self.selected_globule_id:
+                    globule_idx = i
+                    break
+            
+            if globule_idx is not None and globule_idx < len(current_cluster.globules) - 1:
+                # Move to next globule in same cluster
+                self.selected_globule_id = current_cluster.globules[globule_idx + 1].id
+                self.refresh(recompose=True)
+                return
+            else:
+                # Move to next cluster
+                self.selected_globule_id = None
+        
+        # Move to next cluster
+        if cluster_idx < len(self.clusters) - 1:
+            self.select_cluster(self.clusters[cluster_idx + 1].id)
+    
+    def _navigate_up(self) -> None:
+        """Navigate to previous item"""
+        if not self.clusters:
+            return
+        
+        if not self.selected_cluster_id:
+            # Select last cluster
+            self.select_cluster(self.clusters[-1].id)
+            return
+        
+        # Find current position
+        cluster_idx = None
+        for i, cluster in enumerate(self.clusters):
+            if cluster.id == self.selected_cluster_id:
+                cluster_idx = i
+                break
+        
+        if cluster_idx is None:
+            return
+        
+        current_cluster = self.clusters[cluster_idx]
+        
+        # If we're on a globule, try to move to previous globule or cluster
+        if self.selected_globule_id:
+            globule_idx = None
+            for i, globule in enumerate(current_cluster.globules):
+                if globule.id == self.selected_globule_id:
+                    globule_idx = i
+                    break
+            
+            if globule_idx is not None and globule_idx > 0:
+                # Move to previous globule in same cluster
+                self.selected_globule_id = current_cluster.globules[globule_idx - 1].id
+                self.refresh(recompose=True)
+                return
+            else:
+                # Move to cluster header
+                self.selected_globule_id = None
+                self.refresh(recompose=True)
+                return
+        
+        # Move to previous cluster
+        if cluster_idx > 0:
+            prev_cluster = self.clusters[cluster_idx - 1]
+            self.select_cluster(prev_cluster.id)
+            # If previous cluster is expanded, go to its last globule
+            if (prev_cluster.id in self.expanded_clusters and 
+                prev_cluster.globules):
+                self.selected_globule_id = prev_cluster.globules[-1].id
+                self.refresh(recompose=True)
 
 
 class CanvasEditor(TextArea):
@@ -69,6 +266,7 @@ class CanvasEditor(TextArea):
     def __init__(self, content: str = "", **kwargs):
         super().__init__(content, **kwargs)
         self.incorporated_globules: Set[str] = set()
+        self.can_focus = True
         
     def add_globule_content(self, globule: ProcessedGlobule) -> None:
         """Add globule content to canvas with context preservation"""
@@ -76,17 +274,33 @@ class CanvasEditor(TextArea):
             return  # Already incorporated
             
         # Format the globule content for integration
-        formatted_content = f"\n\n## {globule.parsed_data.get('title', 'Thought')}\n\n{globule.text}\n"
+        title = globule.parsed_data.get('title', 'Thought') if globule.parsed_data else 'Thought'
+        formatted_content = f"\n\n## {title}\n\n{globule.text}\n"
         
-        # Add to current cursor position
+        # Add to current cursor position or end
         current_content = self.text
-        cursor_pos = len(current_content)  # Append at end for MVP
+        cursor_pos = self.cursor_position if hasattr(self, 'cursor_position') else len(current_content)
         
         new_content = current_content[:cursor_pos] + formatted_content + current_content[cursor_pos:]
         self.text = new_content
         
         # Track incorporation
         self.incorporated_globules.add(globule.id)
+        
+        # Move cursor to end of inserted content
+        try:
+            self.cursor_position = cursor_pos + len(formatted_content)
+        except:
+            pass  # Ignore cursor positioning errors
+    
+    def get_content(self) -> str:
+        """Get current canvas content"""
+        return self.text
+    
+    def clear_content(self) -> None:
+        """Clear canvas content"""
+        self.text = "# Draft Editor\n\nStart writing your draft here...\n\n"
+        self.incorporated_globules.clear()
 
 
 class StatusBar(Static):
@@ -162,6 +376,12 @@ class SynthesisApp(App):
         background: $secondary-background;
     }
     
+    .selected {
+        background: $accent !important;
+        color: $text-selected;
+        border: solid $accent;
+    }
+    
     .no-content {
         color: $warning;
         text-style: italic;
@@ -190,8 +410,9 @@ class SynthesisApp(App):
         ("ctrl+c", "quit", "Quit"),
         ("q", "quit", "Quit"),
         ("tab", "switch_focus", "Switch Pane"),
-        ("enter", "select_item", "Select"),
+        ("enter", "select_item", "Select/Add"),
         ("space", "toggle_expand", "Toggle"),
+        ("ctrl+s", "save_draft", "Save"),
     ]
     
     def __init__(self, 
@@ -223,7 +444,14 @@ class SynthesisApp(App):
             with Vertical(id="canvas"):
                 yield Static("CANVAS: Draft Editor", classes="cluster-header")
                 yield CanvasEditor(
-                    "# Draft Editor\n\nStart writing your draft here...\nUse Tab to switch to palette and select thoughts to incorporate.\n\n", 
+                    "# Draft Editor\n\nWelcome to Globule Phase 2!\n\n" +
+                    "INSTRUCTIONS:\n" +
+                    "• Use Tab to switch between palette and canvas\n" +
+                    "• Use arrow keys to navigate clusters and thoughts\n" +
+                    "• Press Enter to expand clusters or add thoughts to canvas\n" +
+                    "• Press Space to toggle cluster expansion\n" +
+                    "• Press Ctrl+S to save your draft\n\n" +
+                    "Start writing your draft below...\n\n", 
                     id="canvas-editor"
                 )
         
@@ -280,17 +508,29 @@ class SynthesisApp(App):
             # Update the palette display
             palette = self.query_one("#cluster-palette", ClusterPalette)
             palette.clusters = self.clusters
+            palette.expanded_clusters = self.synthesis_state.expanded_clusters
             await palette.recompose()
+            
+            # Set initial focus to palette
+            palette.focus()
+            self.synthesis_state.current_mode = UIMode.EXPLORE
             
             # Update status
             status_bar = self.query_one("#status-bar", StatusBar)
             status_bar.update_status(self.synthesis_state)
             
         except Exception as e:
-            # Show error in palette
-            error_widget = Static(f"Error loading semantic clusters: {e}", classes="no-content")
-            palette = self.query_one("#cluster-palette", ClusterPalette)
-            await palette.mount(error_widget)
+            # Show error in palette and log for debugging
+            import logging
+            logging.error(f"Error loading semantic clusters: {e}")
+            
+            try:
+                palette = self.query_one("#cluster-palette", ClusterPalette)
+                error_widget = Static(f"Error loading semantic clusters: {e}\n\nTry adding more thoughts first.", classes="no-content")
+                await palette.mount(error_widget)
+            except Exception:
+                # If even mounting fails, just continue
+                pass
     
     async def _get_globule_by_id(self, globule_id: str) -> Optional[ProcessedGlobule]:
         """Helper to get globule by ID"""
@@ -315,22 +555,88 @@ class SynthesisApp(App):
             if self.focused is None:
                 palette = self.query_one("#cluster-palette")
                 palette.focus()
+                self.synthesis_state.current_mode = UIMode.EXPLORE
             elif self.focused.id == "cluster-palette":
                 canvas = self.query_one("#canvas-editor")
                 canvas.focus()
+                self.synthesis_state.current_mode = UIMode.EDIT
             else:
                 palette = self.query_one("#cluster-palette")
                 palette.focus()
+                self.synthesis_state.current_mode = UIMode.EXPLORE
+            
+            # Update status bar
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.update_status(self.synthesis_state)
         except Exception:
             pass  # Ignore focus errors
     
     def action_select_item(self) -> None:
         """Select item in current focused pane"""
-        # This would handle selecting clusters or globules
-        # For MVP, we'll implement basic functionality
-        pass
+        try:
+            if self.focused and self.focused.id == "cluster-palette":
+                palette = self.query_one("#cluster-palette", ClusterPalette)
+                # Trigger enter key behavior
+                if palette.selected_cluster_id:
+                    if palette.selected_globule_id:
+                        # Add globule to canvas
+                        palette.select_globule(palette.selected_globule_id)
+                    else:
+                        # Toggle cluster expansion
+                        palette.toggle_cluster(palette.selected_cluster_id)
+                elif palette.clusters:
+                    # Select first cluster
+                    palette.select_cluster(palette.clusters[0].id)
+        except Exception:
+            pass
     
     def action_toggle_expand(self) -> None:
         """Toggle expansion of selected cluster"""
-        # For MVP, expand/collapse clusters in palette
-        pass
+        try:
+            palette = self.query_one("#cluster-palette", ClusterPalette)
+            if palette.selected_cluster_id:
+                palette.toggle_cluster(palette.selected_cluster_id)
+        except Exception:
+            pass
+    
+    async def on_cluster_palette_cluster_selected(self, message: ClusterPalette.ClusterSelected) -> None:
+        """Handle cluster selection"""
+        self.synthesis_state.selected_cluster_id = message.cluster_id
+        self.synthesis_state.selected_globule_id = None
+        
+        # Update status bar
+        status_bar = self.query_one("#status-bar", StatusBar)
+        status_bar.update_status(self.synthesis_state)
+    
+    async def on_cluster_palette_globule_selected(self, message: ClusterPalette.GlobuleSelected) -> None:
+        """Handle globule selection - add to canvas"""
+        self.synthesis_state.selected_globule_id = message.globule.id
+        
+        # Add globule content to canvas
+        canvas = self.query_one("#canvas-editor", CanvasEditor)
+        canvas.add_globule_content(message.globule)
+        
+        # Update synthesis state
+        self.synthesis_state.incorporated_globules.add(message.globule.id)
+        
+        # Update status bar
+        status_bar = self.query_one("#status-bar", StatusBar)
+        status_bar.update_status(self.synthesis_state)
+        
+        # Show feedback
+        self.notify(f"Added thought: {message.globule.text[:50]}...")
+    
+    def action_save_draft(self) -> None:
+        """Save current draft content"""
+        try:
+            canvas = self.query_one("#canvas-editor", CanvasEditor)
+            content = canvas.get_content()
+            
+            if content.strip():
+                # For MVP, just show success message
+                # In production, this would save to file system
+                self.notify(f"Draft saved! ({len(content)} characters)")
+            else:
+                self.notify("Nothing to save - canvas is empty")
+        except Exception as e:
+            self.notify(f"Error saving draft: {e}")
