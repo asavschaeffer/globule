@@ -206,7 +206,10 @@ Be precise and analytical. Focus on semantic meaning over surface features.
 
     async def parse(self, text: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Parse text using Ollama LLM to extract structured information.
+        Parse text using fast/slow parsing strategy.
+        
+        Fast Path: Use deterministic regex to instantly identify structured inputs.
+        Slow Path: Use LLM for unstructured prose if fast path fails.
         
         Args:
             text: Input text to analyze
@@ -220,21 +223,27 @@ Be precise and analytical. Focus on semantic meaning over surface features.
         """
         if not text.strip():
             return self._create_empty_result(text)
-            
+        
+        # FAST PATH: Try deterministic regex-based parsing first
+        fast_result = await self._fast_path_parse(text)
+        if fast_result:
+            self.logger.info(f"SUCCESS: Fast path parsing completed. Pattern: {fast_result['metadata']['pattern_matched']}")
+            return fast_result
+        
+        # SLOW PATH: Use LLM for unstructured content
+        self.logger.info("Fast path failed, engaging slow path with LLM...")
+        
         try:
             await self._ensure_session()
-            
-            # ATTEMPT: Intelligent model selection with CPU-safe fallback
-            self.logger.info(f"ATTEMPT: Using 'ollama_parser' with model '{self.config.default_parsing_model}'...")
             
             # Enhanced health check with automatic CPU-safe detection
             is_healthy, optimal_model = await self.health_check_with_cpu_fallback()
             
             if not is_healthy:
                 self.logger.warning(f"FAILURE: Ollama service unavailable at {self.config.ollama_base_url}")
-                self.logger.info("ACTION: Engaging fallback parser 'enhanced_fallback'")
+                self.logger.info("ACTION: Engaging heuristic fallback parser")
                 result = await self._enhanced_fallback_parse(text)
-                self.logger.info(f"SUCCESS: Parsed with fallback. Confidence: {result['metadata']['confidence_score']:.2f}")
+                self.logger.info(f"SUCCESS: Parsed with heuristic fallback. Confidence: {result['metadata']['confidence_score']:.2f}")
                 return result
             
             # Use optimal model (might be CPU-safe alternative)
@@ -250,10 +259,194 @@ Be precise and analytical. Focus on semantic meaning over surface features.
             
         except Exception as e:
             self.logger.warning(f"FAILURE: LLM parsing error - {type(e).__name__}: {str(e)}")
-            self.logger.info("ACTION: Engaging fallback parser 'enhanced_fallback'")
+            self.logger.info("ACTION: Engaging heuristic fallback parser")
             result = await self._enhanced_fallback_parse(text)
-            self.logger.info(f"SUCCESS: Parsed with fallback. Confidence: {result['metadata']['confidence_score']:.2f}")
+            self.logger.info(f"SUCCESS: Parsed with heuristic fallback. Confidence: {result['metadata']['confidence_score']:.2f}")
             return result
+
+    async def _fast_path_parse(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        Fast path: Use deterministic regex to instantly identify structured inputs.
+        
+        Returns parsed result if pattern matches, None otherwise.
+        """
+        import re
+        
+        text_stripped = text.strip()
+        text_lower = text_stripped.lower()
+        
+        # Pattern 1: URLs
+        url_pattern = r'https?://[^\s]+|www\.[^\s]+'
+        if re.search(url_pattern, text_stripped):
+            urls = re.findall(url_pattern, text_stripped)
+            main_url = urls[0]
+            
+            # Extract domain for better categorization
+            domain_match = re.search(r'(?:https?://)?(?:www\.)?([^/]+)', main_url)
+            domain = domain_match.group(1) if domain_match else "unknown"
+            
+            return {
+                "title": f"Link: {domain}",
+                "category": "reference",
+                "domain": "technical" if any(tech in domain for tech in ["github", "stackoverflow", "docs"]) else "other",
+                "keywords": [domain, "link", "reference"],
+                "entities": urls[:3],  # Up to 3 URLs
+                "metadata": {
+                    "parser_type": "fast_path_regex",
+                    "pattern_matched": "url",
+                    "confidence_score": 0.95,
+                    "sentiment": "neutral",
+                    "content_type": "data",
+                    "urls": urls
+                }
+            }
+        
+        # Pattern 2: TODO items
+        todo_patterns = [
+            r'^todo:?\s+(.+)$',
+            r'^task:?\s+(.+)$', 
+            r'^need to:?\s+(.+)$',
+            r'^\[\s*\]\s+(.+)$',  # [ ] checkbox
+            r'^-\s*\[\s*\]\s+(.+)$'  # - [ ] checkbox
+        ]
+        for pattern in todo_patterns:
+            match = re.match(pattern, text_lower, re.IGNORECASE)
+            if match:
+                task_text = match.group(1).strip()
+                return {
+                    "title": f"Task: {task_text.capitalize()}",
+                    "category": "task",
+                    "domain": "personal",  # Most TODOs are personal
+                    "keywords": ["task", "todo", "action"],
+                    "entities": [],
+                    "metadata": {
+                        "parser_type": "fast_path_regex",
+                        "pattern_matched": "todo",
+                        "confidence_score": 0.98,
+                        "sentiment": "neutral",
+                        "content_type": "instructions",
+                        "task_text": task_text
+                    }
+                }
+        
+        # Pattern 3: Questions
+        if text_stripped.endswith('?') and len(text_stripped.split()) <= 20:
+            # Short questions are clear
+            return {
+                "title": text_stripped,
+                "category": "question",
+                "domain": "other",
+                "keywords": ["question", "inquiry"],
+                "entities": [],
+                "metadata": {
+                    "parser_type": "fast_path_regex",
+                    "pattern_matched": "question",
+                    "confidence_score": 0.90,
+                    "sentiment": "neutral",
+                    "content_type": "prose"
+                }
+            }
+        
+        # Pattern 4: Code snippets
+        code_patterns = [
+            r'(def\s+\w+|function\s+\w+|class\s+\w+)',  # Function/class definitions
+            r'(import\s+\w+|from\s+\w+\s+import)',      # Imports
+            r'(SELECT\s+.*FROM|INSERT\s+INTO|UPDATE\s+.*SET)',  # SQL
+            r'(\{[^}]*\}|\[[^\]]*\])',  # JSON-like structures
+        ]
+        
+        for pattern in code_patterns:
+            if re.search(pattern, text_stripped, re.IGNORECASE):
+                # Determine programming language/type
+                if re.search(r'(SELECT|INSERT|UPDATE|DELETE)', text_stripped, re.IGNORECASE):
+                    code_type = "sql"
+                elif re.search(r'(def\s+|import\s+)', text_stripped):
+                    code_type = "python"
+                elif re.search(r'(function\s+|var\s+|let\s+|const\s+)', text_stripped):
+                    code_type = "javascript"
+                else:
+                    code_type = "generic"
+                
+                return {
+                    "title": f"Code snippet: {code_type}",
+                    "category": "reference",
+                    "domain": "technical",
+                    "keywords": ["code", code_type, "programming"],
+                    "entities": [],
+                    "metadata": {
+                        "parser_type": "fast_path_regex",
+                        "pattern_matched": "code",
+                        "confidence_score": 0.93,
+                        "sentiment": "neutral",
+                        "content_type": "code",
+                        "code_type": code_type
+                    }
+                }
+        
+        # Pattern 5: Email addresses
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        emails = re.findall(email_pattern, text_stripped)
+        if emails:
+            return {
+                "title": f"Contact: {emails[0]}",
+                "category": "reference",
+                "domain": "personal",
+                "keywords": ["email", "contact", "communication"],
+                "entities": emails,
+                "metadata": {
+                    "parser_type": "fast_path_regex",
+                    "pattern_matched": "email",
+                    "confidence_score": 0.97,
+                    "sentiment": "neutral",
+                    "content_type": "data",
+                    "emails": emails
+                }
+            }
+        
+        # Pattern 6: Phone numbers
+        phone_pattern = r'(\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})'
+        if re.search(phone_pattern, text_stripped):
+            return {
+                "title": "Phone number",
+                "category": "reference", 
+                "domain": "personal",
+                "keywords": ["phone", "contact", "number"],
+                "entities": [text_stripped],
+                "metadata": {
+                    "parser_type": "fast_path_regex",
+                    "pattern_matched": "phone",
+                    "confidence_score": 0.95,
+                    "sentiment": "neutral",
+                    "content_type": "data"
+                }
+            }
+        
+        # Pattern 7: Dates (various formats)
+        date_patterns = [
+            r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b',  # MM/DD/YYYY or DD-MM-YYYY
+            r'\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b',    # YYYY-MM-DD
+            r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}\b'  # Month DD, YYYY
+        ]
+        
+        for pattern in date_patterns:
+            if re.search(pattern, text_stripped, re.IGNORECASE):
+                return {
+                    "title": f"Date reference: {text_stripped[:50]}",
+                    "category": "reference",
+                    "domain": "personal", 
+                    "keywords": ["date", "time", "schedule"],
+                    "entities": [],
+                    "metadata": {
+                        "parser_type": "fast_path_regex",
+                        "pattern_matched": "date",
+                        "confidence_score": 0.88,
+                        "sentiment": "neutral",
+                        "content_type": "data"
+                    }
+                }
+        
+        # No patterns matched - return None to indicate slow path should be used
+        return None
 
     async def _llm_parse(self, text: str, model_override: str = None) -> Dict[str, Any]:
         """Perform LLM-based parsing using Ollama."""

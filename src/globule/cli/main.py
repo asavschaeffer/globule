@@ -128,26 +128,103 @@ async def add(text: str, verbose: bool) -> None:
 @cli.command()
 @click.argument('topic', required=False)
 @click.option('--limit', '-l', default=50, help='Maximum globules to consider')
-async def draft(topic: Optional[str], limit: int) -> None:
-    """Launch interactive drafting session."""
+@click.option('--output', '-o', help='Output draft to file')
+async def draft(topic: Optional[str], limit: int, output: Optional[str]) -> None:
+    """Generate draft from your thoughts using semantic clustering."""
     
     try:
-        # Import TUI here to avoid startup overhead for other commands
-        from globule.tui.app import SynthesisApp
+        from rich.console import Console
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich.text import Text
         
-        # Initialize storage
+        console = Console()
+        
+        # Initialize components
         storage = SQLiteStorageManager()
         await storage.initialize()
         
-        # Create and run TUI app
-        app = SynthesisApp(storage_manager=storage, topic=topic, limit=limit)
-        await app.run_async()
+        console.print("[blue]DRAFT:[/blue] Analyzing your thoughts...")
+        
+        # Get recent globules
+        globules = await storage.get_recent_globules(limit)
+        
+        if not globules:
+            console.print("[red]NO CONTENT:[/red] No thoughts found. Add some with 'globule add'")
+            return
+        
+        # Filter by topic if provided
+        if topic:
+            embedding_provider = OllamaEmbeddingProvider()
+            topic_embedding = await embedding_provider.embed(topic)
+            results = await storage.search_by_embedding(topic_embedding, limit, 0.3)
+            globules = [globule for globule, _ in results]
+            console.print(f"[green]FILTERED:[/green] Found {len(globules)} thoughts related to '{topic}'")
+            await embedding_provider.close()
+        
+        # Perform clustering
+        from globule.clustering.semantic_clustering import SemanticClusteringEngine
+        clustering_engine = SemanticClusteringEngine(storage)
+        analysis = await clustering_engine.analyze_semantic_clusters(min_globules=2)
+        
+        # Generate draft content
+        draft_content = []
+        draft_content.append(f"# Draft: {topic or 'My Thoughts'}\n")
+        draft_content.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+        draft_content.append(f"Total thoughts analyzed: {len(globules)}\n\n")
+        
+        if analysis.clusters:
+            console.print(f"[green]CLUSTERS:[/green] Found {len(analysis.clusters)} semantic themes")
+            
+            for i, cluster in enumerate(analysis.clusters, 1):
+                draft_content.append(f"## {cluster.label}\n")
+                draft_content.append(f"{cluster.description}\n\n")
+                
+                # Add representative content
+                cluster_globules = [g for g in globules if g.id in cluster.member_ids]
+                for globule in cluster_globules[:3]:  # Top 3 from cluster
+                    draft_content.append(f"- {globule.text}\n")
+                
+                draft_content.append("\n")
+                
+                # Show cluster summary
+                table = Table(title=f"Cluster {i}: {cluster.label}")
+                table.add_column("Metric", style="cyan")
+                table.add_column("Value", style="green")
+                table.add_row("Size", str(cluster.size))
+                table.add_row("Confidence", f"{cluster.confidence_score:.2f}")
+                table.add_row("Keywords", ", ".join(cluster.keywords[:3]))
+                table.add_row("Domains", ", ".join(cluster.domains))
+                console.print(table)
+        else:
+            # No clusters, just list thoughts chronologically
+            draft_content.append("## Your Thoughts\n\n")
+            for globule in globules[:20]:  # Top 20
+                draft_content.append(f"- {globule.text}\n")
+            
+            console.print("[yellow]NO CLUSTERS:[/yellow] Listed thoughts chronologically")
+        
+        # Output draft
+        draft_text = "".join(draft_content)
+        
+        if output:
+            with open(output, 'w', encoding='utf-8') as f:
+                f.write(draft_text)
+            console.print(f"[green]SUCCESS:[/green] Draft written to {output}")
+        else:
+            console.print("\n" + "="*60)
+            console.print(Panel(draft_text, title="Generated Draft", border_style="blue"))
+        
+        # Show summary
+        console.print(f"\n[blue]SUMMARY:[/blue] Draft generated from {len(globules)} thoughts")
+        if analysis.clusters:
+            console.print(f"[blue]THEMES:[/blue] Organized into {len(analysis.clusters)} semantic clusters")
         
         # Cleanup
         await storage.close()
         
     except Exception as e:
-        logger.error(f"Failed to launch drafting session: {e}")
+        logger.error(f"Failed to generate draft: {e}")
         click.echo(f"Error: {e}", err=True)
         raise click.Abort()
 
