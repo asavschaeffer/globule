@@ -386,7 +386,7 @@ async def cluster(min_globules: int, verbose: bool, export: Optional[str]) -> No
         # Show analysis summary
         click.echo(f"ANALYSIS SUMMARY:")
         click.echo(f"  Method: {analysis.clustering_method}")
-        click.echo(f"  Quality Score: {analysis.silhouette_score:.3f}")
+        click.echo(f"  DBCV Score: {analysis.dbcv_score:.3f}")
         click.echo(f"  Processing Time: {analysis.processing_time_ms:.1f}ms")
         click.echo(f"  Total Thoughts Analyzed: {analysis.total_globules}")
         

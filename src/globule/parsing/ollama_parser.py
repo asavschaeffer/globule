@@ -18,6 +18,7 @@ Version: 2.0.0
 import json
 import logging
 import asyncio
+import re
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
@@ -53,6 +54,30 @@ class OllamaParser(ParsingProvider):
         self.config = get_config()
         self.logger = logging.getLogger(__name__)
         self.session: Optional[aiohttp.ClientSession] = None
+        
+        # Compiled regex patterns for fast path classification
+        self.URL_REGEX = re.compile(r'^https?://\S+')
+        self.TODO_REGEX = re.compile(r'^(TODO|TASK):', re.IGNORECASE)
+        self.CODE_REGEX = re.compile(r'(def\s+\w+|function\s+\w+|class\s+\w+|SELECT\s+.*FROM)', re.IGNORECASE)
+        self.EMAIL_REGEX = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
+        self.QUESTION_REGEX = re.compile(r'.+\?\s*$')
+        self.BACKTICK_CODE_REGEX = re.compile(r'```[\s\S]*?```|`[^`]+`')
+        self.FILE_PATH_REGEX = re.compile(r'^[a-zA-Z]:\\|^/[a-zA-Z0-9_./\-]+|^\./[a-zA-Z0-9_./\-]+|\.[a-zA-Z]{2,4}$')
+        
+        # JSON schema for LLM prompts
+        self.JSON_SCHEMA = '''
+{
+  "title": "A concise, meaningful title (max 80 chars)",
+  "category": "one of: note, idea, question, task, reference, draft, quote, observation",
+  "domain": "one of: creative, technical, personal, academic, business, philosophy, other",
+  "keywords": ["key", "terms", "from", "text"],
+  "entities": ["people", "places", "concepts", "mentioned"],
+  "sentiment": "one of: positive, negative, neutral, mixed",
+  "content_type": "one of: prose, list, code, data, dialogue, poetry, instructions",
+  "confidence_score": 0.85,
+  "reasoning": "Brief explanation of your classification decisions"
+}
+'''
         
         # Parsing prompt template for structured extraction
         self.parsing_prompt = """
@@ -206,10 +231,7 @@ Be precise and analytical. Focus on semantic meaning over surface features.
 
     async def parse(self, text: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Parse text using fast/slow parsing strategy.
-        
-        Fast Path: Use deterministic regex to instantly identify structured inputs.
-        Slow Path: Use LLM for unstructured prose if fast path fails.
+        Parse text using resilient fast/slow path architecture.
         
         Args:
             text: Input text to analyze
@@ -217,244 +239,208 @@ Be precise and analytical. Focus on semantic meaning over surface features.
             
         Returns:
             Dict containing structured parsing results
-            
-        Raises:
-            Exception: If parsing fails and fallback is not possible
         """
-        if not text.strip():
-            return self._create_empty_result(text)
-        
-        # FAST PATH: Try deterministic regex-based parsing first
-        fast_result = await self._fast_path_parse(text)
+        # 1. Attempt the fast path first.
+        fast_result = self._fast_path_parse(text)
         if fast_result:
-            self.logger.info(f"SUCCESS: Fast path parsing completed. Pattern: {fast_result['metadata']['pattern_matched']}")
+            self.logger.info(f"Handled by fast path: {fast_result['metadata']['parser_type']}")
             return fast_result
-        
-        # SLOW PATH: Use LLM for unstructured content
-        self.logger.info("Fast path failed, engaging slow path with LLM...")
-        
-        try:
-            await self._ensure_session()
-            
-            # Enhanced health check with automatic CPU-safe detection
-            is_healthy, optimal_model = await self.health_check_with_cpu_fallback()
-            
-            if not is_healthy:
-                self.logger.warning(f"FAILURE: Ollama service unavailable at {self.config.ollama_base_url}")
-                self.logger.info("ACTION: Engaging heuristic fallback parser")
-                result = await self._enhanced_fallback_parse(text)
-                self.logger.info(f"SUCCESS: Parsed with heuristic fallback. Confidence: {result['metadata']['confidence_score']:.2f}")
-                return result
-            
-            # Use optimal model (might be CPU-safe alternative)
-            if optimal_model != self.config.default_parsing_model:
-                self.logger.info(f"ACTION: CPU-safe mode detected, switching to '{optimal_model}' for better performance")
-            
-            # Perform LLM-based parsing with optimal model
-            result = await self._llm_parse(text, model_override=optimal_model)
-            confidence = result.get('confidence_score', 0)
-            self.logger.info(f"SUCCESS: LLM parsing completed with '{optimal_model}'. Confidence: {confidence:.2f}")
-            
-            return self._format_result(result)
-            
-        except Exception as e:
-            self.logger.warning(f"FAILURE: LLM parsing error - {type(e).__name__}: {str(e)}")
-            self.logger.info("ACTION: Engaging heuristic fallback parser")
-            result = await self._enhanced_fallback_parse(text)
-            self.logger.info(f"SUCCESS: Parsed with heuristic fallback. Confidence: {result['metadata']['confidence_score']:.2f}")
-            return result
 
-    async def _fast_path_parse(self, text: str) -> Optional[Dict[str, Any]]:
+        # 2. If fast path fails, proceed to the slow path.
+        try:
+            return await self._slow_path_parse_with_retry(text)
+        except Exception as e:
+            self.logger.error(f"LLM parsing failed after all retries: {e}")
+            # 3. If all else fails, return a safe, minimal structure.
+            return self._create_fallback_result(text, str(e))
+
+    def _fast_path_parse(self, text: str) -> Optional[Dict]:
         """
-        Fast path: Use deterministic regex to instantly identify structured inputs.
+        Fast path: Cheap, deterministic regex-based classifiers.
         
-        Returns parsed result if pattern matches, None otherwise.
+        Returns complete structured result if high-confidence match found,
+        None if no match (proceed to slow path).
         """
-        import re
-        
         text_stripped = text.strip()
-        text_lower = text_stripped.lower()
         
-        # Pattern 1: URLs
-        url_pattern = r'https?://[^\s]+|www\.[^\s]+'
-        if re.search(url_pattern, text_stripped):
-            urls = re.findall(url_pattern, text_stripped)
-            main_url = urls[0]
-            
-            # Extract domain for better categorization
-            domain_match = re.search(r'(?:https?://)?(?:www\.)?([^/]+)', main_url)
-            domain = domain_match.group(1) if domain_match else "unknown"
-            
+        # URL Pattern
+        if self.URL_REGEX.match(text_stripped):
             return {
-                "title": f"Link: {domain}",
+                "title": text_stripped,
                 "category": "reference",
-                "domain": "technical" if any(tech in domain for tech in ["github", "stackoverflow", "docs"]) else "other",
-                "keywords": [domain, "link", "reference"],
-                "entities": urls[:3],  # Up to 3 URLs
-                "metadata": {
-                    "parser_type": "fast_path_regex",
-                    "pattern_matched": "url",
-                    "confidence_score": 0.95,
-                    "sentiment": "neutral",
-                    "content_type": "data",
-                    "urls": urls
-                }
+                "domain": "weblink",
+                "keywords": ["url", "link"],
+                "entities": [],
+                "sentiment": "neutral",
+                "content_type": "data",
+                "confidence_score": 1.0,
+                "reasoning": "Detected URL pattern",
+                "metadata": {"parser_type": "fast_path_url", "confidence_score": 1.0}
             }
         
-        # Pattern 2: TODO items
-        todo_patterns = [
-            r'^todo:?\s+(.+)$',
-            r'^task:?\s+(.+)$', 
-            r'^need to:?\s+(.+)$',
-            r'^\[\s*\]\s+(.+)$',  # [ ] checkbox
-            r'^-\s*\[\s*\]\s+(.+)$'  # - [ ] checkbox
-        ]
-        for pattern in todo_patterns:
-            match = re.match(pattern, text_lower, re.IGNORECASE)
-            if match:
-                task_text = match.group(1).strip()
-                return {
-                    "title": f"Task: {task_text.capitalize()}",
-                    "category": "task",
-                    "domain": "personal",  # Most TODOs are personal
-                    "keywords": ["task", "todo", "action"],
-                    "entities": [],
-                    "metadata": {
-                        "parser_type": "fast_path_regex",
-                        "pattern_matched": "todo",
-                        "confidence_score": 0.98,
-                        "sentiment": "neutral",
-                        "content_type": "instructions",
-                        "task_text": task_text
-                    }
-                }
+        # TODO Pattern
+        elif self.TODO_REGEX.match(text_stripped):
+            task_text = text_stripped[5:].strip()  # Remove "TODO:" prefix
+            return {
+                "title": task_text,
+                "category": "task",
+                "domain": "personal",
+                "keywords": ["task", "todo"],
+                "entities": [],
+                "sentiment": "neutral",
+                "content_type": "instructions",
+                "confidence_score": 1.0,
+                "reasoning": "Detected TODO pattern",
+                "metadata": {"parser_type": "fast_path_task", "confidence_score": 1.0}
+            }
         
-        # Pattern 3: Questions
-        if text_stripped.endswith('?') and len(text_stripped.split()) <= 20:
-            # Short questions are clear
+        # Code Pattern
+        elif self.CODE_REGEX.search(text_stripped):
+            return {
+                "title": "Code snippet",
+                "category": "reference",
+                "domain": "technical",
+                "keywords": ["code", "programming"],
+                "entities": [],
+                "sentiment": "neutral",
+                "content_type": "code",
+                "confidence_score": 1.0,
+                "reasoning": "Detected code pattern",
+                "metadata": {"parser_type": "fast_path_code", "confidence_score": 1.0}
+            }
+        
+        # Email Pattern
+        elif self.EMAIL_REGEX.search(text_stripped):
+            return {
+                "title": "Email address",
+                "category": "reference",
+                "domain": "personal",
+                "keywords": ["email", "contact"],
+                "entities": [],
+                "sentiment": "neutral",
+                "content_type": "data",
+                "confidence_score": 1.0,
+                "reasoning": "Detected email pattern",
+                "metadata": {"parser_type": "fast_path_email", "confidence_score": 1.0}
+            }
+        
+        # Question Pattern
+        elif self.QUESTION_REGEX.match(text_stripped) and len(text_stripped.split()) <= 20:
             return {
                 "title": text_stripped,
                 "category": "question",
                 "domain": "other",
                 "keywords": ["question", "inquiry"],
                 "entities": [],
-                "metadata": {
-                    "parser_type": "fast_path_regex",
-                    "pattern_matched": "question",
-                    "confidence_score": 0.90,
-                    "sentiment": "neutral",
-                    "content_type": "prose"
-                }
+                "sentiment": "neutral",
+                "content_type": "prose",
+                "confidence_score": 1.0,
+                "reasoning": "Detected short question pattern",
+                "metadata": {"parser_type": "fast_path_question", "confidence_score": 1.0}
             }
         
-        # Pattern 4: Code snippets
-        code_patterns = [
-            r'(def\s+\w+|function\s+\w+|class\s+\w+)',  # Function/class definitions
-            r'(import\s+\w+|from\s+\w+\s+import)',      # Imports
-            r'(SELECT\s+.*FROM|INSERT\s+INTO|UPDATE\s+.*SET)',  # SQL
-            r'(\{[^}]*\}|\[[^\]]*\])',  # JSON-like structures
-        ]
-        
-        for pattern in code_patterns:
-            if re.search(pattern, text_stripped, re.IGNORECASE):
-                # Determine programming language/type
-                if re.search(r'(SELECT|INSERT|UPDATE|DELETE)', text_stripped, re.IGNORECASE):
-                    code_type = "sql"
-                elif re.search(r'(def\s+|import\s+)', text_stripped):
-                    code_type = "python"
-                elif re.search(r'(function\s+|var\s+|let\s+|const\s+)', text_stripped):
-                    code_type = "javascript"
-                else:
-                    code_type = "generic"
-                
-                return {
-                    "title": f"Code snippet: {code_type}",
-                    "category": "reference",
-                    "domain": "technical",
-                    "keywords": ["code", code_type, "programming"],
-                    "entities": [],
-                    "metadata": {
-                        "parser_type": "fast_path_regex",
-                        "pattern_matched": "code",
-                        "confidence_score": 0.93,
-                        "sentiment": "neutral",
-                        "content_type": "code",
-                        "code_type": code_type
-                    }
-                }
-        
-        # Pattern 5: Email addresses
-        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-        emails = re.findall(email_pattern, text_stripped)
-        if emails:
+        # Backtick Code Pattern
+        elif self.BACKTICK_CODE_REGEX.search(text_stripped):
             return {
-                "title": f"Contact: {emails[0]}",
+                "title": "Code block",
                 "category": "reference",
-                "domain": "personal",
-                "keywords": ["email", "contact", "communication"],
-                "entities": emails,
-                "metadata": {
-                    "parser_type": "fast_path_regex",
-                    "pattern_matched": "email",
-                    "confidence_score": 0.97,
-                    "sentiment": "neutral",
-                    "content_type": "data",
-                    "emails": emails
-                }
+                "domain": "technical",
+                "keywords": ["code", "programming", "snippet"],
+                "entities": [],
+                "sentiment": "neutral",
+                "content_type": "code",
+                "confidence_score": 1.0,
+                "reasoning": "Detected backtick code block pattern",
+                "metadata": {"parser_type": "fast_path_code_block", "confidence_score": 1.0}
             }
         
-        # Pattern 6: Phone numbers
-        phone_pattern = r'(\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})'
-        if re.search(phone_pattern, text_stripped):
+        # File Path Pattern
+        elif self.FILE_PATH_REGEX.match(text_stripped):
             return {
-                "title": "Phone number",
-                "category": "reference", 
-                "domain": "personal",
-                "keywords": ["phone", "contact", "number"],
-                "entities": [text_stripped],
-                "metadata": {
-                    "parser_type": "fast_path_regex",
-                    "pattern_matched": "phone",
-                    "confidence_score": 0.95,
-                    "sentiment": "neutral",
-                    "content_type": "data"
-                }
+                "title": f"File path: {text_stripped}",
+                "category": "reference",
+                "domain": "technical",
+                "keywords": ["file", "path", "system"],
+                "entities": [],
+                "sentiment": "neutral",
+                "content_type": "data",
+                "confidence_score": 1.0,
+                "reasoning": "Detected file path pattern",
+                "metadata": {"parser_type": "fast_path_file_path", "confidence_score": 1.0}
             }
         
-        # Pattern 7: Dates (various formats)
-        date_patterns = [
-            r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b',  # MM/DD/YYYY or DD-MM-YYYY
-            r'\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b',    # YYYY-MM-DD
-            r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}\b'  # Month DD, YYYY
-        ]
-        
-        for pattern in date_patterns:
-            if re.search(pattern, text_stripped, re.IGNORECASE):
-                return {
-                    "title": f"Date reference: {text_stripped[:50]}",
-                    "category": "reference",
-                    "domain": "personal", 
-                    "keywords": ["date", "time", "schedule"],
-                    "entities": [],
-                    "metadata": {
-                        "parser_type": "fast_path_regex",
-                        "pattern_matched": "date",
-                        "confidence_score": 0.88,
-                        "sentiment": "neutral",
-                        "content_type": "data"
-                    }
-                }
-        
-        # No patterns matched - return None to indicate slow path should be used
+        # If no high-confidence match, return None to proceed to slow path
         return None
 
-    async def _llm_parse(self, text: str, model_override: str = None) -> Dict[str, Any]:
-        """Perform LLM-based parsing using Ollama."""
-        model_to_use = model_override or self.config.default_parsing_model
-        prompt = self.parsing_prompt.format(text=text[:2000])  # Limit context length
+    async def _slow_path_parse_with_retry(self, text: str, max_retries: int = 2) -> Dict[str, Any]:
+        """
+        Slow path: LLM parsing with self-healing retry mechanism.
         
+        Args:
+            text: Text to parse
+            max_retries: Maximum number of retry attempts
+            
+        Returns:
+            Parsed result dictionary
+            
+        Raises:
+            Exception: If all retries fail
+        """
+        await self._ensure_session()
+        last_exception = None
+
+        for attempt in range(max_retries):
+            prompt = self._build_llm_prompt(text, last_exception)
+            
+            raw_response = await self._call_llm(prompt)
+
+            try:
+                # Attempt to parse the JSON
+                parsed_json = json.loads(raw_response)
+                # If successful, validate and return immediately
+                self._validate_parsed_result(parsed_json)
+                return self._format_result(parsed_json)
+            except json.JSONDecodeError as e:
+                self.logger.warning(f"LLM returned malformed JSON on attempt {attempt + 1}. Retrying.")
+                last_exception = f"JSONDecodeError: {e}. The malformed text was: {raw_response}"
+                # The loop will continue to the next attempt
+
+        # If the loop finishes without returning, all retries have failed
+        raise Exception(f"Failed to parse LLM response after {max_retries} attempts. Last error: {last_exception}")
+
+    def _build_llm_prompt(self, text: str, error_context: Optional[str] = None) -> str:
+        """
+        Build LLM prompt with optional error context for self-healing.
+        
+        Args:
+            text: Original text to analyze  
+            error_context: Previous error for self-healing prompt
+            
+        Returns:
+            Formatted prompt string
+        """
+        if error_context:
+            # This is the self-healing prompt
+            return f"""
+You previously failed to generate valid JSON. Correct your mistake.
+The error was: {error_context}
+
+Provide ONLY the valid JSON object. Do not include any other text or apologies.
+"""
+        else:
+            # This is the standard initial prompt  
+            return f"""
+Analyze the text and return a valid JSON object conforming to the following schema:
+{self.JSON_SCHEMA}
+
+Text to analyze:
+{text}
+"""
+
+    async def _call_llm(self, prompt: str) -> str:
+        """Make the actual LLM API call."""
         payload = {
-            "model": model_to_use,
+            "model": self.config.default_parsing_model,
             "prompt": prompt,
             "stream": False,
             "options": {
@@ -471,306 +457,45 @@ Be precise and analytical. Focus on semantic meaning over surface features.
                 raise Exception(f"Ollama request failed with status {response.status}")
                 
             data = await response.json()
-            llm_response = data.get("response", "").strip()
-            
-            # Parse JSON response from LLM with self-healing
-            try:
-                # Extract JSON from response (LLM might include extra text)
-                json_start = llm_response.find("{")
-                json_end = llm_response.rfind("}") + 1
-                
-                if json_start >= 0 and json_end > json_start:
-                    json_str = llm_response[json_start:json_end]
-                    parsed_result = json.loads(json_str)
-                    
-                    # Validate required fields
-                    self._validate_parsed_result(parsed_result)
-                    return parsed_result
-                else:
-                    raise ValueError("No valid JSON found in LLM response")
-                    
-            except (json.JSONDecodeError, ValueError) as e:
-                self.logger.warning(f"JSON parsing failed: {e}. Attempting self-healing...")
-                
-                # Self-healing: Re-prompt the LLM to fix its mistake
-                try:
-                    healed_result = await self._self_healing_json_parse(llm_response, str(e), model_to_use)
-                    if healed_result:
-                        return healed_result
-                except Exception as heal_error:
-                    self.logger.warning(f"Self-healing also failed: {heal_error}")
-                
-                # If self-healing fails, raise the original error
-                raise Exception(f"Invalid LLM response format: {e}")
+            return data.get("response", "").strip()
 
-    async def _self_healing_json_parse(self, malformed_response: str, error_message: str, model_name: str) -> Optional[Dict[str, Any]]:
+    def _create_fallback_result(self, text: str, error_message: Optional[str] = None) -> Dict[str, Any]:
         """
-        Self-healing JSON parser: Re-prompt the LLM to fix its own malformed JSON.
+        Final safety net: Create minimal safe result when all else fails.
         
         Args:
-            malformed_response: The malformed JSON response from the LLM
-            error_message: The specific JSON parsing error
-            model_name: The model to use for healing
+            text: Original input text
+            error_message: Optional error details for debugging
             
         Returns:
-            Fixed parsed result if successful, None if healing fails
+            Safe fallback result dictionary with error context
         """
-        self.logger.info("Engaging self-healing JSON repair...")
-        
-        healing_prompt = f"""
-You previously generated malformed JSON that caused this error: {error_message}
-
-Your malformed response was:
-{malformed_response}
-
-Please fix the JSON and return ONLY valid JSON with this exact structure:
-{{
-    "title": "A concise, meaningful title (max 80 chars)",
-    "category": "one of: note, idea, question, task, reference, draft, quote, observation",
-    "domain": "one of: creative, technical, personal, academic, business, philosophy, other",
-    "keywords": ["key", "terms", "from", "text"],
-    "entities": ["people", "places", "concepts", "mentioned"],
-    "sentiment": "one of: positive, negative, neutral, mixed",
-    "content_type": "one of: prose, list, code, data, dialogue, poetry, instructions",
-    "confidence_score": 0.85,
-    "reasoning": "Brief explanation of your classification decisions"
-}}
-
-Return ONLY the corrected JSON, no other text or explanation.
-"""
-        
-        payload = {
-            "model": model_name,
-            "prompt": healing_prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.0,  # Zero temperature for deterministic repair
-                "top_p": 0.9,
-                "top_k": 10,
-            }
-        }
-        
-        url = f"{self.config.ollama_base_url}/api/generate"
-        
-        try:
-            async with self.session.post(url, json=payload) as response:
-                if response.status != 200:
-                    return None
-                    
-                data = await response.json()
-                healed_response = data.get("response", "").strip()
-                
-                # Try to parse the healed response
-                json_start = healed_response.find("{")
-                json_end = healed_response.rfind("}") + 1
-                
-                if json_start >= 0 and json_end > json_start:
-                    json_str = healed_response[json_start:json_end]
-                    parsed_result = json.loads(json_str)
-                    
-                    # Validate the healed result
-                    self._validate_parsed_result(parsed_result)
-                    
-                    self.logger.info("Self-healing successful! JSON repaired.")
-                    return parsed_result
-                else:
-                    self.logger.warning("Self-healing failed: No valid JSON in healed response")
-                    return None
-                    
-        except Exception as e:
-            self.logger.warning(f"Self-healing attempt failed: {e}")
-            return None
-
-    async def _enhanced_fallback_parse(self, text: str) -> Dict[str, Any]:
-        """
-        Enhanced fallback parser using heuristics when LLM is unavailable.
-        
-        This provides intelligent analysis without requiring Ollama.
-        """
-        # Simulate processing time
-        await asyncio.sleep(0.05)
-        
-        # Analyze text characteristics
-        word_count = len(text.split())
-        has_question = "?" in text
-        has_code = any(keyword in text.lower() for keyword in ["def ", "function", "class ", "import", "select"])
-        has_numbers = any(char.isdigit() for char in text)
-        has_urls = "http" in text.lower() or "www." in text.lower()
-        
-        # Generate intelligent title
-        title = self._generate_title(text)
-        
-        # Classify category based on content analysis
-        category = self._classify_category(text, has_question, has_code)
-        
-        # Classify domain
-        domain = self._classify_domain(text, has_code, has_numbers)
-        
-        # Extract keywords using simple NLP
-        keywords = self._extract_keywords(text)
-        
-        # Detect entities
-        entities = self._extract_entities(text)
-        
-        # Analyze sentiment
-        sentiment = self._analyze_sentiment(text)
-        
-        # Determine content type
-        content_type = self._classify_content_type(text, has_code, has_urls)
-        
-        return {
-            "title": title,
-            "category": category,
-            "domain": domain,
-            "keywords": keywords,
-            "entities": entities,
-            "metadata": {
-                "parser_type": "enhanced_fallback",
-                "parser_version": "2.0.0",
-                "sentiment": sentiment,
-                "content_type": content_type,
-                "confidence_score": 0.75,  # Reasonable confidence for heuristic analysis
-                "word_count": word_count,
-                "analysis_features": {
-                    "has_question": has_question,
-                    "has_code": has_code,
-                    "has_numbers": has_numbers,
-                    "has_urls": has_urls
-                }
-            }
-        }
-
-    def _generate_title(self, text: str) -> str:
-        """Generate an intelligent title from text."""
-        # Use first sentence or meaningful portion
-        sentences = text.split(".")
-        first_sentence = sentences[0].strip()
-        
-        if len(first_sentence) <= 80:
-            return first_sentence
-        
-        # Truncate intelligently at word boundary
-        words = first_sentence.split()
-        title_words = []
-        char_count = 0
-        
-        for word in words:
-            if char_count + len(word) + 1 > 77:  # Leave room for "..."
-                break
-            title_words.append(word)
-            char_count += len(word) + 1
+        reasoning = "Fallback parser - all other methods failed"
+        if error_message:
+            reasoning += f". Error: {error_message}"
             
-        return " ".join(title_words) + "..."
+        return {
+            "title": text[:50],
+            "category": "note",
+            "domain": "general",
+            "keywords": [],
+            "entities": [],
+            "sentiment": "neutral",
+            "content_type": "prose",
+            "confidence_score": 0.1,
+            "reasoning": reasoning,
+            "metadata": {
+                "parser_type": "fatal_fallback", 
+                "confidence_score": 0.1,
+                "error_details": error_message,
+                "processing_notes": [f"Parser failure: {error_message}"] if error_message else ["Parser failure: unknown error"]
+            }
+        }
 
-    def _classify_category(self, text: str, has_question: bool, has_code: bool) -> str:
-        """Classify text into content category."""
-        text_lower = text.lower()
-        
-        if has_question:
-            return "question"
-        elif has_code:
-            return "reference"
-        elif any(word in text_lower for word in ["todo", "task", "need to", "should", "must"]):
-            return "task"
-        elif any(word in text_lower for word in ["idea", "concept", "what if", "perhaps"]):
-            return "idea"
-        elif text.startswith('"') or "said" in text_lower:
-            return "quote"
-        elif len(text.split()) > 50:
-            return "draft"
-        else:
-            return "note"
-
-    def _classify_domain(self, text: str, has_code: bool, has_numbers: bool) -> str:
-        """Classify text domain based on content analysis."""
-        text_lower = text.lower()
-        
-        if has_code or any(word in text_lower for word in ["algorithm", "database", "api", "programming"]):
-            return "technical"
-        elif any(word in text_lower for word in ["story", "creative", "imagine", "character", "poetry"]):
-            return "creative"
-        elif any(word in text_lower for word in ["feel", "emotion", "personal", "my", "journal"]):
-            return "personal"
-        elif any(word in text_lower for word in ["research", "study", "theory", "academic", "paper"]):
-            return "academic"
-        elif any(word in text_lower for word in ["business", "strategy", "market", "customer", "revenue"]):
-            return "business"
-        elif any(word in text_lower for word in ["philosophy", "meaning", "existence", "ethics", "moral"]):
-            return "philosophy"
-        else:
-            return "other"
-
-    def _extract_keywords(self, text: str) -> List[str]:
-        """Extract keywords using simple frequency analysis."""
-        import re
-        
-        # Simple tokenization and filtering
-        words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
-        common_words = {"the", "and", "that", "have", "for", "not", "with", "you", "this", "but", "his", "from", "they", "she", "her", "been", "than", "its", "were", "said", "each", "which", "their", "time", "will", "about", "would", "there", "could", "other", "more", "very", "what", "know", "just", "first", "get", "has", "had", "let", "put", "say", "set", "run", "made"}
-        
-        # Filter out common words and get unique keywords
-        keywords = [word for word in set(words) if word not in common_words and len(word) > 3]
-        
-        # Return top 5 by length (longer words tend to be more specific)
-        return sorted(keywords, key=len, reverse=True)[:5]
-
-    def _extract_entities(self, text: str) -> List[str]:
-        """Extract named entities using simple pattern matching."""
-        import re
-        
-        entities = []
-        
-        # Capitalized words (potential proper nouns)
-        proper_nouns = re.findall(r'\b[A-Z][a-z]+\b', text)
-        entities.extend(proper_nouns[:3])  # Top 3
-        
-        # URLs
-        urls = re.findall(r'https?://[^\s]+', text)
-        entities.extend([url[:30] + "..." if len(url) > 30 else url for url in urls])
-        
-        return list(set(entities))[:5]  # Max 5 unique entities
-
-    def _analyze_sentiment(self, text: str) -> str:
-        """Analyze sentiment using keyword-based approach."""
-        text_lower = text.lower()
-        
-        positive_words = ["good", "great", "excellent", "amazing", "wonderful", "love", "like", "happy", "excited", "beautiful", "perfect", "best"]
-        negative_words = ["bad", "terrible", "awful", "hate", "dislike", "sad", "angry", "frustrated", "worst", "horrible", "disgusting"]
-        
-        positive_count = sum(1 for word in positive_words if word in text_lower)
-        negative_count = sum(1 for word in negative_words if word in text_lower)
-        
-        if positive_count > negative_count:
-            return "positive"
-        elif negative_count > positive_count:
-            return "negative"
-        elif positive_count > 0 or negative_count > 0:
-            return "mixed"
-        else:
-            return "neutral"
-
-    def _classify_content_type(self, text: str, has_code: bool, has_urls: bool) -> str:
-        """Classify the structural type of content."""
-        lines = text.split('\n')
-        
-        if has_code:
-            return "code"
-        elif has_urls and len(lines) > 3:
-            return "data"
-        elif text.count('\n') > 5 and any(line.strip().startswith(('-', '*', '1.', '2.')) for line in lines):
-            return "list"
-        elif '"' in text and text.count('"') >= 4:
-            return "dialogue"
-        elif any(word in text.lower() for word in ["step", "first", "then", "next", "finally"]):
-            return "instructions"
-        elif len(text.split()) > 100 and text.count('.') > 5:
-            return "prose"
-        else:
-            return "prose"
 
     def _validate_parsed_result(self, result: Dict[str, Any]) -> None:
         """Validate that parsed result has required fields."""
-        required_fields = ["title", "category", "domain", "keywords", "entities", "sentiment", "content_type"]
+        required_fields = ["title", "category", "domain", "keywords", "entities", "sentiment", "content_type", "confidence_score"]
         
         for field in required_fields:
             if field not in result:
@@ -786,27 +511,10 @@ Return ONLY the corrected JSON, no other text or explanation.
             "entities": parsed_data.get("entities", []),
             "metadata": {
                 "parser_type": "ollama_llm",
-                "parser_version": "2.0.0",
+                "parser_version": "3.0.0",
                 "sentiment": parsed_data.get("sentiment", "neutral"),
                 "content_type": parsed_data.get("content_type", "prose"),
                 "confidence_score": parsed_data.get("confidence_score", 0.0),
                 "reasoning": parsed_data.get("reasoning", "")
-            }
-        }
-
-    def _create_empty_result(self, text: str) -> Dict[str, Any]:
-        """Create result for empty input."""
-        return {
-            "title": "Empty Input",
-            "category": "note",
-            "domain": "other",
-            "keywords": [],
-            "entities": [],
-            "metadata": {
-                "parser_type": "empty_input",
-                "parser_version": "2.0.0",
-                "sentiment": "neutral",
-                "content_type": "prose",
-                "confidence_score": 0.0
             }
         }
