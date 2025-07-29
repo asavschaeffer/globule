@@ -473,7 +473,7 @@ Be precise and analytical. Focus on semantic meaning over surface features.
             data = await response.json()
             llm_response = data.get("response", "").strip()
             
-            # Parse JSON response from LLM
+            # Parse JSON response from LLM with self-healing
             try:
                 # Extract JSON from response (LLM might include extra text)
                 json_start = llm_response.find("{")
@@ -490,8 +490,96 @@ Be precise and analytical. Focus on semantic meaning over surface features.
                     raise ValueError("No valid JSON found in LLM response")
                     
             except (json.JSONDecodeError, ValueError) as e:
-                self.logger.warning(f"Failed to parse LLM JSON response: {e}")
+                self.logger.warning(f"JSON parsing failed: {e}. Attempting self-healing...")
+                
+                # Self-healing: Re-prompt the LLM to fix its mistake
+                try:
+                    healed_result = await self._self_healing_json_parse(llm_response, str(e), model_to_use)
+                    if healed_result:
+                        return healed_result
+                except Exception as heal_error:
+                    self.logger.warning(f"Self-healing also failed: {heal_error}")
+                
+                # If self-healing fails, raise the original error
                 raise Exception(f"Invalid LLM response format: {e}")
+
+    async def _self_healing_json_parse(self, malformed_response: str, error_message: str, model_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Self-healing JSON parser: Re-prompt the LLM to fix its own malformed JSON.
+        
+        Args:
+            malformed_response: The malformed JSON response from the LLM
+            error_message: The specific JSON parsing error
+            model_name: The model to use for healing
+            
+        Returns:
+            Fixed parsed result if successful, None if healing fails
+        """
+        self.logger.info("Engaging self-healing JSON repair...")
+        
+        healing_prompt = f"""
+You previously generated malformed JSON that caused this error: {error_message}
+
+Your malformed response was:
+{malformed_response}
+
+Please fix the JSON and return ONLY valid JSON with this exact structure:
+{{
+    "title": "A concise, meaningful title (max 80 chars)",
+    "category": "one of: note, idea, question, task, reference, draft, quote, observation",
+    "domain": "one of: creative, technical, personal, academic, business, philosophy, other",
+    "keywords": ["key", "terms", "from", "text"],
+    "entities": ["people", "places", "concepts", "mentioned"],
+    "sentiment": "one of: positive, negative, neutral, mixed",
+    "content_type": "one of: prose, list, code, data, dialogue, poetry, instructions",
+    "confidence_score": 0.85,
+    "reasoning": "Brief explanation of your classification decisions"
+}}
+
+Return ONLY the corrected JSON, no other text or explanation.
+"""
+        
+        payload = {
+            "model": model_name,
+            "prompt": healing_prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.0,  # Zero temperature for deterministic repair
+                "top_p": 0.9,
+                "top_k": 10,
+            }
+        }
+        
+        url = f"{self.config.ollama_base_url}/api/generate"
+        
+        try:
+            async with self.session.post(url, json=payload) as response:
+                if response.status != 200:
+                    return None
+                    
+                data = await response.json()
+                healed_response = data.get("response", "").strip()
+                
+                # Try to parse the healed response
+                json_start = healed_response.find("{")
+                json_end = healed_response.rfind("}") + 1
+                
+                if json_start >= 0 and json_end > json_start:
+                    json_str = healed_response[json_start:json_end]
+                    parsed_result = json.loads(json_str)
+                    
+                    # Validate the healed result
+                    self._validate_parsed_result(parsed_result)
+                    
+                    self.logger.info("Self-healing successful! JSON repaired.")
+                    return parsed_result
+                else:
+                    self.logger.warning("Self-healing failed: No valid JSON in healed response")
+                    return None
+                    
+        except Exception as e:
+            self.logger.warning(f"Self-healing attempt failed: {e}")
+            return None
 
     async def _enhanced_fallback_parse(self, text: str) -> Dict[str, Any]:
         """

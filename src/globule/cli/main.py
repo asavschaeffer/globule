@@ -11,6 +11,7 @@ import click
 import logging
 from datetime import datetime
 from typing import Optional
+from pathlib import Path
 
 from globule.core.models import EnrichedInput
 from globule.storage.sqlite_manager import SQLiteStorageManager
@@ -411,6 +412,90 @@ async def cluster(min_globules: int, verbose: bool, export: Optional[str]) -> No
 
 
 @cli.command()
+@click.argument('globule_id', required=False)
+@click.option('--all', '-a', is_flag=True, help='Save all globules as files')
+@click.option('--output-dir', '-d', help='Output directory (defaults to config storage dir)')
+async def save(globule_id: Optional[str], all: bool, output_dir: Optional[str]) -> None:
+    """
+    Save globules as markdown files with YAML frontmatter containing UUIDs.
+    
+    This implements the canonical UUID system where files have human-readable names
+    but contain the UUID in frontmatter for database linking.
+    
+    Examples:
+    \b
+    globule save abc123-def456-...        # Save specific globule
+    globule save --all                    # Save all globules
+    globule save --all --output-dir ./docs  # Save to custom directory
+    """
+    try:
+        from globule.storage.file_manager import FileManager
+        
+        # Initialize components
+        storage = SQLiteStorageManager()
+        await storage.initialize()
+        
+        # Override output directory if specified
+        file_manager = FileManager()
+        if output_dir:
+            file_manager.base_path = Path(output_dir)
+            file_manager.base_path.mkdir(parents=True, exist_ok=True)
+        
+        saved_files = []
+        
+        if all:
+            # Save all globules
+            click.echo("SAVE: Retrieving all globules...")
+            globules = await storage.get_recent_globules(limit=1000)  # Get all
+            
+            if not globules:
+                click.echo("NO CONTENT: No globules found to save.")
+                return
+            
+            click.echo(f"PROCESSING: Saving {len(globules)} globules as files...")
+            
+            for globule in globules:
+                try:
+                    file_path = file_manager.save_globule_to_file(globule)
+                    saved_files.append(file_path)
+                except Exception as e:
+                    click.echo(f"ERROR: Failed to save globule {globule.id}: {e}", err=True)
+        
+        elif globule_id:
+            # Save specific globule
+            click.echo(f"SAVE: Retrieving globule {globule_id}...")
+            globule = await storage.get_globule(globule_id)
+            
+            if not globule:
+                click.echo(f"NOT FOUND: Globule {globule_id} not found.", err=True)
+                return
+            
+            file_path = file_manager.save_globule_to_file(globule)
+            saved_files.append(file_path)
+        
+        else:
+            click.echo("ERROR: Must specify --all or provide a globule ID", err=True)
+            return
+        
+        # Show results
+        click.echo(f"SUCCESS: Saved {len(saved_files)} files:")
+        for file_path in saved_files:
+            rel_path = file_path.relative_to(file_manager.base_path)
+            click.echo(f"  {rel_path}")
+        
+        click.echo(f"\\nFiles saved to: {file_manager.base_path}")
+        click.echo("Each file contains UUID in YAML frontmatter for canonical identification.")
+        
+        # Cleanup
+        await storage.close()
+        
+    except Exception as e:
+        logger.error(f"Save operation failed: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+@cli.command()
 @click.option('--mode', '-m', 
               type=click.Choice(['interactive', 'demo', 'debug']), 
               default='demo',
@@ -471,6 +556,7 @@ def main():
     cli.commands['draft'].callback = async_command(cli.commands['draft'].callback)
     cli.commands['search'].callback = async_command(cli.commands['search'].callback)
     cli.commands['cluster'].callback = async_command(cli.commands['cluster'].callback)
+    cli.commands['save'].callback = async_command(cli.commands['save'].callback)
     cli.commands['tutorial'].callback = async_command(cli.commands['tutorial'].callback)
     
     cli()
