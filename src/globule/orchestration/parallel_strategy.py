@@ -27,6 +27,7 @@ class ParallelOrchestrationEngine(OrchestrationEngine):
         self.embedding_provider = embedding_provider
         self.parsing_provider = parsing_provider
         self.storage_manager = storage_manager
+        
     
     async def process_globule(self, enriched_input: EnrichedInput) -> ProcessedGlobule:
         """Process an enriched input into a processed globule"""
@@ -109,6 +110,7 @@ class ParallelOrchestrationEngine(OrchestrationEngine):
         except Exception as e:
             logger.error(f"Orchestration failed: {e}")
             raise
+    
     
     async def _generate_embedding(self, text: str) -> tuple:
         """Generate embedding and return (embedding, time_ms)"""

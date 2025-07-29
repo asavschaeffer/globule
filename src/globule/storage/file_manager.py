@@ -9,7 +9,7 @@ import os
 import re
 import yaml
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 from globule.core.models import ProcessedGlobule, FileDecision
@@ -67,6 +67,119 @@ class FileManager:
             f.write(content)
         
         return file_path
+    
+    def determine_path(self, globule: ProcessedGlobule) -> Path:
+        """
+        Determine the final file path BEFORE any transaction begins.
+        
+        This method calculates where the file will be stored but doesn't create it yet.
+        This supports the Outbox Pattern by determining the path before the transaction.
+        
+        Args:
+            globule: The processed globule to determine path for
+            
+        Returns:
+            Absolute path where the file will be stored
+        """
+        # Generate human-readable filename
+        filename = self._generate_filename(globule)
+        
+        # Determine file directory based on file decision or defaults
+        if globule.file_decision and globule.file_decision.semantic_path:
+            file_dir = self.base_path / globule.file_decision.semantic_path
+        else:
+            # Default to organized by date and category
+            category = globule.parsed_data.get('category', 'notes')
+            date_dir = globule.created_at.strftime('%Y/%m')
+            file_dir = self.base_path / category / date_dir
+        
+        return file_dir / filename
+    
+    def save_to_temp(self, globule: ProcessedGlobule) -> Path:
+        """
+        Save globule to a temporary file location.
+        
+        This is step 1 of the Outbox Pattern - create the file content in a temporary
+        location that can be safely cleaned up if the database transaction fails.
+        
+        Args:
+            globule: The processed globule to save
+            
+        Returns:
+            Path to the temporary file
+        """
+        import tempfile
+        
+        # Generate YAML frontmatter
+        frontmatter = self._generate_frontmatter(globule)
+        
+        # Create markdown content
+        content = f"---\n{yaml.dump(frontmatter, default_flow_style=False)}---\n\n{globule.text}\n"
+        
+        # Create temporary file
+        temp_fd, temp_path = tempfile.mkstemp(suffix='.md', prefix='globule_')
+        temp_path_obj = Path(temp_path)
+        
+        try:
+            # Write content to temporary file
+            with os.fdopen(temp_fd, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            return temp_path_obj
+            
+        except Exception as e:
+            # Clean up file descriptor if writing fails
+            try:
+                os.close(temp_fd)
+            except:
+                pass
+            # Clean up temp file if it was created
+            try:
+                temp_path_obj.unlink()
+            except:
+                pass
+            raise Exception(f"Failed to create temporary file: {e}")
+    
+    def commit_file(self, temp_path: Path, final_path: Path) -> None:
+        """
+        Move file from temporary location to final location.
+        
+        This is step 3 of the Outbox Pattern - only called after the database
+        transaction has successfully committed. This makes the file visible at
+        its final location.
+        
+        Args:
+            temp_path: Path to the temporary file
+            final_path: Path where the file should be moved to
+        """
+        try:
+            # Ensure the destination directory exists
+            final_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Move the file from temp to final location
+            temp_path.rename(final_path)
+            
+        except Exception as e:
+            # If the move fails, we have a problem - the database transaction
+            # has already committed, but the file isn't in the right place
+            raise Exception(f"CRITICAL: Failed to move file from {temp_path} to {final_path}: {e}")
+    
+    def cleanup_temp(self, temp_path: Path) -> None:
+        """
+        Clean up a temporary file after a failed transaction.
+        
+        This is called when the database transaction fails and we need to
+        remove the temporary file that was created.
+        
+        Args:
+            temp_path: Path to the temporary file to remove
+        """
+        try:
+            if temp_path.exists():
+                temp_path.unlink()
+        except Exception as e:
+            # Log the error but don't fail - cleanup is best effort
+            print(f"Warning: Failed to clean up temporary file {temp_path}: {e}")
     
     def load_globule_from_file(self, file_path: Path) -> Optional[ProcessedGlobule]:
         """
@@ -259,3 +372,157 @@ class FileManager:
             f.write(content)
         
         return file_path
+    
+    async def reconcile_files_with_database(self, storage_manager) -> Dict[str, Any]:
+        """
+        Reconcile files on disk with database records using UUID as canonical link.
+        
+        This is the core of Priority 4: ensuring the database reflects the actual
+        state of files on disk, regardless of how users have moved or renamed them.
+        
+        Args:
+            storage_manager: SQLiteStorageManager instance for database operations
+            
+        Returns:
+            Dict with reconciliation statistics and actions taken
+        """
+        stats = {
+            "files_scanned": 0,
+            "files_reconciled": 0,
+            "files_orphaned": 0,
+            "database_records_updated": 0,
+            "errors": []
+        }
+        
+        # Step 1: Build a map of all files on disk with their UUIDs
+        disk_files = {}  # uuid -> file_path
+        orphaned_files = []  # files without valid UUIDs
+        
+        print(f"RECONCILIATION: Scanning files in {self.base_path}")
+        
+        for md_file in self.base_path.rglob("*.md"):
+            stats["files_scanned"] += 1
+            
+            try:
+                with open(md_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                frontmatter, _ = self._parse_frontmatter(content)
+                
+                if frontmatter and 'uuid' in frontmatter:
+                    uuid = frontmatter['uuid']
+                    if uuid:  # Ensure UUID is not None or empty
+                        disk_files[uuid] = md_file
+                    else:
+                        orphaned_files.append(md_file)
+                        stats["files_orphaned"] += 1
+                else:
+                    orphaned_files.append(md_file)
+                    stats["files_orphaned"] += 1
+                    
+            except Exception as e:
+                stats["errors"].append(f"Error reading {md_file}: {e}")
+                continue
+        
+        print(f"RECONCILIATION: Found {len(disk_files)} files with UUIDs, {len(orphaned_files)} orphaned files")
+        
+        # Step 2: Get all database records and check against disk files
+        database_records = await storage_manager.get_recent_globules(limit=10000)  # Get all records
+        
+        for globule in database_records:
+            if not globule.id:
+                continue  # Skip records without UUIDs
+                
+            current_db_path = None
+            if globule.file_decision and globule.file_decision.semantic_path:
+                current_db_path = globule.file_decision.semantic_path / globule.file_decision.filename
+            
+            # Check if this UUID exists on disk
+            if globule.id in disk_files:
+                actual_file_path = disk_files[globule.id]
+                relative_path = actual_file_path.relative_to(self.base_path)
+                
+                # Check if database path matches actual file location
+                if current_db_path != relative_path:
+                    # File has been moved/renamed - update database
+                    await self._update_globule_file_path(storage_manager, globule, actual_file_path)
+                    stats["database_records_updated"] += 1
+                    stats["files_reconciled"] += 1
+                    
+                    print(f"RECONCILED: {globule.id[:8]}... moved from {current_db_path} to {relative_path}")
+                else:
+                    # File is in expected location
+                    stats["files_reconciled"] += 1
+            else:
+                # Database record exists but file is missing
+                print(f"WARNING: Database record {globule.id[:8]}... points to missing file: {current_db_path}")
+                # Note: We don't delete database records as the file might be temporarily unavailable
+        
+        # Step 3: Report orphaned files that could be imported
+        if orphaned_files:
+            print(f"ORPHANED FILES: Found {len(orphaned_files)} files without UUIDs:")
+            for orphan in orphaned_files[:5]:  # Show first 5
+                relative_path = orphan.relative_to(self.base_path)
+                print(f"  - {relative_path}")
+            if len(orphaned_files) > 5:
+                print(f"  ... and {len(orphaned_files) - 5} more")
+        
+        return stats
+    
+    async def _update_globule_file_path(self, storage_manager, globule: ProcessedGlobule, actual_file_path: Path):
+        """
+        Update a globule's file_decision to reflect its actual location on disk.
+        
+        Args:
+            storage_manager: SQLiteStorageManager instance
+            globule: The globule to update
+            actual_file_path: The actual path where the file exists
+        """
+        from globule.core.models import FileDecision
+        
+        # Calculate relative path from base_path
+        relative_path = actual_file_path.relative_to(self.base_path)
+        
+        # Create new FileDecision reflecting actual location
+        globule.file_decision = FileDecision(
+            semantic_path=relative_path.parent,
+            filename=relative_path.name,
+            metadata={"reconciled": True, "original_path": str(globule.file_decision.semantic_path / globule.file_decision.filename) if globule.file_decision else None},
+            confidence=0.9,  # High confidence as we found the actual file
+            alternative_paths=[]
+        )
+        
+        # Update the globule in the database
+        globule.modified_at = datetime.now()
+        success = await storage_manager.update_globule(globule)
+        
+        if not success:
+            raise Exception(f"Failed to update globule {globule.id} with new file path")
+    
+    def scan_for_orphaned_files(self) -> List[Path]:
+        """
+        Find markdown files that don't have UUIDs in their frontmatter.
+        
+        These files could potentially be imported into the system.
+        
+        Returns:
+            List of file paths that lack UUID frontmatter
+        """
+        orphaned_files = []
+        
+        for md_file in self.base_path.rglob("*.md"):
+            try:
+                with open(md_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                frontmatter, _ = self._parse_frontmatter(content)
+                
+                if not frontmatter or not frontmatter.get('uuid'):
+                    orphaned_files.append(md_file)
+                    
+            except Exception:
+                # If we can't read the file, consider it orphaned
+                orphaned_files.append(md_file)
+                continue
+        
+        return orphaned_files

@@ -29,11 +29,24 @@ class SQLiteStorageManager(StorageManager):
             db_path = self.config.get_storage_dir() / "globules.db"
         self.db_path = db_path
         self._connection: Optional[aiosqlite.Connection] = None
+        
+        # FileManager is a private, internal component
+        from globule.storage.file_manager import FileManager
+        self._file_manager = FileManager()
     
-    async def initialize(self) -> None:
-        """Initialize database schema"""
+    async def initialize(self, auto_reconcile: bool = False) -> None:
+        """
+        Initialize database schema and optionally perform file reconciliation.
+        
+        Args:
+            auto_reconcile: If True, automatically reconcile files with database on startup
+        """
         async with aiosqlite.connect(str(self.db_path)) as db:
             await self._create_schema(db)
+            
+        # Optional automatic reconciliation on startup
+        if auto_reconcile:
+            await self._perform_startup_reconciliation()
     
     async def _create_schema(self, db: aiosqlite.Connection) -> None:
         """Create database tables"""
@@ -76,6 +89,33 @@ class SQLiteStorageManager(StorageManager):
         
         await db.commit()
     
+    async def _perform_startup_reconciliation(self) -> None:
+        """
+        Perform automatic file reconciliation on startup.
+        
+        This ensures the database reflects the actual state of files on disk,
+        handling cases where users have moved, renamed, or organized files.
+        """
+        try:
+            from globule.storage.file_manager import FileManager
+            
+            file_manager = FileManager()
+            print("STARTUP: Performing automatic file reconciliation...")
+            
+            stats = await file_manager.reconcile_files_with_database(self)
+            
+            if stats['database_records_updated'] > 0:
+                print(f"RECONCILIATION: Updated {stats['database_records_updated']} database records to match file locations")
+            
+            if stats['files_orphaned'] > 0:
+                print(f"RECONCILIATION: Found {stats['files_orphaned']} orphaned files without UUIDs")
+                
+            print("STARTUP: File reconciliation complete")
+            
+        except Exception as e:
+            print(f"STARTUP WARNING: File reconciliation failed: {e}")
+            # Don't fail initialization due to reconciliation errors
+    
     async def _get_connection(self) -> aiosqlite.Connection:
         """Get or create database connection"""
         if self._connection is None:
@@ -87,66 +127,107 @@ class SQLiteStorageManager(StorageManager):
         return self._connection
     
     async def store_globule(self, globule: ProcessedGlobule) -> str:
-        """Store a processed globule and return its ID"""
+        """
+        Store a processed globule using the transactional Outbox Pattern.
+        
+        This implementation ensures true atomicity:
+        1. Determine final file path before any operations
+        2. Create file in temporary location
+        3. Execute database transaction with final file path
+        4. Commit file to final location only after DB success
+        5. Clean up temp file on any failure
+        
+        Args:
+            globule: The processed globule to store
+            
+        Returns:
+            The globule ID
+            
+        Raises:
+            Exception: If any part of the atomic operation fails
+        """
         if globule.id is None:
             globule.id = str(uuid.uuid4())
         
-        # Serialize complex fields to JSON
-        embedding_blob = None
-        if globule.embedding is not None:
-            embedding_blob = globule.embedding.astype(np.float32).tobytes()
+        # OUTBOX PATTERN STEP 1: Determine final file path before any operations
+        final_file_path = self._file_manager.determine_path(globule)
         
-        parsed_data_json = json.dumps(globule.parsed_data)
-        confidence_scores_json = json.dumps(globule.confidence_scores)
-        processing_time_json = json.dumps(globule.processing_time_ms)
-        semantic_neighbors_json = json.dumps(globule.semantic_neighbors)
-        processing_notes_json = json.dumps(globule.processing_notes)
+        # Update globule's file_decision to reflect the determined path
+        relative_path = final_file_path.relative_to(self._file_manager.base_path)
+        globule.file_decision = FileDecision(
+            semantic_path=relative_path.parent,
+            filename=relative_path.name,
+            metadata={"outbox_pattern": True, "atomic_storage": True},
+            confidence=1.0,  # High confidence as we determined the path
+            alternative_paths=[]
+        )
         
-        # Store file path from file decision
-        file_path = None
-        if globule.file_decision:
+        # OUTBOX PATTERN STEP 2: Create file in temporary location
+        temp_file_path = self._file_manager.save_to_temp(globule)
+        
+        try:
+            # OUTBOX PATTERN STEP 3: Database transaction with final path
+            # Serialize complex fields to JSON
+            embedding_blob = None
+            if globule.embedding is not None:
+                embedding_blob = globule.embedding.astype(np.float32).tobytes()
+            
+            parsed_data_json = json.dumps(globule.parsed_data)
+            confidence_scores_json = json.dumps(globule.confidence_scores)
+            processing_time_json = json.dumps(globule.processing_time_ms)
+            semantic_neighbors_json = json.dumps(globule.semantic_neighbors)
+            processing_notes_json = json.dumps(globule.processing_notes)
+            
+            # Use the determined file path for database storage
             file_path = str(globule.file_decision.semantic_path / globule.file_decision.filename)
-        
-        db = await self._get_connection()
-        
-        # This transaction block guarantees all-or-nothing.
-        # If any statement inside it fails, the entire block is rolled back.
-        async with db.transaction():
-            # Insert into the main table
-            cursor = await db.execute("""
-                INSERT OR REPLACE INTO globules (
-                    id, text, embedding, embedding_confidence, parsed_data,
-                    parsing_confidence, file_path, orchestration_strategy,
-                    confidence_scores, processing_time_ms, semantic_neighbors,
-                    processing_notes, created_at, modified_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                globule.id,
-                globule.text,
-                embedding_blob,
-                globule.embedding_confidence,
-                parsed_data_json,
-                globule.parsing_confidence,
-                file_path,
-                globule.orchestration_strategy,
-                confidence_scores_json,
-                processing_time_json,
-                semantic_neighbors_json,
-                processing_notes_json,
-                globule.created_at.isoformat(),
-                globule.modified_at.isoformat()
-            ))
             
-            globule_rowid = cursor.lastrowid
+            db = await self._get_connection()
             
-            # Insert into the vector search index
-            if embedding_blob is not None:
-                await db.execute("""
-                    INSERT OR REPLACE INTO vss_globules (rowid, embedding)
-                    VALUES (?, ?)
-                """, (globule_rowid, embedding_blob))
-        
-        return globule.id
+            # This transaction block guarantees all-or-nothing database operations
+            async with db.transaction():
+                # Insert into the main table
+                cursor = await db.execute("""
+                    INSERT OR REPLACE INTO globules (
+                        id, text, embedding, embedding_confidence, parsed_data,
+                        parsing_confidence, file_path, orchestration_strategy,
+                        confidence_scores, processing_time_ms, semantic_neighbors,
+                        processing_notes, created_at, modified_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    globule.id,
+                    globule.text,
+                    embedding_blob,
+                    globule.embedding_confidence,
+                    parsed_data_json,
+                    globule.parsing_confidence,
+                    file_path,
+                    globule.orchestration_strategy,
+                    confidence_scores_json,
+                    processing_time_json,
+                    semantic_neighbors_json,
+                    processing_notes_json,
+                    globule.created_at.isoformat(),
+                    globule.modified_at.isoformat()
+                ))
+                
+                globule_rowid = cursor.lastrowid
+                
+                # Insert into the vector search index
+                if embedding_blob is not None:
+                    await db.execute("""
+                        INSERT OR REPLACE INTO vss_globules (rowid, embedding)
+                        VALUES (?, ?)
+                    """, (globule_rowid, embedding_blob))
+            
+            # OUTBOX PATTERN STEP 4: Database transaction succeeded, commit file
+            self._file_manager.commit_file(temp_file_path, final_file_path)
+            
+            return globule.id
+            
+        except Exception as e:
+            # OUTBOX PATTERN STEP 5: Any failure - clean up temp file
+            self._file_manager.cleanup_temp(temp_file_path)
+            raise Exception(f"Atomic storage operation failed: {e}")
     
     async def update_globule(self, globule: ProcessedGlobule) -> bool:
         """

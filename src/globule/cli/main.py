@@ -99,6 +99,7 @@ async def add(text: str, verbose: bool) -> None:
         start_time = datetime.now()
         
         processed_globule = await orchestrator.process_globule(enriched_input)
+        # Store using the atomic Outbox Pattern - storage manager handles file creation internally
         globule_id = await storage.store_globule(processed_globule)
         
         processing_time = (datetime.now() - start_time).total_seconds() * 1000
@@ -411,89 +412,7 @@ async def cluster(min_globules: int, verbose: bool, export: Optional[str]) -> No
         raise click.Abort()
 
 
-@cli.command()
-@click.argument('globule_id', required=False)
-@click.option('--all', '-a', is_flag=True, help='Save all globules as files')
-@click.option('--output-dir', '-d', help='Output directory (defaults to config storage dir)')
-async def save(globule_id: Optional[str], all: bool, output_dir: Optional[str]) -> None:
-    """
-    Save globules as markdown files with YAML frontmatter containing UUIDs.
-    
-    This implements the canonical UUID system where files have human-readable names
-    but contain the UUID in frontmatter for database linking.
-    
-    Examples:
-    \b
-    globule save abc123-def456-...        # Save specific globule
-    globule save --all                    # Save all globules
-    globule save --all --output-dir ./docs  # Save to custom directory
-    """
-    try:
-        from globule.storage.file_manager import FileManager
-        
-        # Initialize components
-        storage = SQLiteStorageManager()
-        await storage.initialize()
-        
-        # Override output directory if specified
-        file_manager = FileManager()
-        if output_dir:
-            file_manager.base_path = Path(output_dir)
-            file_manager.base_path.mkdir(parents=True, exist_ok=True)
-        
-        saved_files = []
-        
-        if all:
-            # Save all globules
-            click.echo("SAVE: Retrieving all globules...")
-            globules = await storage.get_recent_globules(limit=1000)  # Get all
-            
-            if not globules:
-                click.echo("NO CONTENT: No globules found to save.")
-                return
-            
-            click.echo(f"PROCESSING: Saving {len(globules)} globules as files...")
-            
-            for globule in globules:
-                try:
-                    file_path = file_manager.save_globule_to_file(globule)
-                    saved_files.append(file_path)
-                except Exception as e:
-                    click.echo(f"ERROR: Failed to save globule {globule.id}: {e}", err=True)
-        
-        elif globule_id:
-            # Save specific globule
-            click.echo(f"SAVE: Retrieving globule {globule_id}...")
-            globule = await storage.get_globule(globule_id)
-            
-            if not globule:
-                click.echo(f"NOT FOUND: Globule {globule_id} not found.", err=True)
-                return
-            
-            file_path = file_manager.save_globule_to_file(globule)
-            saved_files.append(file_path)
-        
-        else:
-            click.echo("ERROR: Must specify --all or provide a globule ID", err=True)
-            return
-        
-        # Show results
-        click.echo(f"SUCCESS: Saved {len(saved_files)} files:")
-        for file_path in saved_files:
-            rel_path = file_path.relative_to(file_manager.base_path)
-            click.echo(f"  {rel_path}")
-        
-        click.echo(f"\\nFiles saved to: {file_manager.base_path}")
-        click.echo("Each file contains UUID in YAML frontmatter for canonical identification.")
-        
-        # Cleanup
-        await storage.close()
-        
-    except Exception as e:
-        logger.error(f"Save operation failed: {e}")
-        click.echo(f"Error: {e}", err=True)
-        raise click.Abort()
-
+# REMOVED: save command is now redundant - files are created automatically during 'add'
 
 @cli.command()
 @click.option('--mode', '-m', 
@@ -543,6 +462,79 @@ async def tutorial(mode: str) -> None:
         raise click.Abort()
 
 
+@cli.command()
+@click.option('--auto', is_flag=True, help='Run reconciliation automatically without prompts')
+@click.option('--verbose', '-v', is_flag=True, help='Show detailed reconciliation output')
+async def reconcile(auto: bool, verbose: bool) -> None:
+    """
+    Reconcile files on disk with database records using UUID canonical links.
+    
+    This is the core of Priority 4: ensuring database records reflect the actual
+    state of files on disk, regardless of how users have moved or renamed them.
+    
+    The system uses UUIDs embedded in YAML frontmatter as the canonical link
+    between files and database records. This allows users to organize, rename,
+    and move files freely while maintaining system integrity.
+    
+    Examples:
+    \\b
+    globule reconcile                    # Interactive reconciliation with prompts
+    globule reconcile --auto            # Automatic reconciliation
+    globule reconcile --auto --verbose  # Detailed output
+    """
+    try:
+        from globule.storage.file_manager import FileManager
+        
+        # Initialize components
+        storage = SQLiteStorageManager()
+        await storage.initialize()
+        
+        file_manager = FileManager()
+        
+        if not auto:
+            click.echo("RECONCILIATION: This will scan all files and update database records to match disk reality.")
+            click.echo("FILES: Users may have moved, renamed, or organized files differently.")
+            click.echo("SYSTEM: The UUID in YAML frontmatter provides the canonical link.")
+            click.echo()
+            
+            if not click.confirm("Proceed with reconciliation?"):
+                click.echo("Reconciliation cancelled.")
+                return
+        
+        click.echo("RECONCILIATION: Starting file-database reconciliation...")
+        stats = await file_manager.reconcile_files_with_database(storage)
+        
+        # Display results
+        click.echo(f"\\nRECONCILIATION COMPLETE:")
+        click.echo(f"  Files scanned: {stats['files_scanned']}")
+        click.echo(f"  Files reconciled: {stats['files_reconciled']}")
+        click.echo(f"  Database records updated: {stats['database_records_updated']}")
+        click.echo(f"  Orphaned files (no UUID): {stats['files_orphaned']}")
+        
+        if stats['errors']:
+            click.echo(f"  Errors encountered: {len(stats['errors'])}")
+            if verbose:
+                for error in stats['errors']:
+                    click.echo(f"    - {error}")
+        
+        if stats['files_orphaned'] > 0:
+            click.echo(f"\\nORPHANED FILES: Found {stats['files_orphaned']} files without UUIDs.")
+            click.echo("These files exist on disk but aren't tracked in the database.")
+            click.echo("Use 'globule import' to add them to the system (when implemented).")
+        
+        if stats['database_records_updated'] > 0:
+            click.echo(f"\\nUPDATE: {stats['database_records_updated']} database records updated to reflect actual file locations.")
+            click.echo("PRINCIPLE: The filename is for the human; the UUID is for the machine.")
+        
+        # Cleanup
+        await storage.close()
+        
+    except Exception as e:
+        logger.error(f"Reconciliation failed: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
 def main():
     """Entry point for the CLI"""
     # Convert click commands to async
@@ -556,8 +548,9 @@ def main():
     cli.commands['draft'].callback = async_command(cli.commands['draft'].callback)
     cli.commands['search'].callback = async_command(cli.commands['search'].callback)
     cli.commands['cluster'].callback = async_command(cli.commands['cluster'].callback)
-    cli.commands['save'].callback = async_command(cli.commands['save'].callback)
+    # REMOVED: save command - files are now created automatically during 'add'
     cli.commands['tutorial'].callback = async_command(cli.commands['tutorial'].callback)
+    cli.commands['reconcile'].callback = async_command(cli.commands['reconcile'].callback)
     
     cli()
 
