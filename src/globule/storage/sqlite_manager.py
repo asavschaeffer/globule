@@ -56,6 +56,13 @@ class SQLiteStorageManager(StorageManager):
             )
         """)
         
+        # Create vector search virtual table
+        await db.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS vss_globules USING vec0(
+                embedding FLOAT32[1024]
+            )
+        """)
+        
         # Create indexes for performance
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_globules_created_at 
@@ -124,6 +131,20 @@ class SQLiteStorageManager(StorageManager):
             globule.created_at.isoformat(),
             globule.modified_at.isoformat()
         ))
+        
+        # Insert/update vector search table if embedding exists
+        if embedding_blob is not None:
+            # Get the rowid of the inserted/updated globule
+            async with db.execute("SELECT rowid FROM globules WHERE id = ?", (globule.id,)) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    rowid = row[0]
+                    # Insert into vector search table
+                    await db.execute("""
+                        INSERT OR REPLACE INTO vss_globules (rowid, embedding)
+                        VALUES (?, ?)
+                    """, (rowid, globule.embedding.astype(np.float32).tobytes()))
+        
         await db.commit()
         
         return globule.id
@@ -156,10 +177,9 @@ class SQLiteStorageManager(StorageManager):
         similarity_threshold: float = 0.5
     ) -> List[Tuple[ProcessedGlobule, float]]:
         """
-        Find semantically similar globules using optimized vector search.
+        Find semantically similar globules using vector search.
         
-        Phase 2 Implementation: Enhanced similarity calculations with multiple algorithms,
-        intelligent filtering, and performance optimizations.
+        Uses vec0 virtual table for efficient C-based vector similarity search.
         
         Args:
             query_vector: The embedding vector to search for
@@ -172,70 +192,40 @@ class SQLiteStorageManager(StorageManager):
         if query_vector is None:
             return []
             
-        # Ensure query vector is normalized for consistent similarity calculations
+        # Normalize query vector for consistent similarity calculations
         query_vector = self._normalize_vector(query_vector)
         
         db = await self._get_connection()
         
-        # Phase 2: Enhanced query with metadata filtering
+        # Use vector search virtual table for efficient similarity search
         async with db.execute("""
-            SELECT * FROM globules 
-            WHERE embedding IS NOT NULL 
-            AND embedding_confidence > 0.3
-            ORDER BY created_at DESC
-        """) as cursor:
+            SELECT g.*, vss.distance
+            FROM vss_globules vss
+            JOIN globules g ON g.rowid = vss.rowid
+            WHERE vss MATCH ?
+            AND g.embedding_confidence > 0.3
+            ORDER BY vss.distance
+            LIMIT ?
+        """, (query_vector.tobytes(), limit)) as cursor:
             rows = await cursor.fetchall()
         
         if not rows:
             return []
         
-        # Phase 2: Batch similarity calculation for performance
-        results = await self._batch_similarity_search(query_vector, rows, similarity_threshold)
-        
-        # Advanced filtering and ranking
-        enhanced_results = self._enhance_search_results(results, query_vector)
-        
-        # Sort by enhanced similarity score and limit
-        enhanced_results.sort(key=lambda x: x[1], reverse=True)
-        return enhanced_results[:limit]
-
-    async def _batch_similarity_search(
-        self, 
-        query_vector: np.ndarray, 
-        rows: List[sqlite3.Row], 
-        threshold: float
-    ) -> List[Tuple[ProcessedGlobule, float]]:
-        """
-        Perform batch similarity calculations for improved performance.
-        
-        Phase 2 enhancement: Vectorized operations using numpy for speed.
-        """
         results = []
-        embeddings_batch = []
-        globules_batch = []
-        
-        # Build batch of embeddings and globules
         for row in rows:
-            globule = self._row_to_globule(row)
-            if globule.embedding is not None:
-                # Normalize embedding for consistent comparison
-                normalized_embedding = self._normalize_vector(globule.embedding)
-                embeddings_batch.append(normalized_embedding)
-                globules_batch.append(globule)
-        
-        if not embeddings_batch:
-            return results
-        
-        # Vectorized similarity calculation (much faster than loop)
-        embeddings_matrix = np.vstack(embeddings_batch)
-        similarities = np.dot(embeddings_matrix, query_vector)
-        
-        # Filter by threshold and create results
-        for i, similarity in enumerate(similarities):
-            if similarity >= threshold:
-                results.append((globules_batch[i], float(similarity)))
+            # Convert distance to similarity score (vec0 returns distance, we want similarity)
+            distance = row[-1]  # Last column is distance
+            similarity = max(0.0, 1.0 - distance)  # Convert distance to similarity
+            
+            if similarity >= similarity_threshold:
+                # Create globule from row data (excluding the distance column)
+                globule_row = row[:-1]
+                globule = self._row_to_globule(globule_row)
+                results.append((globule, similarity))
         
         return results
+
 
     def _enhance_search_results(
         self, 

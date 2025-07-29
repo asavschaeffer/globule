@@ -27,9 +27,6 @@ from datetime import datetime, timedelta
 from collections import Counter
 import json
 
-from sklearn.cluster import KMeans, AgglomerativeClustering
-from sklearn.metrics import silhouette_score
-from sklearn.preprocessing import StandardScaler
 
 from globule.core.models import ProcessedGlobule
 from globule.storage.sqlite_manager import SQLiteStorageManager
@@ -166,7 +163,7 @@ class SemanticClusteringEngine:
             cluster_labels = self._perform_clustering(embeddings_matrix, optimal_k)
             
             # Calculate silhouette score for quality assessment
-            silhouette = silhouette_score(embeddings_matrix, cluster_labels)
+            silhouette = self._silhouette_score(embeddings_matrix, cluster_labels)
             
             # Create semantic clusters with intelligent labeling
             semantic_clusters = await self._create_semantic_clusters(
@@ -264,13 +261,12 @@ class SemanticClusteringEngine:
         
         for k in k_range:
             try:
-                kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-                cluster_labels = kmeans.fit_predict(embeddings_matrix)
+                cluster_labels, centroids, inertia = self._kmeans(embeddings_matrix, k)
                 
-                inertias.append(kmeans.inertia_)
+                inertias.append(inertia)
                 
                 if len(set(cluster_labels)) > 1:  # Need at least 2 clusters for silhouette
-                    sil_score = silhouette_score(embeddings_matrix, cluster_labels)
+                    sil_score = self._silhouette_score(embeddings_matrix, cluster_labels)
                     silhouette_scores.append(sil_score)
                 else:
                     silhouette_scores.append(0)
@@ -317,21 +313,19 @@ class SemanticClusteringEngine:
             return conservative_k
 
     def _perform_clustering(self, embeddings_matrix: np.ndarray, k: int) -> np.ndarray:
-        """Perform the actual clustering using K-means."""
+        """Perform the actual clustering using custom K-means."""
         try:
-            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10, max_iter=300)
-            cluster_labels = kmeans.fit_predict(embeddings_matrix)
+            cluster_labels, centroids, inertia = self._kmeans(embeddings_matrix, k)
             return cluster_labels
             
         except Exception as e:
             self.logger.error(f"K-means clustering failed: {e}")
-            # Fallback to agglomerative clustering
+            # Fallback to simple distance-based clustering
             try:
-                agg_clustering = AgglomerativeClustering(n_clusters=k)
-                cluster_labels = agg_clustering.fit_predict(embeddings_matrix)
+                cluster_labels = self._simple_clustering(embeddings_matrix, k)
                 return cluster_labels
             except Exception as e2:
-                self.logger.error(f"Agglomerative clustering also failed: {e2}")
+                self.logger.error(f"Simple clustering also failed: {e2}")
                 # Last resort: assign everything to one cluster
                 return np.zeros(embeddings_matrix.shape[0], dtype=int)
 
@@ -659,6 +653,137 @@ class SemanticClusteringEngine:
         metrics["cross_domain_clusters"] = sum(1 for c in clusters if len(c.domains) > 1)
         
         return metrics
+
+    def _kmeans(self, X: np.ndarray, k: int, max_iters: int = 300, tol: float = 1e-4) -> Tuple[np.ndarray, np.ndarray, float]:
+        """
+        Custom K-means implementation using numpy.
+        
+        Args:
+            X: Data matrix (n_samples, n_features)
+            k: Number of clusters
+            max_iters: Maximum iterations
+            tol: Convergence tolerance
+            
+        Returns:
+            (cluster_labels, centroids, inertia)
+        """
+        n_samples, n_features = X.shape
+        
+        # Initialize centroids randomly
+        np.random.seed(42)  # For reproducibility
+        centroids = X[np.random.choice(n_samples, k, replace=False)]
+        
+        for iteration in range(max_iters):
+            # Assign points to nearest centroid
+            distances = np.sqrt(((X - centroids[:, np.newaxis])**2).sum(axis=2))
+            labels = np.argmin(distances, axis=0)
+            
+            # Update centroids
+            new_centroids = np.array([X[labels == i].mean(axis=0) for i in range(k)])
+            
+            # Handle empty clusters by reinitializing
+            for i in range(k):
+                if np.sum(labels == i) == 0:
+                    new_centroids[i] = X[np.random.choice(n_samples)]
+            
+            # Check convergence
+            if np.allclose(centroids, new_centroids, atol=tol):
+                break
+                
+            centroids = new_centroids
+        
+        # Calculate inertia (within-cluster sum of squares)
+        distances = np.sqrt(((X - centroids[labels])**2).sum(axis=1))
+        inertia = np.sum(distances**2)
+        
+        return labels, centroids, inertia
+    
+    def _silhouette_score(self, X: np.ndarray, labels: np.ndarray) -> float:
+        """
+        Custom silhouette score implementation using numpy.
+        
+        Args:
+            X: Data matrix (n_samples, n_features)
+            labels: Cluster labels
+            
+        Returns:
+            Average silhouette score
+        """
+        n_samples = len(X)
+        unique_labels = np.unique(labels)
+        
+        if len(unique_labels) <= 1:
+            return 0.0
+        
+        silhouette_scores = []
+        
+        for i in range(n_samples):
+            # Current point and its cluster
+            point = X[i]
+            current_cluster = labels[i]
+            
+            # Calculate a(i): mean distance to other points in same cluster
+            same_cluster_mask = (labels == current_cluster) & (np.arange(n_samples) != i)
+            if np.sum(same_cluster_mask) > 0:
+                a_i = np.mean(np.sqrt(np.sum((X[same_cluster_mask] - point)**2, axis=1)))
+            else:
+                a_i = 0
+            
+            # Calculate b(i): minimum mean distance to points in other clusters
+            b_i = float('inf')
+            for other_cluster in unique_labels:
+                if other_cluster != current_cluster:
+                    other_cluster_mask = labels == other_cluster
+                    if np.sum(other_cluster_mask) > 0:
+                        mean_dist = np.mean(np.sqrt(np.sum((X[other_cluster_mask] - point)**2, axis=1)))
+                        b_i = min(b_i, mean_dist)
+            
+            # Calculate silhouette coefficient for this point
+            if max(a_i, b_i) > 0:
+                s_i = (b_i - a_i) / max(a_i, b_i)
+            else:
+                s_i = 0
+            
+            silhouette_scores.append(s_i)
+        
+        return np.mean(silhouette_scores)
+    
+    def _simple_clustering(self, X: np.ndarray, k: int) -> np.ndarray:
+        """
+        Simple distance-based clustering fallback.
+        
+        Groups points by proximity using a greedy approach.
+        """
+        n_samples = X.shape[0]
+        labels = np.zeros(n_samples, dtype=int)
+        
+        if k >= n_samples:
+            return np.arange(n_samples)
+        
+        # Select initial cluster centers spread apart
+        centers_idx = [0]  # Start with first point
+        
+        for _ in range(k - 1):
+            # Find point farthest from existing centers
+            max_min_dist = -1
+            next_center = 0
+            
+            for i in range(n_samples):
+                if i not in centers_idx:
+                    # Find minimum distance to existing centers
+                    min_dist = min(np.sqrt(np.sum((X[i] - X[c])**2)) for c in centers_idx)
+                    if min_dist > max_min_dist:
+                        max_min_dist = min_dist
+                        next_center = i
+            
+            centers_idx.append(next_center)
+        
+        # Assign points to nearest center
+        for i in range(n_samples):
+            distances = [np.sqrt(np.sum((X[i] - X[c])**2)) for c in centers_idx]
+            labels[i] = np.argmin(distances)
+        
+        return labels
 
     def _create_empty_analysis(self, total_globules: int) -> ClusteringAnalysis:
         """Create empty analysis when clustering is not possible."""

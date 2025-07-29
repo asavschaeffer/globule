@@ -11,7 +11,6 @@ from datetime import datetime
 from pathlib import Path
 from enum import Enum
 import numpy as np
-from pydantic import BaseModel, Field
 
 
 @dataclass
@@ -125,31 +124,77 @@ class SynthesisState:
     discovery_depth: int = 1  # Ripples of relevance depth
 
 
-# Pydantic models for validation and serialization
-class MetadataOutput(BaseModel):
+# Dataclass models with validation
+@dataclass
+class MetadataOutput:
     """Validated metadata output from parsing service"""
     domain: str = "general"
     timestamp: Optional[str] = None
     category: str = "note"
     title: str = "Untitled"
-    entities: List[Dict[str, str]] = Field(default_factory=list)
-    keywords: List[str] = Field(default_factory=list)
+    entities: List[Dict[str, str]] = field(default_factory=list)
+    keywords: List[str] = field(default_factory=list)
+    
+    def __post_init__(self):
+        """Validate fields after initialization"""
+        if not isinstance(self.domain, str) or len(self.domain.strip()) == 0:
+            raise ValueError("Domain must be a non-empty string")
+        if self.timestamp is not None and not isinstance(self.timestamp, str):
+            raise ValueError("Timestamp must be a string or None")
+        if not isinstance(self.category, str) or len(self.category.strip()) == 0:
+            raise ValueError("Category must be a non-empty string")
+        if not isinstance(self.title, str) or len(self.title.strip()) == 0:
+            raise ValueError("Title must be a non-empty string")
+        if not isinstance(self.entities, list):
+            raise ValueError("Entities must be a list")
+        if not isinstance(self.keywords, list):
+            raise ValueError("Keywords must be a list")
 
 
-class EmbeddingResult(BaseModel):
+@dataclass
+class EmbeddingResult:
     """Result of embedding generation"""
     embedding: List[float]  # Vector as list for JSON serialization
     model: str
     dimension: int
     generation_time_ms: float
     cached: bool = False
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        """Validate fields after initialization"""
+        if not isinstance(self.embedding, list) or len(self.embedding) == 0:
+            raise ValueError("Embedding must be a non-empty list")
+        if not all(isinstance(x, (int, float)) for x in self.embedding):
+            raise ValueError("All embedding values must be numeric")
+        if not isinstance(self.model, str) or len(self.model.strip()) == 0:
+            raise ValueError("Model must be a non-empty string")
+        if not isinstance(self.dimension, int) or self.dimension <= 0:
+            raise ValueError("Dimension must be a positive integer")
+        if not isinstance(self.generation_time_ms, (int, float)) or self.generation_time_ms < 0:
+            raise ValueError("Generation time must be non-negative")
+        if len(self.embedding) != self.dimension:
+            raise ValueError(f"Embedding length ({len(self.embedding)}) must match dimension ({self.dimension})")
 
 
-class ParsingResult(BaseModel):
+@dataclass
+class ParsingResult:
     """Result of structural parsing"""
     data: Dict[str, Any]
     confidence: float
     processing_time_ms: float
     model: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        """Validate fields after initialization"""
+        if not isinstance(self.data, dict):
+            raise ValueError("Data must be a dictionary")
+        if not isinstance(self.confidence, (int, float)) or not (0.0 <= self.confidence <= 1.0):
+            raise ValueError("Confidence must be a float between 0.0 and 1.0")
+        if not isinstance(self.processing_time_ms, (int, float)) or self.processing_time_ms < 0:
+            raise ValueError("Processing time must be non-negative")
+        if not isinstance(self.model, str) or len(self.model.strip()) == 0:
+            raise ValueError("Model must be a non-empty string")
+        if not isinstance(self.metadata, dict):
+            raise ValueError("Metadata must be a dictionary")
