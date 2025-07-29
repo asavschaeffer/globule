@@ -241,76 +241,46 @@ class SemanticClusteringEngine:
 
     def _find_optimal_clusters(self, embeddings_matrix: np.ndarray) -> int:
         """
-        Find optimal number of clusters using elbow method and silhouette analysis.
+        Find optimal number of clusters using silhouette score.
         
-        Combines multiple heuristics to determine the best cluster count.
+        The silhouette score is a real mathematical measure of cluster quality.
+        Higher score means better-defined, more separated clusters.
         """
         n_samples = embeddings_matrix.shape[0]
         
         # Determine reasonable range for k
-        min_k = max(2, min(3, n_samples // 4))
-        max_k = min(self.max_clusters, n_samples // 2)
+        min_k = 2
+        max_k = min(15, n_samples // 2)  # Never more than half the samples
         
         if min_k >= max_k:
             return min_k
         
-        k_range = range(min_k, max_k + 1)
+        best_k = min_k
+        best_silhouette = -1.0  # Silhouette scores range from -1 to 1
         
-        inertias = []
-        silhouette_scores = []
+        self.logger.info(f"Testing k from {min_k} to {max_k} using silhouette score")
         
-        for k in k_range:
+        for k in range(min_k, max_k + 1):
             try:
                 cluster_labels, centroids, inertia = self._kmeans(embeddings_matrix, k)
                 
-                inertias.append(inertia)
-                
-                if len(set(cluster_labels)) > 1:  # Need at least 2 clusters for silhouette
-                    sil_score = self._silhouette_score(embeddings_matrix, cluster_labels)
-                    silhouette_scores.append(sil_score)
+                # Only calculate silhouette if we have valid clusters
+                if len(set(cluster_labels)) > 1:
+                    silhouette = self._silhouette_score(embeddings_matrix, cluster_labels)
+                    self.logger.debug(f"k={k}: silhouette={silhouette:.3f}")
+                    
+                    if silhouette > best_silhouette:
+                        best_silhouette = silhouette
+                        best_k = k
                 else:
-                    silhouette_scores.append(0)
+                    self.logger.debug(f"k={k}: invalid clustering (only 1 cluster)")
                     
             except Exception as e:
                 self.logger.warning(f"Clustering failed for k={k}: {e}")
-                inertias.append(float('inf'))
-                silhouette_scores.append(0)
         
-        # Find optimal k using combination of methods
-        optimal_k = self._select_optimal_k(k_range, inertias, silhouette_scores)
-        
-        self.logger.info(f"Optimal cluster count determined: k={optimal_k}")
-        return optimal_k
+        self.logger.info(f"Optimal k={best_k} with silhouette score={best_silhouette:.3f}")
+        return best_k
 
-    def _select_optimal_k(
-        self, 
-        k_range: range, 
-        inertias: List[float], 
-        silhouette_scores: List[float]
-    ) -> int:
-        """Select optimal k using multiple criteria."""
-        
-        # Method 1: Highest silhouette score
-        best_silhouette_idx = np.argmax(silhouette_scores)
-        silhouette_k = list(k_range)[best_silhouette_idx]
-        
-        # Method 2: Elbow method (simplified)
-        # Look for the point where inertia reduction slows down significantly
-        if len(inertias) > 2:
-            deltas = [inertias[i] - inertias[i + 1] for i in range(len(inertias) - 1)]
-            elbow_idx = np.argmax(deltas)
-            elbow_k = list(k_range)[elbow_idx]
-        else:
-            elbow_k = silhouette_k
-        
-        # Method 3: Conservative approach - prefer fewer clusters if quality is similar
-        conservative_k = min(silhouette_k, elbow_k)
-        
-        # Final decision: use silhouette if it's significantly better, otherwise conservative
-        if silhouette_scores[best_silhouette_idx] > 0.3:  # Good silhouette score
-            return silhouette_k
-        else:
-            return conservative_k
 
     def _perform_clustering(self, embeddings_matrix: np.ndarray, k: int) -> np.ndarray:
         """Perform the actual clustering using custom K-means."""
@@ -353,12 +323,16 @@ class SemanticClusteringEngine:
             cluster_embeddings = embeddings_matrix[cluster_indices]
             centroid = np.mean(cluster_embeddings, axis=0)
             
-            # Generate intelligent cluster metadata
-            label, description = await self._generate_cluster_label(cluster_globules)
+            # Find the most representative globule (closest to centroid)
+            representative_globule = self._find_representative_globule(cluster_globules, cluster_embeddings, centroid)
+            
+            # Use the representative globule for cluster metadata
+            label = self._create_cluster_label_from_globule(representative_globule)
+            description = f"Theme represented by: {representative_globule.text[:100]}{'...' if len(representative_globule.text) > 100 else ''}"
             keywords = self._extract_cluster_keywords(cluster_globules)
             domains = self._analyze_cluster_domains(cluster_globules)
             confidence = self._calculate_cluster_confidence(cluster_globules, cluster_embeddings)
-            representative_samples = self._select_representative_samples(cluster_globules)
+            representative_samples = [representative_globule.text] + [g.text for g in cluster_globules[:2] if g != representative_globule]
             theme_analysis = self._analyze_cluster_themes(cluster_globules)
             
             cluster = SemanticCluster(
@@ -381,6 +355,80 @@ class SemanticClusteringEngine:
         clusters.sort(key=lambda c: c.size, reverse=True)
         
         return clusters
+
+    def _find_representative_globule(
+        self, 
+        cluster_globules: List[ProcessedGlobule], 
+        cluster_embeddings: np.ndarray, 
+        centroid: np.ndarray
+    ) -> ProcessedGlobule:
+        """
+        Find the globule whose embedding is closest to the cluster centroid.
+        
+        Uses cosine distance (not Euclidean) because in high-dimensional embedding
+        spaces, cosine similarity is a better measure of semantic closeness.
+        
+        This gives us a real, user-written note as the cluster representative
+        instead of an abstract mathematical centroid.
+        """
+        min_distance = float('inf')
+        representative_globule = cluster_globules[0]  # fallback
+        
+        for i, globule in enumerate(cluster_globules):
+            # Calculate cosine distance to centroid (1 - cosine similarity)
+            embedding = cluster_embeddings[i]
+            
+            # Normalize vectors for cosine similarity calculation
+            norm_embedding = embedding / np.linalg.norm(embedding) if np.linalg.norm(embedding) > 0 else embedding
+            norm_centroid = centroid / np.linalg.norm(centroid) if np.linalg.norm(centroid) > 0 else centroid
+            
+            # Cosine distance = 1 - cosine similarity
+            cosine_similarity = np.dot(norm_embedding, norm_centroid)
+            cosine_distance = 1 - cosine_similarity
+            
+            if cosine_distance < min_distance:
+                min_distance = cosine_distance
+                representative_globule = globule
+        
+        return representative_globule
+    
+    def _create_cluster_label_from_globule(self, globule: ProcessedGlobule) -> str:
+        """
+        Create a meaningful cluster label from the representative globule.
+        
+        Uses the globule's parsed title if available, otherwise creates one
+        from the first part of the text.
+        """
+        # Try to use parsed title first
+        if globule.parsed_data and 'title' in globule.parsed_data:
+            title = globule.parsed_data['title']
+            if len(title.strip()) > 0:
+                return title.strip()
+        
+        # Fallback: create title from text
+        text = globule.text.strip()
+        if len(text) == 0:
+            return "Empty Theme"
+        
+        # Use first sentence or first 50 characters, whichever is shorter
+        sentences = text.split('.')
+        first_sentence = sentences[0].strip()
+        
+        if len(first_sentence) <= 50:
+            return first_sentence
+        else:
+            # Truncate at word boundary
+            words = first_sentence.split()
+            truncated = []
+            char_count = 0
+            
+            for word in words:
+                if char_count + len(word) + 1 > 47:  # Leave room for "..."
+                    break
+                truncated.append(word)
+                char_count += len(word) + 1
+            
+            return ' '.join(truncated) + "..."
 
     async def _generate_cluster_label(self, globules: List[ProcessedGlobule]) -> Tuple[str, str]:
         """Generate intelligent label and description for a cluster."""
@@ -654,6 +702,45 @@ class SemanticClusteringEngine:
         
         return metrics
 
+    def _kmeans_plus_plus_init(self, X: np.ndarray, k: int) -> np.ndarray:
+        """
+        Initialize centroids using K-means++ algorithm.
+        
+        This spreads initial centroids out by picking each subsequent centroid
+        with probability proportional to its squared distance from existing centroids.
+        
+        Args:
+            X: Data matrix (n_samples, n_features)  
+            k: Number of centroids to initialize
+            
+        Returns:
+            Initial centroids array (k, n_features)
+        """
+        n_samples, n_features = X.shape
+        centroids = np.empty((k, n_features))
+        
+        # Step 1: Choose first centroid randomly
+        centroids[0] = X[np.random.randint(n_samples)]
+        
+        # Step 2-k: Choose remaining centroids using weighted probability
+        for c_id in range(1, k):
+            # Calculate squared distances from each point to nearest existing centroid
+            distances = np.array([min([np.sum((x - c)**2) for c in centroids[:c_id]]) for x in X])
+            
+            # Convert distances to probabilities (proportional to squared distance)
+            probabilities = distances / distances.sum()
+            
+            # Choose next centroid based on these probabilities
+            cumulative_probabilities = probabilities.cumsum()
+            r = np.random.rand()
+            
+            for j, prob in enumerate(cumulative_probabilities):
+                if r < prob:
+                    centroids[c_id] = X[j]
+                    break
+        
+        return centroids
+
     def _kmeans(self, X: np.ndarray, k: int, max_iters: int = 300, tol: float = 1e-4) -> Tuple[np.ndarray, np.ndarray, float]:
         """
         Custom K-means implementation using numpy.
@@ -669,9 +756,9 @@ class SemanticClusteringEngine:
         """
         n_samples, n_features = X.shape
         
-        # Initialize centroids randomly
+        # Initialize centroids using K-means++ 
         np.random.seed(42)  # For reproducibility
-        centroids = X[np.random.choice(n_samples, k, replace=False)]
+        centroids = self._kmeans_plus_plus_init(X, k)
         
         for iteration in range(max_iters):
             # Assign points to nearest centroid
@@ -681,10 +768,21 @@ class SemanticClusteringEngine:
             # Update centroids
             new_centroids = np.array([X[labels == i].mean(axis=0) for i in range(k)])
             
-            # Handle empty clusters by reinitializing
+            # Handle empty clusters by choosing point farthest from existing centroids
             for i in range(k):
                 if np.sum(labels == i) == 0:
-                    new_centroids[i] = X[np.random.choice(n_samples)]
+                    # Find the point farthest from any existing centroid
+                    max_min_distance = -1
+                    farthest_point_idx = 0
+                    
+                    for j, point in enumerate(X):
+                        # Find distance to nearest centroid
+                        min_distance = min([np.linalg.norm(point - c) for c_idx, c in enumerate(new_centroids) if c_idx != i])
+                        if min_distance > max_min_distance:
+                            max_min_distance = min_distance
+                            farthest_point_idx = j
+                    
+                    new_centroids[i] = X[farthest_point_idx]
             
             # Check convergence
             if np.allclose(centroids, new_centroids, atol=tol):
@@ -701,6 +799,11 @@ class SemanticClusteringEngine:
     def _silhouette_score(self, X: np.ndarray, labels: np.ndarray) -> float:
         """
         Custom silhouette score implementation using numpy.
+        
+        NOTE: This is a naive O(n^2) implementation for educational purposes. 
+        It is a known performance bottleneck and should be replaced with a 
+        vectorized or compiled version. The scikit-learn implementation is 
+        orders of magnitude faster due to Cython optimization.
         
         Args:
             X: Data matrix (n_samples, n_features)
