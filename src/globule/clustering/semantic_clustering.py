@@ -44,7 +44,7 @@ class SemanticCluster:
     label: str
     description: str
     size: int
-    centroid: np.ndarray
+    centroid: np.ndarray  # NOTE: For HDBSCAN, this is the geometric center of the cluster members, not a defining parameter of the algorithm.
     member_ids: List[str]
     keywords: List[str]
     domains: List[str]
@@ -83,8 +83,7 @@ class ClusteringAnalysis:
     clusters: List[SemanticCluster]
     total_globules: int
     clustering_method: str
-    optimal_k: int
-    silhouette_score: float
+    dbcv_score: float
     processing_time_ms: float
     analysis_timestamp: datetime = field(default_factory=datetime.now)
     cross_cluster_relationships: Dict[str, List[str]] = field(default_factory=dict)
@@ -97,8 +96,7 @@ class ClusteringAnalysis:
             "clusters": [cluster.to_dict() for cluster in self.clusters],
             "total_globules": self.total_globules,
             "clustering_method": self.clustering_method,
-            "optimal_k": self.optimal_k,
-            "silhouette_score": self.silhouette_score,
+            "dbcv_score": self.dbcv_score,
             "processing_time_ms": self.processing_time_ms,
             "analysis_timestamp": self.analysis_timestamp.isoformat(),
             "cross_cluster_relationships": self.cross_cluster_relationships,
@@ -156,14 +154,11 @@ class SemanticClusteringEngine:
             # Extract embeddings and prepare data
             embeddings_matrix, globule_map = self._prepare_clustering_data(globules)
             
-            # Determine optimal number of clusters
-            optimal_k = self._find_optimal_clusters(embeddings_matrix)
+            # Perform HDBSCAN density-based clustering
+            cluster_labels = self._perform_clustering(embeddings_matrix)
             
-            # Perform clustering
-            cluster_labels = self._perform_clustering(embeddings_matrix, optimal_k)
-            
-            # Calculate silhouette score for quality assessment
-            silhouette = self._silhouette_score(embeddings_matrix, cluster_labels)
+            # Calculate DBCV score for quality assessment
+            dbcv_score = self._calculate_dbcv_score(embeddings_matrix, cluster_labels)
             
             # Create semantic clusters with intelligent labeling
             semantic_clusters = await self._create_semantic_clusters(
@@ -186,16 +181,15 @@ class SemanticClusteringEngine:
             analysis = ClusteringAnalysis(
                 clusters=semantic_clusters,
                 total_globules=len(globules),
-                clustering_method="kmeans_with_intelligent_labeling",
-                optimal_k=optimal_k,
-                silhouette_score=silhouette,
+                clustering_method="hdbscan_density_based",
+                dbcv_score=dbcv_score,
                 processing_time_ms=processing_time,
                 cross_cluster_relationships=cross_relationships,
                 temporal_patterns=temporal_patterns,
                 quality_metrics=quality_metrics
             )
             
-            self.logger.info(f"Clustering analysis completed: {len(semantic_clusters)} clusters, silhouette={silhouette:.3f}")
+            self.logger.info(f"Clustering analysis completed: {len(semantic_clusters)} clusters, DBCV={dbcv_score:.3f}")
             
             return analysis
             
@@ -239,65 +233,50 @@ class SemanticClusteringEngine:
         
         return embeddings_matrix, globule_map
 
-    def _find_optimal_clusters(self, embeddings_matrix: np.ndarray) -> int:
-        """
-        Find optimal number of clusters using silhouette score.
-        
-        The silhouette score is a real mathematical measure of cluster quality.
-        Higher score means better-defined, more separated clusters.
-        """
-        n_samples = embeddings_matrix.shape[0]
-        
-        # Determine reasonable range for k
-        min_k = 2
-        max_k = min(15, n_samples // 2)  # Never more than half the samples
-        
-        if min_k >= max_k:
-            return min_k
-        
-        best_k = min_k
-        best_silhouette = -1.0  # Silhouette scores range from -1 to 1
-        
-        self.logger.info(f"Testing k from {min_k} to {max_k} using silhouette score")
-        
-        for k in range(min_k, max_k + 1):
-            try:
-                cluster_labels, centroids, inertia = self._kmeans(embeddings_matrix, k)
-                
-                # Only calculate silhouette if we have valid clusters
-                if len(set(cluster_labels)) > 1:
-                    silhouette = self._silhouette_score(embeddings_matrix, cluster_labels)
-                    self.logger.debug(f"k={k}: silhouette={silhouette:.3f}")
-                    
-                    if silhouette > best_silhouette:
-                        best_silhouette = silhouette
-                        best_k = k
-                else:
-                    self.logger.debug(f"k={k}: invalid clustering (only 1 cluster)")
-                    
-            except Exception as e:
-                self.logger.warning(f"Clustering failed for k={k}: {e}")
-        
-        self.logger.info(f"Optimal k={best_k} with silhouette score={best_silhouette:.3f}")
-        return best_k
-
-
-    def _perform_clustering(self, embeddings_matrix: np.ndarray, k: int) -> np.ndarray:
-        """Perform the actual clustering using custom K-means."""
+    def _perform_clustering(self, embeddings_matrix: np.ndarray) -> np.ndarray:
+        """Perform HDBSCAN density-based clustering."""
         try:
-            cluster_labels, centroids, inertia = self._kmeans(embeddings_matrix, k)
+            import hdbscan
+            
+            # Initialize HDBSCAN with appropriate parameters
+            clusterer = hdbscan.HDBSCAN(
+                min_cluster_size=5,  # Minimum points to form a cluster
+                metric='cosine',     # Use cosine distance for semantic similarity
+                cluster_selection_epsilon=0.0,  # Use default cluster selection
+                min_samples=None     # Use min_cluster_size as default
+            )
+            
+            # Perform clustering
+            cluster_labels = clusterer.fit_predict(embeddings_matrix)
+            
+            self.logger.info(f"HDBSCAN clustering: found {len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)} clusters, "
+                           f"{np.sum(cluster_labels == -1)} noise points")
+            
             return cluster_labels
             
+        except ImportError:
+            self.logger.error("hdbscan library not available. Install with: pip install hdbscan")
+            raise Exception("HDBSCAN clustering requires hdbscan library")
         except Exception as e:
-            self.logger.error(f"K-means clustering failed: {e}")
-            # Fallback to simple distance-based clustering
-            try:
-                cluster_labels = self._simple_clustering(embeddings_matrix, k)
-                return cluster_labels
-            except Exception as e2:
-                self.logger.error(f"Simple clustering also failed: {e2}")
-                # Last resort: assign everything to one cluster
-                return np.zeros(embeddings_matrix.shape[0], dtype=int)
+            self.logger.error(f"HDBSCAN clustering failed: {e}")
+            raise
+    
+    def _calculate_dbcv_score(self, embeddings_matrix: np.ndarray, cluster_labels: np.ndarray) -> float:
+        """Calculate Density-Based Clustering Validation (DBCV) score."""
+        try:
+            import hdbscan
+            
+            # Calculate DBCV score using hdbscan's built-in validation
+            dbcv_score = hdbscan.validity.validity_index(embeddings_matrix, cluster_labels, metric='cosine')
+            
+            return dbcv_score if dbcv_score is not None else 0.0
+            
+        except ImportError:
+            self.logger.warning("DBCV score requires hdbscan library")
+            return 0.0
+        except Exception as e:
+            self.logger.warning(f"DBCV calculation failed: {e}")
+            return 0.0
 
     async def _create_semantic_clusters(
         self,
@@ -310,8 +289,15 @@ class SemanticClusteringEngine:
         
         clusters = []
         unique_labels = set(cluster_labels)
+        noise_globules = []
         
         for cluster_id in unique_labels:
+            # Handle noise points separately
+            if cluster_id == -1:
+                cluster_indices = np.where(cluster_labels == cluster_id)[0]
+                noise_globules = [globule_map[i] for i in cluster_indices]
+                self.logger.info(f"Found {len(noise_globules)} noise points (outliers)")
+                continue
             # Get globules in this cluster
             cluster_indices = np.where(cluster_labels == cluster_id)[0]
             cluster_globules = [globule_map[i] for i in cluster_indices]
@@ -350,6 +336,23 @@ class SemanticClusteringEngine:
             )
             
             clusters.append(cluster)
+        
+        # Handle noise points by creating an "Uncategorized" cluster if any exist
+        if noise_globules:
+            noise_cluster = SemanticCluster(
+                id="noise_cluster",
+                label="Uncategorized",
+                description=f"Outliers and noise points that don't fit into any theme ({len(noise_globules)} items)",
+                size=len(noise_globules),
+                centroid=np.zeros(embeddings_matrix.shape[1]) if len(embeddings_matrix) > 0 else np.array([]),
+                member_ids=[g.id for g in noise_globules],
+                keywords=["outlier", "uncategorized"],
+                domains=["mixed"],
+                confidence_score=0.1,  # Low confidence for noise
+                representative_samples=[g.text[:100] + "..." if len(g.text) > 100 else g.text for g in noise_globules[:3]],
+                theme_analysis={"temporal": {}, "content": {"avg_length": np.mean([len(g.text) for g in noise_globules])}}
+            )
+            clusters.append(noise_cluster)
         
         # Sort clusters by size (largest first) 
         clusters.sort(key=lambda c: c.size, reverse=True)
@@ -702,191 +705,7 @@ class SemanticClusteringEngine:
         
         return metrics
 
-    def _kmeans_plus_plus_init(self, X: np.ndarray, k: int) -> np.ndarray:
-        """
-        Initialize centroids using K-means++ algorithm.
-        
-        This spreads initial centroids out by picking each subsequent centroid
-        with probability proportional to its squared distance from existing centroids.
-        
-        Args:
-            X: Data matrix (n_samples, n_features)  
-            k: Number of centroids to initialize
-            
-        Returns:
-            Initial centroids array (k, n_features)
-        """
-        n_samples, n_features = X.shape
-        centroids = np.empty((k, n_features))
-        
-        # Step 1: Choose first centroid randomly
-        centroids[0] = X[np.random.randint(n_samples)]
-        
-        # Step 2-k: Choose remaining centroids using weighted probability
-        for c_id in range(1, k):
-            # Calculate squared distances from each point to nearest existing centroid
-            distances = np.array([min([np.sum((x - c)**2) for c in centroids[:c_id]]) for x in X])
-            
-            # Convert distances to probabilities (proportional to squared distance)
-            probabilities = distances / distances.sum()
-            
-            # Choose next centroid based on these probabilities
-            cumulative_probabilities = probabilities.cumsum()
-            r = np.random.rand()
-            
-            for j, prob in enumerate(cumulative_probabilities):
-                if r < prob:
-                    centroids[c_id] = X[j]
-                    break
-        
-        return centroids
-
-    def _kmeans(self, X: np.ndarray, k: int, max_iters: int = 300, tol: float = 1e-4) -> Tuple[np.ndarray, np.ndarray, float]:
-        """
-        Custom K-means implementation using numpy.
-        
-        Args:
-            X: Data matrix (n_samples, n_features)
-            k: Number of clusters
-            max_iters: Maximum iterations
-            tol: Convergence tolerance
-            
-        Returns:
-            (cluster_labels, centroids, inertia)
-        """
-        n_samples, n_features = X.shape
-        
-        # Initialize centroids using K-means++ 
-        np.random.seed(42)  # For reproducibility
-        centroids = self._kmeans_plus_plus_init(X, k)
-        
-        for iteration in range(max_iters):
-            # Assign points to nearest centroid
-            distances = np.sqrt(((X - centroids[:, np.newaxis])**2).sum(axis=2))
-            labels = np.argmin(distances, axis=0)
-            
-            # Update centroids
-            new_centroids = np.array([X[labels == i].mean(axis=0) for i in range(k)])
-            
-            # Handle empty clusters by choosing point farthest from existing centroids
-            for i in range(k):
-                if np.sum(labels == i) == 0:
-                    # Find the point farthest from any existing centroid
-                    max_min_distance = -1
-                    farthest_point_idx = 0
-                    
-                    for j, point in enumerate(X):
-                        # Find distance to nearest centroid
-                        min_distance = min([np.linalg.norm(point - c) for c_idx, c in enumerate(new_centroids) if c_idx != i])
-                        if min_distance > max_min_distance:
-                            max_min_distance = min_distance
-                            farthest_point_idx = j
-                    
-                    new_centroids[i] = X[farthest_point_idx]
-            
-            # Check convergence
-            if np.allclose(centroids, new_centroids, atol=tol):
-                break
-                
-            centroids = new_centroids
-        
-        # Calculate inertia (within-cluster sum of squares)
-        distances = np.sqrt(((X - centroids[labels])**2).sum(axis=1))
-        inertia = np.sum(distances**2)
-        
-        return labels, centroids, inertia
     
-    def _silhouette_score(self, X: np.ndarray, labels: np.ndarray) -> float:
-        """
-        Custom silhouette score implementation using numpy.
-        
-        NOTE: This is a naive O(n^2) implementation for educational purposes. 
-        It is a known performance bottleneck and should be replaced with a 
-        vectorized or compiled version. The scikit-learn implementation is 
-        orders of magnitude faster due to Cython optimization.
-        
-        Args:
-            X: Data matrix (n_samples, n_features)
-            labels: Cluster labels
-            
-        Returns:
-            Average silhouette score
-        """
-        n_samples = len(X)
-        unique_labels = np.unique(labels)
-        
-        if len(unique_labels) <= 1:
-            return 0.0
-        
-        silhouette_scores = []
-        
-        for i in range(n_samples):
-            # Current point and its cluster
-            point = X[i]
-            current_cluster = labels[i]
-            
-            # Calculate a(i): mean distance to other points in same cluster
-            same_cluster_mask = (labels == current_cluster) & (np.arange(n_samples) != i)
-            if np.sum(same_cluster_mask) > 0:
-                a_i = np.mean(np.sqrt(np.sum((X[same_cluster_mask] - point)**2, axis=1)))
-            else:
-                a_i = 0
-            
-            # Calculate b(i): minimum mean distance to points in other clusters
-            b_i = float('inf')
-            for other_cluster in unique_labels:
-                if other_cluster != current_cluster:
-                    other_cluster_mask = labels == other_cluster
-                    if np.sum(other_cluster_mask) > 0:
-                        mean_dist = np.mean(np.sqrt(np.sum((X[other_cluster_mask] - point)**2, axis=1)))
-                        b_i = min(b_i, mean_dist)
-            
-            # Calculate silhouette coefficient for this point
-            if max(a_i, b_i) > 0:
-                s_i = (b_i - a_i) / max(a_i, b_i)
-            else:
-                s_i = 0
-            
-            silhouette_scores.append(s_i)
-        
-        return np.mean(silhouette_scores)
-    
-    def _simple_clustering(self, X: np.ndarray, k: int) -> np.ndarray:
-        """
-        Simple distance-based clustering fallback.
-        
-        Groups points by proximity using a greedy approach.
-        """
-        n_samples = X.shape[0]
-        labels = np.zeros(n_samples, dtype=int)
-        
-        if k >= n_samples:
-            return np.arange(n_samples)
-        
-        # Select initial cluster centers spread apart
-        centers_idx = [0]  # Start with first point
-        
-        for _ in range(k - 1):
-            # Find point farthest from existing centers
-            max_min_dist = -1
-            next_center = 0
-            
-            for i in range(n_samples):
-                if i not in centers_idx:
-                    # Find minimum distance to existing centers
-                    min_dist = min(np.sqrt(np.sum((X[i] - X[c])**2)) for c in centers_idx)
-                    if min_dist > max_min_dist:
-                        max_min_dist = min_dist
-                        next_center = i
-            
-            centers_idx.append(next_center)
-        
-        # Assign points to nearest center
-        for i in range(n_samples):
-            distances = [np.sqrt(np.sum((X[i] - X[c])**2)) for c in centers_idx]
-            labels[i] = np.argmin(distances)
-        
-        return labels
 
     def _create_empty_analysis(self, total_globules: int) -> ClusteringAnalysis:
         """Create empty analysis when clustering is not possible."""
@@ -894,8 +713,7 @@ class SemanticClusteringEngine:
             clusters=[],
             total_globules=total_globules,
             clustering_method="insufficient_data",
-            optimal_k=0,
-            silhouette_score=0.0,
+            dbcv_score=0.0,
             processing_time_ms=0.0,
             cross_cluster_relationships={},
             temporal_patterns={},
