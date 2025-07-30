@@ -128,105 +128,113 @@ async def add(text: str, verbose: bool) -> None:
 
 
 @cli.command()
-@click.argument('topic', required=False)
-@click.option('--limit', '-l', default=50, help='Maximum globules to consider')
+@click.argument('topic', required=True)
+@click.option('--limit', '-l', default=100, help='Maximum globules to search (default: 100)')
 @click.option('--output', '-o', help='Output draft to file')
-async def draft(topic: Optional[str], limit: int, output: Optional[str]) -> None:
-    """Generate draft from your thoughts using semantic clustering."""
+async def draft(topic: str, limit: int, output: Optional[str]) -> None:
+    """
+    Interactive drafting from clustered thoughts.
+    
+    This command provides a keyboard-driven interface for building drafts:
+    1. Searches for globules related to the topic
+    2. Clusters the results using semantic analysis  
+    3. Launches an interactive TUI for navigation and selection
+    4. Lets you add thoughts to your draft and export the result
+    
+    Navigation:
+    • ↑↓: Navigate lists
+    • →/Enter: Drill into cluster or add thought to draft
+    • ←/Backspace: Go back
+    • d/q: Finish and output draft
+    
+    Example:
+    globule draft "machine learning concepts"
+    """
     
     try:
         from rich.console import Console
-        from rich.table import Table
-        from rich.panel import Panel
-        from rich.text import Text
+        from globule.drafting.interactive_engine import InteractiveDraftingEngine
+        from globule.clustering.semantic_clustering import SemanticClusteringEngine
         
         console = Console()
         
         # Initialize components
+        console.print("[blue]INITIALIZING:[/blue] Setting up drafting session...")
         storage = SQLiteStorageManager()
         await storage.initialize()
         
-        console.print("[blue]DRAFT:[/blue] Analyzing your thoughts...")
+        embedding_provider = OllamaEmbeddingProvider()
+        health_ok = await embedding_provider.health_check()
         
-        # Get recent globules
-        globules = await storage.get_recent_globules(limit)
-        
-        if not globules:
-            console.print("[red]NO CONTENT:[/red] No thoughts found. Add some with 'globule add'")
+        if not health_ok:
+            console.print("[red]ERROR:[/red] Ollama not accessible. Interactive drafting requires embeddings.")
+            console.print("Please ensure Ollama is running and try again.")
             return
         
-        # Filter by topic if provided
-        if topic:
-            embedding_provider = OllamaEmbeddingProvider()
-            topic_embedding = await embedding_provider.embed(topic)
-            results = await storage.search_by_embedding(topic_embedding, limit, 0.3)
-            globules = [globule for globule, _ in results]
-            console.print(f"[green]FILTERED:[/green] Found {len(globules)} thoughts related to '{topic}'")
-            await embedding_provider.close()
+        # Step 1: Vectorize topic and perform semantic search
+        console.print(f"[blue]SEARCH:[/blue] Finding thoughts related to '{topic}'...")
+        topic_embedding = await embedding_provider.embed(topic)
+        search_results = await storage.search_by_embedding(topic_embedding, limit, 0.3)
         
-        # Perform clustering
-        from globule.clustering.semantic_clustering import SemanticClusteringEngine
+        if not search_results:
+            console.print(f"[red]NO RESULTS:[/red] No thoughts found related to '{topic}'")
+            console.print("Try a different topic or add more content with 'globule add'")
+            return
+        
+        # Extract globules from search results
+        globules = [globule for globule, _ in search_results]
+        console.print(f"[green]FOUND:[/green] {len(globules)} relevant thoughts")
+        
+        # Step 2: Cluster the search results
+        console.print("[blue]CLUSTERING:[/blue] Analyzing semantic patterns...")
         clustering_engine = SemanticClusteringEngine(storage)
+        
+        # Use the search results for clustering
         analysis = await clustering_engine.analyze_semantic_clusters(min_globules=2)
         
-        # Generate draft content
-        draft_content = []
-        draft_content.append(f"# Draft: {topic or 'My Thoughts'}\n")
-        draft_content.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-        draft_content.append(f"Total thoughts analyzed: {len(globules)}\n\n")
-        
-        if analysis.clusters:
-            console.print(f"[green]CLUSTERS:[/green] Found {len(analysis.clusters)} semantic themes")
-            
-            for i, cluster in enumerate(analysis.clusters, 1):
-                draft_content.append(f"## {cluster.label}\n")
-                draft_content.append(f"{cluster.description}\n\n")
-                
-                # Add representative content
-                cluster_globules = [g for g in globules if g.id in cluster.member_ids]
-                for globule in cluster_globules[:3]:  # Top 3 from cluster
-                    draft_content.append(f"- {globule.text}\n")
-                
-                draft_content.append("\n")
-                
-                # Show cluster summary
-                table = Table(title=f"Cluster {i}: {cluster.label}")
-                table.add_column("Metric", style="cyan")
-                table.add_column("Value", style="green")
-                table.add_row("Size", str(cluster.size))
-                table.add_row("Confidence", f"{cluster.confidence_score:.2f}")
-                table.add_row("Keywords", ", ".join(cluster.keywords[:3]))
-                table.add_row("Domains", ", ".join(cluster.domains))
-                console.print(table)
+        if not analysis.clusters:
+            console.print("[yellow]NO CLUSTERS:[/yellow] Unable to find semantic clusters")
+            console.print("Proceeding with chronological listing...")
         else:
-            # No clusters, just list thoughts chronologically
-            draft_content.append("## Your Thoughts\n\n")
-            for globule in globules[:20]:  # Top 20
-                draft_content.append(f"- {globule.text}\n")
-            
-            console.print("[yellow]NO CLUSTERS:[/yellow] Listed thoughts chronologically")
+            console.print(f"[green]CLUSTERS:[/green] Found {len(analysis.clusters)} semantic themes")
         
-        # Output draft
-        draft_text = "".join(draft_content)
+        # Step 3: Build globules-by-cluster mapping for the interactive engine
+        globules_by_cluster = {}
+        for cluster in analysis.clusters:
+            cluster_globules = [g for g in globules if g.id in cluster.member_ids]
+            globules_by_cluster[cluster.id] = cluster_globules
         
+        # Step 4: Launch interactive drafting session
+        console.print("[blue]INTERACTIVE:[/blue] Starting drafting session...")
+        console.print("Use arrow keys to navigate, Enter to select, d/q to finish")
+        
+        drafting_engine = InteractiveDraftingEngine()
+        draft_text = await drafting_engine.run_interactive_session(
+            topic=topic,
+            clusters=analysis.clusters,
+            globules_by_cluster=globules_by_cluster,
+            all_globules=globules
+        )
+        
+        # Step 5: Output the final draft
         if output:
             with open(output, 'w', encoding='utf-8') as f:
                 f.write(draft_text)
             console.print(f"[green]SUCCESS:[/green] Draft written to {output}")
         else:
             console.print("\n" + "="*60)
-            console.print(Panel(draft_text, title="Generated Draft", border_style="blue"))
-        
-        # Show summary
-        console.print(f"\n[blue]SUMMARY:[/blue] Draft generated from {len(globules)} thoughts")
-        if analysis.clusters:
-            console.print(f"[blue]THEMES:[/blue] Organized into {len(analysis.clusters)} semantic clusters")
+            console.print("[green]DRAFT COMPLETE[/green]")
+            console.print("="*60)
+            print(draft_text)  # Use print for clean output
         
         # Cleanup
+        await embedding_provider.close()
         await storage.close()
         
+    except KeyboardInterrupt:
+        console.print("\n[yellow]CANCELLED:[/yellow] Drafting session interrupted")
     except Exception as e:
-        logger.error(f"Failed to generate draft: {e}")
+        logger.error(f"Failed to run interactive draft: {e}")
         click.echo(f"Error: {e}", err=True)
         raise click.Abort()
 
