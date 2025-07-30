@@ -1,0 +1,34 @@
+warning: in the working copy of 'src/globule/drafting/interactive_engine.py', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/src/globule/drafting/interactive_engine.py b/src/globule/drafting/interactive_engine.py[m
+[1mindex 4c184b4..061ee9f 100644[m
+[1m--- a/src/globule/drafting/interactive_engine.py[m
+[1m+++ b/src/globule/drafting/interactive_engine.py[m
+[36m@@ -162,6 +162,7 @@[m [mclass InteractiveDraftingEngine:[m
+             return self.state.get_draft_text()[m
+             [m
+         finally:[m
+[32m+[m[32m            # CRITICAL: Always restore terminal state, even if exception occurs[m
+             self._restore_terminal()[m
+     [m
+     def _handle_no_clusters(self) -> str:[m
+[36m@@ -371,9 +372,6 @@[m [mclass InteractiveDraftingEngine:[m
+             if self.state.get_current_cluster():[m
+                 self.state.current_view = DraftingView.GLOBULE_VIEW[m
+                 self.state.selected_globule_index = 0  # Reset selection[m
+[31m-        [m
+[31m-        else:[m
+[31m-            self.state.status_message = f"Unknown key: {repr(key)}"[m
+     [m
+     def _handle_globule_view_keypress(self, key: str) -> None:[m
+         """Handle keypresses in globule view."""[m
+[36m@@ -392,7 +390,4 @@[m [mclass InteractiveDraftingEngine:[m
+         elif key in ('\\r', '\\n'):  # Enter - add globule to draft[m
+             current_globule = self.state.get_current_globule()[m
+             if current_globule:[m
+[31m-                self.state.add_to_draft(current_globule.text)[m
+[31m-        [m
+[31m-        else:[m
+[31m-            self.state.status_message = f"Unknown key: {repr(key)}"[m
+\ No newline at end of file[m
+[32m+[m[32m                self.state.add_to_draft(current_globule.text)[m
+\ No newline at end of file[m

@@ -61,24 +61,42 @@ class DraftingState:
     status_message: str = ""
     
     def get_current_cluster(self) -> Optional[SemanticCluster]:
-        """Get the currently selected cluster."""
-        if 0 <= self.selected_cluster_index < len(self.clusters):
-            return self.clusters[self.selected_cluster_index]
-        return None
+        """Get the currently selected cluster, or None if invalid."""
+        if not self.clusters or not (0 <= self.selected_cluster_index < len(self.clusters)):
+            if not self.clusters:
+                self.status_message = "No clusters available"
+            else:
+                self.status_message = "Invalid cluster selection"
+            return None
+        return self.clusters[self.selected_cluster_index]
     
     def get_current_cluster_globules(self) -> List[ProcessedGlobule]:
-        """Get globules for the currently selected cluster."""
+        """Get globules for the currently selected cluster, or empty list if invalid."""
         cluster = self.get_current_cluster()
-        if cluster and cluster.id in self.globules_by_cluster:
-            return self.globules_by_cluster[cluster.id]
-        return []
+        if not cluster:
+            return []
+        
+        if cluster.id not in self.globules_by_cluster:
+            self.status_message = "No globules mapped for selected cluster"
+            return []
+        
+        globules = self.globules_by_cluster[cluster.id]
+        if not globules:
+            self.status_message = "Selected cluster has no globules"
+        
+        return globules
     
     def get_current_globule(self) -> Optional[ProcessedGlobule]:
-        """Get the currently selected globule in the current cluster."""
+        """Get the currently selected globule, or None if invalid."""
         globules = self.get_current_cluster_globules()
-        if 0 <= self.selected_globule_index < len(globules):
-            return globules[self.selected_globule_index]
-        return None
+        if not globules:
+            return None
+        
+        if not (0 <= self.selected_globule_index < len(globules)):
+            self.status_message = "Invalid globule selection"
+            return None
+        
+        return globules[self.selected_globule_index]
     
     def add_to_draft(self, text: str) -> None:
         """Add content to the draft."""
@@ -127,7 +145,7 @@ class InteractiveDraftingEngine:
         all_globules: List[ProcessedGlobule]
     ) -> str:
         """
-        Run the main interactive drafting session.
+        Run the main interactive drafting session with robust error handling.
         
         Args:
             topic: The drafting topic
@@ -137,7 +155,18 @@ class InteractiveDraftingEngine:
             
         Returns:
             The final draft content as a string
+            
+        Raises:
+            ValueError: If input arguments are invalid
         """
+        # Validate input arguments to prevent crashes from malformed data
+        if not isinstance(clusters, list):
+            raise ValueError("clusters must be a list")
+        if not isinstance(globules_by_cluster, dict):
+            raise ValueError("globules_by_cluster must be a dictionary")
+        if not isinstance(all_globules, list):
+            raise ValueError("all_globules must be a list")
+        
         # Initialize state
         self.state.topic = topic
         self.state.clusters = clusters
@@ -148,20 +177,33 @@ class InteractiveDraftingEngine:
         if not clusters:
             return self._handle_no_clusters()
         
-        # Setup terminal for keypress detection
-        self._setup_terminal()
+        # Setup terminal for keypress detection with validation
+        if not self._setup_terminal():
+            self.state.status_message = "Failed to initialize terminal, falling back to default draft"
+            return self._handle_no_clusters()
         
         try:
-            # Main interactive loop
+            # Main interactive loop with robust error handling
             while not self.state.should_quit:
-                self._render_ui()
-                keypress = self._get_keypress()
-                self._handle_keypress(keypress)
+                try:
+                    self._render_ui()
+                    keypress = self._get_keypress()
+                    self._handle_keypress(keypress)
+                except KeyboardInterrupt:
+                    self.state.status_message = "Session interrupted by user (Ctrl+C)"
+                    self.state.should_quit = True
+                except Exception as e:
+                    self.state.status_message = f"Error: {str(e)}"
+                    print(f"Error in interactive session: {str(e)}", file=sys.stderr)
+                    # Continue running unless it's a critical error
+                    if "critical" in str(e).lower():
+                        self.state.should_quit = True
             
             # Return final draft
             return self.state.get_draft_text()
             
         finally:
+            # CRITICAL: Always restore terminal state, even if exception occurs
             self._restore_terminal()
     
     def _handle_no_clusters(self) -> str:
@@ -186,11 +228,18 @@ class InteractiveDraftingEngine:
         return "\\n".join(draft_lines)
     
     def _render_ui(self) -> None:
-        """Render the current UI state using rich library."""
+        """Render the current UI state using rich library with size validation."""
         # Clear screen
         self.console.clear()
         
-        # Create layout
+        # Check terminal size for usability
+        if self.console.width < 80 or self.console.height < 20:
+            self.console.print("[red]Terminal too small for optimal experience[/red]")
+            self.console.print(f"Current: {self.console.width}x{self.console.height}, Recommended: 80x20 or larger")
+            self.console.print("Resize terminal or press 'd' to continue anyway")
+            return
+        
+        # Create layout based on current view
         if self.state.current_view == DraftingView.CLUSTER_VIEW:
             self._render_cluster_view()
         else:
@@ -301,47 +350,74 @@ class InteractiveDraftingEngine:
         self.console.print(f"Controls: {help_text}", style="dim")
         self.console.print("", end="")  # Ensure cursor positioning
     
-    def _setup_terminal(self) -> None:
-        """Setup terminal for single keypress detection."""
+    def _setup_terminal(self) -> bool:
+        """
+        Setup terminal for single keypress detection.
+        
+        Returns:
+            True if terminal setup was successful, False otherwise.
+            On Unix, uses termios to enable raw mode; on Windows, relies on msvcrt.
+        """
         if sys.platform != 'win32':  # Unix-like systems
             try:
                 import termios
                 import tty
                 self._old_settings = termios.tcgetattr(sys.stdin)
                 tty.setraw(sys.stdin.fileno())
-            except ImportError:
-                # Fallback for systems without termios
-                pass
+                return True
+            except (ImportError, OSError, termios.error) as e:
+                self.state.status_message = f"Terminal setup failed: {str(e)}"
+                return False
+        # Windows terminal handling is simpler and generally reliable
+        return True
     
     def _restore_terminal(self) -> None:
-        """Restore terminal to original state."""
-        if sys.platform != 'win32' and self._old_settings:
+        """
+        Restore terminal to original state if settings were saved.
+        
+        Silently handles failures as terminal state may already be broken.
+        """
+        if sys.platform != 'win32' and self._old_settings is not None:
             try:
                 import termios
                 termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
-            except ImportError:
+                self._old_settings = None  # Clear to prevent reuse
+            except (ImportError, OSError, termios.error):
+                # Silently fail - terminal state is already compromised
                 pass
     
     def _get_keypress(self) -> str:
-        """Get a single keypress from the user."""
+        """
+        Get a single keypress from the user with robust error handling.
+        
+        Handles Windows (msvcrt) and Unix (termios) systems with fallback for errors.
+        """
         if sys.platform == 'win32':
-            import msvcrt
-            key = msvcrt.getch()
-            if key == b'\\x00' or key == b'\\xe0':  # Special keys on Windows
+            try:
+                import msvcrt
                 key = msvcrt.getch()
-                # Map Windows special keys
-                key_map = {b'H': 'up', b'P': 'down', b'K': 'left', b'M': 'right'}
-                return key_map.get(key, 'unknown')
-            return key.decode('utf-8', errors='ignore')
+                if key in (b'\\x00', b'\\xe0'):  # Special keys on Windows
+                    key = msvcrt.getch()
+                    # Map Windows special keys
+                    key_map = {b'H': 'up', b'P': 'down', b'K': 'left', b'M': 'right'}
+                    return key_map.get(key, 'unknown')
+                return key.decode('utf-8', errors='ignore')
+            except Exception as e:
+                self.state.status_message = f"Keypress error on Windows: {str(e)}"
+                return ''
         else:
-            key = sys.stdin.read(1)
-            if key == '\\x1b':  # Escape sequence
-                seq = sys.stdin.read(2)
-                if seq == '[A': return 'up'
-                elif seq == '[B': return 'down'
-                elif seq == '[C': return 'right'
-                elif seq == '[D': return 'left'
-            return key
+            try:
+                key = sys.stdin.read(1)
+                if key == '\\x1b':  # Escape sequence
+                    seq = sys.stdin.read(2)
+                    if seq == '[A': return 'up'
+                    elif seq == '[B': return 'down'
+                    elif seq == '[C': return 'right'
+                    elif seq == '[D': return 'left'
+                return key
+            except Exception as e:
+                self.state.status_message = f"Keypress error on Unix: {str(e)}"
+                return ''
     
     def _handle_keypress(self, key: str) -> None:
         """Handle a keypress and update state accordingly."""
@@ -371,9 +447,6 @@ class InteractiveDraftingEngine:
             if self.state.get_current_cluster():
                 self.state.current_view = DraftingView.GLOBULE_VIEW
                 self.state.selected_globule_index = 0  # Reset selection
-        
-        else:
-            self.state.status_message = f"Unknown key: {repr(key)}"
     
     def _handle_globule_view_keypress(self, key: str) -> None:
         """Handle keypresses in globule view."""
@@ -393,6 +466,3 @@ class InteractiveDraftingEngine:
             current_globule = self.state.get_current_globule()
             if current_globule:
                 self.state.add_to_draft(current_globule.text)
-        
-        else:
-            self.state.status_message = f"Unknown key: {repr(key)}"
