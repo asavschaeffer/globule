@@ -157,6 +157,9 @@ class FileManager:
             final_path.parent.mkdir(parents=True, exist_ok=True)
             
             # Move the file from temp to final location
+            # On Windows, rename fails if destination exists, so remove it first
+            if final_path.exists():
+                final_path.unlink()
             temp_path.rename(final_path)
             
         except Exception as e:

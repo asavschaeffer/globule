@@ -9,15 +9,38 @@ This verifies that the basic end-to-end flow works:
 import pytest
 import asyncio
 import tempfile
+import sqlite3
 from pathlib import Path
 
 from globule.core.models import EnrichedInput
 from globule.storage.sqlite_manager import SQLiteStorageManager
-from globule.embedding.ollama_provider import OllamaEmbeddingProvider
-from globule.parsing.mock_parser import MockOllamaParser
-from globule.orchestration.parallel_strategy import ParallelOrchestrationEngine
+from globule.services.embedding.ollama_provider import OllamaEmbeddingProvider
+from globule.services.parsing.mock_parser import MockOllamaParser
+from globule.orchestration.engine import OrchestrationEngine
 
 
+def vec0_available():
+    """Check if vec0 extension is available."""
+    try:
+        import sqlite_vec
+        conn = sqlite3.connect(":memory:")
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.close()
+        return True
+    except Exception:
+        # Try fallback to old vec0 name
+        try:
+            conn = sqlite3.connect(":memory:")
+            conn.enable_load_extension(True)
+            conn.load_extension("vec0")
+            conn.close()
+            return True
+        except Exception:
+            return False
+
+
+@pytest.mark.skipif(not vec0_available(), reason="vec0 SQLite extension not available")
 @pytest.mark.asyncio
 async def test_storage_initialization():
     """Test that storage manager can initialize database"""
@@ -45,6 +68,7 @@ async def test_mock_parser():
     assert result["metadata"]["mock"] is True
 
 
+@pytest.mark.skipif(not vec0_available(), reason="vec0 SQLite extension not available")
 @pytest.mark.asyncio
 async def test_orchestration_without_ollama():
     """Test orchestration with mock embedding (no Ollama required)"""
@@ -71,7 +95,7 @@ async def test_orchestration_without_ollama():
         
         embedding_provider = MockEmbeddingProvider()
         parsing_provider = MockOllamaParser()
-        orchestrator = ParallelOrchestrationEngine(
+        orchestrator = OrchestrationEngine(
             embedding_provider, parsing_provider, storage
         )
         
@@ -105,6 +129,7 @@ async def test_orchestration_without_ollama():
         await storage.close()
 
 
+@pytest.mark.skipif(not vec0_available(), reason="vec0 SQLite extension not available")
 @pytest.mark.asyncio
 async def test_recent_globules_retrieval():
     """Test retrieving recent globules"""

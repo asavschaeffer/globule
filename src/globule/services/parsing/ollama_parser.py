@@ -246,9 +246,15 @@ Be precise and analytical. Focus on semantic meaning over surface features.
             self.logger.info(f"Handled by fast path: {fast_result['metadata']['parser_type']}")
             return fast_result
 
-        # 2. If fast path fails, proceed to the slow path.
+        # 2. If fast path fails, check if Ollama is available before proceeding to slow path.
         try:
-            return await self._slow_path_parse_with_retry(text)
+            # Check if Ollama service is healthy before attempting LLM parsing
+            if await self.health_check():
+                return await self._slow_path_parse_with_retry(text)
+            else:
+                # Ollama not available, skip directly to fallback
+                self.logger.info("Ollama service unavailable, using fallback parsing")
+                return self._create_fallback_result(text, "Ollama service unavailable")
         except Exception as e:
             self.logger.error(f"LLM parsing failed after all retries: {e}")
             # 3. If all else fails, return a safe, minimal structure.

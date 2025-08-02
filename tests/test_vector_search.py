@@ -11,6 +11,7 @@ Tests the enhanced vector search implementation including:
 import pytest
 import numpy as np
 import asyncio
+import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Tuple
@@ -20,6 +21,20 @@ from globule.storage.sqlite_manager import SQLiteStorageManager
 from globule.core.models import ProcessedGlobule, FileDecision
 
 
+def vec0_available():
+    """Check if vec0 extension is available."""
+    try:
+        import sqlite_vec
+        conn = sqlite3.connect(":memory:")
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not vec0_available(), reason="vec0 SQLite extension not available")
 class TestVectorSearch:
     """Test suite for enhanced vector search functionality."""
 

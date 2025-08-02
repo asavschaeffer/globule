@@ -41,8 +41,8 @@ class SQLiteStorageManager(StorageManager):
         Args:
             auto_reconcile: If True, automatically reconcile files with database on startup
         """
-        async with aiosqlite.connect(str(self.db_path)) as db:
-            await self._create_schema(db)
+        db = await self._get_connection()
+        await self._create_schema(db)
             
         # Optional automatic reconciliation on startup
         if auto_reconcile:
@@ -69,10 +69,10 @@ class SQLiteStorageManager(StorageManager):
             )
         """)
         
-        # Create vector search virtual table
+        # Create vector search virtual table using sqlite-vec
         await db.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS vss_globules USING vec0(
-                embedding FLOAT32[1024]
+                embedding FLOAT[1024]
             )
         """)
         
@@ -120,6 +120,15 @@ class SQLiteStorageManager(StorageManager):
         """Get or create database connection"""
         if self._connection is None:
             self._connection = await aiosqlite.connect(str(self.db_path))
+            await self._connection.enable_load_extension(True)
+            
+            # Load sqlite-vec extension
+            try:
+                import sqlite_vec
+                await self._connection.execute("SELECT load_extension(?)", (sqlite_vec.loadable_path(),))
+            except ImportError:
+                # Fallback to old vec0 name for compatibility
+                await self._connection.load_extension("vec0")
             # Enable foreign keys and set performance optimizations
             await self._connection.execute("PRAGMA foreign_keys = ON")
             await self._connection.execute("PRAGMA journal_mode = WAL")
@@ -170,7 +179,9 @@ class SQLiteStorageManager(StorageManager):
             # Serialize complex fields to JSON
             embedding_blob = None
             if globule.embedding is not None:
-                embedding_blob = globule.embedding.astype(np.float32).tobytes()
+                # Normalize the embedding for consistent similarity calculations
+                normalized_embedding = self._normalize_vector(globule.embedding.astype(np.float32))
+                embedding_blob = normalized_embedding.tobytes()
             
             parsed_data_json = json.dumps(globule.parsed_data)
             confidence_scores_json = json.dumps(globule.confidence_scores)
@@ -184,7 +195,9 @@ class SQLiteStorageManager(StorageManager):
             db = await self._get_connection()
             
             # This transaction block guarantees all-or-nothing database operations
-            async with db.transaction():
+            try:
+                await db.execute("BEGIN TRANSACTION")
+                
                 # Insert into the main table
                 cursor = await db.execute("""
                     INSERT OR REPLACE INTO globules (
@@ -218,6 +231,11 @@ class SQLiteStorageManager(StorageManager):
                         INSERT OR REPLACE INTO vss_globules (rowid, embedding)
                         VALUES (?, ?)
                     """, (globule_rowid, embedding_blob))
+                
+                await db.commit()
+            except Exception as db_error:
+                await db.rollback()
+                raise db_error
             
             # OUTBOX PATTERN STEP 4: Database transaction succeeded, commit file
             self._file_manager.commit_file(temp_file_path, final_file_path)
@@ -382,18 +400,28 @@ class SQLiteStorageManager(StorageManager):
         """
         if query_vector is None:
             return []
+        
+        # Normalize the query vector to match stored embeddings
+        normalized_query = self._normalize_vector(query_vector.astype(np.float32))
             
         db = await self._get_connection()
         
         # Step 1: Get the rowids of the nearest neighbors from the vector index.
         # This is a fast, native C operation.
+        
+        # First, check if we have any vectors in the table
+        async with db.execute("SELECT COUNT(*) FROM vss_globules") as cursor:
+            count_result = await cursor.fetchone()
+            if count_result[0] == 0:
+                return []  # No vectors in database
+        
         async with db.execute("""
             SELECT rowid, distance
             FROM vss_globules
             WHERE embedding MATCH ?
             ORDER BY distance
             LIMIT ?
-        """, (query_vector.tobytes(), limit)) as cursor:
+        """, (normalized_query.tobytes(), limit)) as cursor:
             rows = await cursor.fetchall()
             if not rows:
                 return []
@@ -406,10 +434,10 @@ class SQLiteStorageManager(StorageManager):
         placeholders = ','.join('?' for _ in neighbor_ids)
         
         if min_embedding_confidence is not None:
-            sql = f"SELECT * FROM globules WHERE rowid IN ({placeholders}) AND embedding_confidence >= ?"
+            sql = f"SELECT rowid, * FROM globules WHERE rowid IN ({placeholders}) AND embedding_confidence >= ?"
             params = neighbor_ids + [min_embedding_confidence]
         else:
-            sql = f"SELECT * FROM globules WHERE rowid IN ({placeholders})"
+            sql = f"SELECT rowid, * FROM globules WHERE rowid IN ({placeholders})"
             params = neighbor_ids
         
         async with db.execute(sql, params) as cursor:
@@ -417,14 +445,19 @@ class SQLiteStorageManager(StorageManager):
         
         # The database does not guarantee the order of IN clauses,
         # so we re-order the results in Python to match the similarity ranking.
-        globule_map = {row[0]: self._row_to_globule(row) for row in globule_rows}  # row[0] is rowid
+        # row[0] is rowid, row[1:] contains the globule data
+        globule_map = {row[0]: self._row_to_globule(row[1:]) for row in globule_rows}
         
         results = []
         for neighbor_id in neighbor_ids:
             if neighbor_id in globule_map:
                 globule = globule_map[neighbor_id]
                 distance = distances[neighbor_id]
-                similarity = max(0.0, 1.0 - distance)  # Convert distance to similarity
+                # Convert distance to similarity score (0-1 range)
+                # For cosine distance, similarity = 1 - distance/2 (since cosine distance is in range [0,2])
+                # For euclidean distance, we use a different formula
+                # Since we don't know the exact distance metric, use a robust conversion
+                similarity = 1.0 / (1.0 + distance)  # This works for any positive distance
                 
                 if similarity >= similarity_threshold:
                     results.append((globule, similarity))

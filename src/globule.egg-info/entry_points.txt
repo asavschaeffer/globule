@@ -1,2 +1,2 @@
 [console_scripts]
-globule = globule.cli:main
+globule = globule.interfaces.cli.main:cli

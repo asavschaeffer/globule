@@ -47,7 +47,7 @@ dev = [
 ]
 
 [project.scripts]
-globule = "globule.cli:main"
+globule = "globule.interfaces.cli.main:cli"
 
 [project.urls]
 "Homepage" = "https://github.com/asavschaeffer/globule"
