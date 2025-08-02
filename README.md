@@ -1,80 +1,88 @@
-# Globule: Your Personal Thought-Processor
+# Globule
 
-Welcome to Globule, a command-line tool for capturing, understanding, and retrieving your thoughts. It's like a second brain, but on your local machine.
+> Turn your scattered thoughts into structured drafts. Effortlessly.
 
-## Key Features
+![Project Status: Design](https://img.shields.io/badge/status-design-lightgrey)
 
-*   **Instant Capture:** Jot down ideas, notes, and reminders with a single command.
-*   **Semantic Search:** Find what you're looking for based on meaning, not just keywords.
-*   **Daily Summaries:** Get a daily report of your thoughts and activities.
-*   **Local First:** Everything is stored on your machine, so your data is always private.
+We jot down ideas in notebooks, send ourselves emails, and save links across a dozen apps. These fragments of inspiration are disconnected and often lost. Globule is a local-first, AI-powered system designed to automatically organize this chaos.
+
+## The Core Experience
+
+Globule's magic is in its simplicity. Capture any thought, and let the AI handle the rest.
+
+#### 1. Capture Instantly
+
+No need to think about folders or filenames. Just capture the thought.
+
+```bash
+$ globule add "The concept of 'progressive overload' in fitness could apply to creative stamina."
+
+$ globule add "A core theme for my next post: discipline isn't about restriction, it's about freedom."
+```
+
+#### 2. Synthesize with Ease
+
+When you're ready to write, tell Globule what you're thinking about.
+
+```bash
+$ globule draft "my next blog post"
+```
+
+Globule's intelligent engine understands these thoughts are related and presents them in a clean, two-pane interface, ready for you to weave them together into a coherent first draft.
+
+## Your Files, Your Computer
+
+Globule organizes your thoughts into a clean, human-readable folder structure right on your local machine. A thought about creative philosophy might be saved as:
+
+`~/globule/philosophy/creativity/applying-progressive-overload.md`
+
+You can browse and edit these files with any tool. No proprietary formats, no lock-in. A single database file, `globule.db`, lives alongside your notes, holding the semantic connections that make the magic possible.
 
 ## Getting Started
 
-Getting started with Globule is easy. Just follow these three steps:
+Globule Phase 2 is now functional! Here's how to get started:
 
-1.  **Install Dependencies:**
+```bash
+# Clone and install from source
+git clone https://github.com/asavschaeffer/globule
+cd globule
+pip install -e .
 
-    ```bash
-    poetry install
-    ```
+# Learn how Globule works with the Glass Engine tutorial
+globule tutorial --mode=interactive
 
-2.  **Configure Globule:**
+# Start capturing your thoughts
+globule add "Your first thought here"
 
-    ```bash
-    poetry run globule config
-    ```
+# Draft content from your captured thoughts
+globule draft "your topic"
+```
 
-3.  **Start Ollama:**
+## The Glass Engine: Transparent Software
 
-    ```bash
-    # In a separate terminal
-    ollama serve
-    ```
+Globule features the **Glass Engine** - a revolutionary tutorial system that shows you exactly how the software works while you learn to use it. No black boxes, no guesswork, complete transparency.
 
-## Usage
+We're still updating this at the moment.
 
-Here are a few examples of how to use Globule:
+**Choose your learning style:**
 
-*   **Add a thought:**
+- 🎓 **New to Globule?** → `globule tutorial --mode=interactive` (guided hands-on learning)
+- 🎪 **Want to see capabilities?** → `globule tutorial --mode=demo` (professional showcase)  
+- 🔧 **Need technical details?** → `globule tutorial --mode=debug` (raw system analysis)
 
-    ```bash
-    poetry run globule add "I had a great idea for a new project today."
-    ```
+The Glass Engine embodies our philosophy: *"Let the user see exactly how the pistons fire while teaching them to drive."*
 
-*   **Search for a thought:**
+**📚 Learn more:** [Glass Engine Guide](docs/glass-engine-guide.md) | [Quick Start](docs/glass-engine-quick-start.md)
 
-    ```bash
-    poetry run globule search "new project idea"
-    ```
+## The Vision: Where We're Going
 
-*   **Get a daily summary:**
+The initial version of Globule is focused on the core experience of capture and synthesis. But this is just the foundation for a much larger vision.
 
-    ```bash
-    poetry run globule report
-    ```
+-   **Empowering Workflows:** Soon, you'll be able to teach Globule about *your* specific types of information (like `Recipes` or `Code Snippets`), enabling custom formatting and perfect integration with tools like Obsidian.
+-   **Personalized Organization:** You will be able to tune Globule's brain, defining your own templates for how files and folders are named and organized, making the semantic filesystem truly your own.
 
-## How It Works
-
-Globule uses a combination of local AI models to understand and process your thoughts:
-
-*   **mxbai-embed-large:** Creates semantic embeddings for each thought.
-*   **llama3.2:3b:** Extracts entities, categories, and sentiment.
-
-This allows Globule to perform intelligent searches and generate insightful summaries.
-
-## Roadmap
-
-Here are some of the features we're planning to add to Globule:
-
-*   **Web Interface:** A simple web UI for viewing and managing your thoughts.
-*   **Mobile App:** A mobile app for capturing thoughts on the go.
-*   **Cloud Sync:** The ability to sync your thoughts across multiple devices.
+Our ultimate goal is to build a new foundational layer for personal computing—one that understands context, not just commands.
 
 ## Contributing
 
-We welcome contributions from the community. If you'd like to contribute, please fork the repository and submit a pull request.
-
-## License
-
-Globule is licensed under the MIT License. See the `LICENSE` file for more information.
+This project is currently in a design-heavy phase. If you are interested in the architecture, design philosophy, and the future of semantic computing, we welcome you to explore our **[Project Wiki](https://github.com/asavschaeffer/globule/wiki)** where the system is being designed in the open.
