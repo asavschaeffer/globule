@@ -370,8 +370,9 @@ class TestVectorSearch:
         globule, combined_score = fused[0]
         
         # Combined score should be higher than individual scores
-        # 0.9 * 0.7 + 0.7 * 0.3 = 0.63 + 0.21 = 0.84
-        expected_score = 0.9 * 0.7 + 0.7 * 0.3  
+        # 0.9 * 0.7 + 0.7 * 0.3 = 0.63 + 0.21 = 0.84, then 1.2x boost = 1.008, capped at 1.0
+        base_score = 0.9 * 0.7 + 0.7 * 0.3  # 0.84
+        expected_score = min(1.0, base_score * 1.2)  # 1.2x boost for multi-match, capped at 1.0
         assert abs(combined_score - expected_score) < 0.01
 
     @pytest.mark.asyncio

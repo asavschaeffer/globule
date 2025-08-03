@@ -539,3 +539,134 @@ class SQLiteStorageManager(StorageManager):
         if self._connection:
             await self._connection.close()
             self._connection = None
+
+    async def search_by_text_and_embedding(
+        self,
+        query_text: str,
+        query_embedding: np.ndarray,
+        limit: int = 50,
+        similarity_threshold: float = 0.3
+    ) -> List[Tuple[ProcessedGlobule, float]]:
+        """
+        Hybrid search combining text and embedding similarity.
+        
+        Args:
+            query_text: Text query for keyword matching
+            query_embedding: Embedding vector for semantic search
+            limit: Maximum results to return
+            similarity_threshold: Minimum similarity threshold
+            
+        Returns:
+            List of (ProcessedGlobule, combined_score) tuples
+        """
+        # Get semantic results
+        semantic_results = await self.search_by_embedding(
+            query_embedding, limit=limit * 2, similarity_threshold=similarity_threshold
+        )
+        
+        # Get text results
+        text_results = await self._search_by_text_keywords(query_text, limit=limit * 2)
+        
+        # Fuse results
+        fused_results = self._fuse_search_results(semantic_results, text_results)
+        
+        return fused_results[:limit]
+
+    async def _search_by_text_keywords(
+        self, 
+        query: str, 
+        limit: int = 50
+    ) -> List[Tuple[ProcessedGlobule, float]]:
+        """
+        Search for globules containing specific keywords.
+        
+        Args:
+            query: Text query with keywords
+            limit: Maximum results to return
+            
+        Returns:
+            List of (ProcessedGlobule, relevance_score) tuples
+        """
+        db = await self._get_connection()
+        
+        # Simple keyword search using LIKE operator
+        keywords = query.lower().split()
+        where_clauses = []
+        params = []
+        
+        for keyword in keywords:
+            where_clauses.append("LOWER(text) LIKE ?")
+            params.append(f"%{keyword}%")
+        
+        where_sql = " OR ".join(where_clauses)
+        
+        async with db.execute(f"""
+            SELECT id, text, embedding, embedding_confidence, parsed_data,
+                   parsing_confidence, file_path, orchestration_strategy,
+                   confidence_scores, processing_time_ms, semantic_neighbors,
+                   processing_notes, created_at, modified_at
+            FROM globules
+            WHERE {where_sql}
+            ORDER BY embedding_confidence DESC
+            LIMIT ?
+        """, params + [limit]) as cursor:
+            rows = await cursor.fetchall()
+        
+        results = []
+        for row in rows:
+            globule = self._row_to_globule(row)
+            
+            # Calculate simple relevance score based on keyword matches
+            text_lower = globule.text.lower()
+            matches = sum(1 for keyword in keywords if keyword in text_lower)
+            relevance = min(1.0, matches / len(keywords))
+            
+            results.append((globule, relevance))
+        
+        return results
+
+    def _fuse_search_results(
+        self,
+        semantic_results: List[Tuple[ProcessedGlobule, float]],
+        text_results: List[Tuple[ProcessedGlobule, float]]
+    ) -> List[Tuple[ProcessedGlobule, float]]:
+        """
+        Fuse semantic and text search results with intelligent scoring.
+        
+        Args:
+            semantic_results: Results from embedding search
+            text_results: Results from text keyword search
+            
+        Returns:
+            Combined and deduplicated results with fused scores
+        """
+        # Create lookup for efficient merging
+        semantic_scores = {globule.id: score for globule, score in semantic_results}
+        text_scores = {globule.id: score for globule, score in text_results}
+        
+        # Collect all unique globules
+        all_globules = {}
+        for globule, _ in semantic_results:
+            all_globules[globule.id] = globule
+        for globule, _ in text_results:
+            all_globules[globule.id] = globule
+        
+        # Calculate combined scores
+        fused_results = []
+        for globule_id, globule in all_globules.items():
+            semantic_score = semantic_scores.get(globule_id, 0.0)
+            text_score = text_scores.get(globule_id, 0.0)
+            
+            # Weighted combination: 70% semantic, 30% text
+            combined_score = 0.7 * semantic_score + 0.3 * text_score
+            
+            # Boost if found in both searches
+            if semantic_score > 0 and text_score > 0:
+                combined_score *= 1.2  # 20% boost for multi-match
+            
+            combined_score = min(1.0, combined_score)  # Cap at 1.0
+            fused_results.append((globule, combined_score))
+        
+        # Sort by combined score
+        fused_results.sort(key=lambda x: x[1], reverse=True)
+        return fused_results

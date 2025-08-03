@@ -4,18 +4,24 @@ Main CLI commands for Globule.
 Implements the core user experience:
 - globule add "thought"
 - globule draft "topic"
+
+Refactored for performance and maintainability:
+- Shared context with service initialization
+- Thin command wrappers that delegate to services
+- Clean separation of concerns
 """
 
 import asyncio
 import click
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 from pathlib import Path
 
 from globule.core.models import EnrichedInput
 from globule.storage.sqlite_manager import SQLiteStorageManager
 from globule.services.embedding.ollama_provider import OllamaEmbeddingProvider
+from globule.services.embedding.mock_provider import MockEmbeddingProvider
 from globule.services.parsing.ollama_parser import OllamaParser
 from globule.orchestration.engine import OrchestrationEngine
 from globule.config.settings import get_config
@@ -25,62 +31,94 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
+class GlobuleContext:
+    """Shared context for CLI commands containing initialized services."""
+    
+    def __init__(self):
+        self.config = None
+        self.storage = None
+        self.embedding_provider = None
+        self.parsing_provider = None
+        self.orchestrator = None
+        self._initialized = False
+    
+    async def initialize(self, verbose: bool = False) -> None:
+        """Initialize all services once."""
+        if self._initialized:
+            return
+        
+        if verbose:
+            logging.getLogger().setLevel(logging.DEBUG)
+        
+        # Initialize configuration
+        self.config = get_config()
+        
+        # Initialize storage
+        self.storage = SQLiteStorageManager()
+        await self.storage.initialize()
+        
+        # Initialize embedding provider with fallback to mock
+        self.embedding_provider = OllamaEmbeddingProvider()
+        health_ok = await self.embedding_provider.health_check()
+        
+        if not health_ok:
+            click.echo("Warning: Ollama not accessible. Using mock embeddings.", err=True)
+            await self.embedding_provider.close()
+            self.embedding_provider = MockEmbeddingProvider()
+        
+        # Initialize parsing provider
+        self.parsing_provider = OllamaParser()
+        
+        # Initialize orchestrator
+        self.orchestrator = OrchestrationEngine(
+            self.embedding_provider, 
+            self.parsing_provider, 
+            self.storage
+        )
+        
+        self._initialized = True
+    
+    async def cleanup(self) -> None:
+        """Clean up all services."""
+        if self.embedding_provider:
+            await self.embedding_provider.close()
+        if self.parsing_provider:
+            await self.parsing_provider.close()
+        if self.storage:
+            await self.storage.close()
+        self._initialized = False
+
+
 @click.group()
-@click.version_option(version="0.1.0")
-def cli():
+@click.version_option(version="1.0.0")
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+@click.pass_context
+def cli(ctx: click.Context, verbose: bool):
     """
     Globule: Turn your scattered thoughts into structured drafts. Effortlessly.
     
     Capture thoughts with 'globule add' and synthesize with 'globule draft'.
     """
-    pass
+    # Initialize shared context
+    ctx.ensure_object(dict)
+    ctx.obj['context'] = GlobuleContext()
+    ctx.obj['verbose'] = verbose
 
 
 @cli.command()
 @click.argument('text', required=True)
-@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
-async def add(text: str, verbose: bool) -> None:
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output for this command')
+@click.pass_context
+async def add(ctx: click.Context, text: str, verbose: bool) -> None:
     """Add a thought to your Globule collection."""
     
-    if verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
+    # Use context verbose setting if not overridden
+    verbose = verbose or ctx.obj.get('verbose', False)
     
     try:
-        # Initialize components
-        config = get_config()
-        storage = SQLiteStorageManager()
-        await storage.initialize()
-        
-        # Try to use Ollama, fall back to mock if not available
-        embedding_provider = OllamaEmbeddingProvider()
-        health_ok = await embedding_provider.health_check()
-        
-        if not health_ok:
-            click.echo("Warning: Ollama not accessible. Using mock embeddings.", err=True)
-            # Use mock embedding provider for testing
-            class MockEmbeddingProvider:
-                def get_dimension(self):
-                    return 1024
-                
-                async def embed(self, text):
-                    import numpy as np
-                    return np.random.randn(1024).astype(np.float32)
-                
-                async def embed_batch(self, texts):
-                    return [await self.embed(text) for text in texts]
-                
-                async def close(self):
-                    pass
-                
-                async def health_check(self):
-                    return True
-            
-            embedding_provider = MockEmbeddingProvider()
-        
-        parsing_provider = OllamaParser()
-        orchestrator = OrchestrationEngine(
-            embedding_provider, parsing_provider, storage
-        )
+        # Initialize context if needed
+        context: GlobuleContext = ctx.obj['context']
+        await context.initialize(verbose)
         
         # Create enriched input
         enriched_input = EnrichedInput(
@@ -94,13 +132,12 @@ async def add(text: str, verbose: bool) -> None:
             verbosity="verbose" if verbose else "concise"
         )
         
-        # Process the globule
+        # Process the globule using orchestrator
         click.echo("Processing your thought...")
         start_time = datetime.now()
         
-        processed_globule = await orchestrator.process_globule(enriched_input)
-        # Store using the atomic Outbox Pattern - storage manager handles file creation internally
-        globule_id = await storage.store_globule(processed_globule)
+        processed_globule = await context.orchestrator.process_globule(enriched_input)
+        globule_id = await context.storage.store_globule(processed_globule)
         
         processing_time = (datetime.now() - start_time).total_seconds() * 1000
         
@@ -116,11 +153,6 @@ async def add(text: str, verbose: bool) -> None:
         else:
             click.echo(f"Thought captured in {processing_time:.0f}ms")
         
-        # Cleanup
-        await embedding_provider.close()
-        await parsing_provider.close()
-        await storage.close()
-        
     except Exception as e:
         logger.error(f"Failed to add thought: {e}")
         click.echo(f"Error: {e}", err=True)
@@ -131,7 +163,8 @@ async def add(text: str, verbose: bool) -> None:
 @click.argument('topic', required=True)
 @click.option('--limit', '-l', default=100, help='Maximum globules to search (default: 100)')
 @click.option('--output', '-o', help='Output draft to file')
-async def draft(topic: str, limit: int, output: Optional[str]) -> None:
+@click.pass_context
+async def draft(ctx: click.Context, topic: str, limit: int, output: Optional[str]) -> None:
     """
     Interactive drafting from clustered thoughts.
     
@@ -140,15 +173,6 @@ async def draft(topic: str, limit: int, output: Optional[str]) -> None:
     2. Clusters the results using semantic analysis  
     3. Launches an interactive TUI for navigation and selection
     4. Lets you add thoughts to your draft and export the result
-    
-    Navigation:
-    • ↑↓: Navigate lists
-    • →/Enter: Drill into cluster or add thought to draft
-    • ←/Backspace: Go back
-    • d/q: Finish and output draft
-    
-    Example:
-    globule draft "machine learning concepts"
     """
     
     try:
@@ -158,23 +182,20 @@ async def draft(topic: str, limit: int, output: Optional[str]) -> None:
         
         console = Console()
         
-        # Initialize components
-        console.print("[blue]INITIALIZING:[/blue] Setting up drafting session...")
-        storage = SQLiteStorageManager()
-        await storage.initialize()
+        # Initialize context
+        context: GlobuleContext = ctx.obj['context']
+        await context.initialize(ctx.obj.get('verbose', False))
         
-        embedding_provider = OllamaEmbeddingProvider()
-        health_ok = await embedding_provider.health_check()
-        
-        if not health_ok:
-            console.print("[red]ERROR:[/red] Ollama not accessible. Interactive drafting requires embeddings.")
+        # Check if we have embeddings (can't draft with mock embeddings effectively)
+        if isinstance(context.embedding_provider, MockEmbeddingProvider):
+            console.print("[red]ERROR:[/red] Interactive drafting requires real embeddings.")
             console.print("Please ensure Ollama is running and try again.")
             return
         
         # Step 1: Vectorize topic and perform semantic search
         console.print(f"[blue]SEARCH:[/blue] Finding thoughts related to '{topic}'...")
-        topic_embedding = await embedding_provider.embed(topic)
-        search_results = await storage.search_by_embedding(topic_embedding, limit, 0.3)
+        topic_embedding = await context.embedding_provider.embed(topic)
+        search_results = await context.storage.search_by_embedding(topic_embedding, limit, 0.3)
         
         if not search_results:
             console.print(f"[red]NO RESULTS:[/red] No thoughts found related to '{topic}'")
@@ -187,9 +208,8 @@ async def draft(topic: str, limit: int, output: Optional[str]) -> None:
         
         # Step 2: Cluster the search results
         console.print("[blue]CLUSTERING:[/blue] Analyzing semantic patterns...")
-        clustering_engine = SemanticClusteringEngine(storage)
+        clustering_engine = SemanticClusteringEngine(context.storage)
         
-        # Use the search results for clustering
         analysis = await clustering_engine.analyze_semantic_clusters(min_globules=2)
         
         if not analysis.clusters:
@@ -227,12 +247,8 @@ async def draft(topic: str, limit: int, output: Optional[str]) -> None:
             console.print("="*60)
             print(draft_text)  # Use print for clean output
         
-        # Cleanup
-        await embedding_provider.close()
-        await storage.close()
-        
     except KeyboardInterrupt:
-        console.print("\n[yellow]CANCELLED:[/yellow] Drafting session interrupted")
+        click.echo("\nDrafting session cancelled")
     except Exception as e:
         logger.error(f"Failed to run interactive draft: {e}")
         click.echo(f"Error: {e}", err=True)
@@ -244,36 +260,32 @@ async def draft(topic: str, limit: int, output: Optional[str]) -> None:
 @click.option('--limit', '-l', default=10, help='Maximum results to return')
 @click.option('--threshold', '-t', default=0.4, help='Minimum similarity threshold (0.0-1.0)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed search results')
-async def search(query: str, limit: int, threshold: float, verbose: bool) -> None:
+@click.pass_context
+async def search(ctx: click.Context, query: str, limit: int, threshold: float, verbose: bool) -> None:
     """
     Search for similar thoughts using semantic vector search.
     
     This command demonstrates Phase 2 vector search capabilities by finding
     semantically related content based on meaning rather than exact keywords.
-    
-    Examples:
-    \b
-    globule search "creative writing process"
-    globule search "system design patterns" --limit 5 --threshold 0.6
     """
+    # Use context verbose setting if not overridden
+    verbose = verbose or ctx.obj.get('verbose', False)
+    
     try:
-        # Initialize components
-        config = get_config()
-        storage = SQLiteStorageManager()
-        await storage.initialize()
-        
-        embedding_provider = OllamaEmbeddingProvider()
+        # Initialize context
+        context: GlobuleContext = ctx.obj['context']
+        await context.initialize(verbose)
         
         click.echo(f"SEARCH: Searching for: '{query}'")
         click.echo(f"PARAMS: limit={limit}, threshold={threshold}")
         
         # Generate query embedding
         click.echo("EMBEDDING: Generating semantic embedding...")
-        query_embedding = await embedding_provider.embed(query)
+        query_embedding = await context.embedding_provider.embed(query)
         
         # Perform vector search
         click.echo("SEARCH: Searching semantic database...")
-        results = await storage.search_by_embedding(query_embedding, limit, threshold)
+        results = await context.storage.search_by_embedding(query_embedding, limit, threshold)
         
         if not results:
             click.echo("NO RESULTS: No similar thoughts found.")
@@ -314,10 +326,6 @@ async def search(query: str, limit: int, threshold: float, verbose: bool) -> Non
         if verbose:
             click.echo(f"STATS: Search completed in semantic space with {len(query_embedding)}-dimensional vectors")
         
-        # Cleanup
-        await embedding_provider.close()
-        await storage.close()
-        
     except Exception as e:
         logger.error(f"Search failed: {e}")
         click.echo(f"Error: {e}", err=True)
@@ -328,27 +336,24 @@ async def search(query: str, limit: int, threshold: float, verbose: bool) -> Non
 @click.option('--min-globules', '-m', default=5, help='Minimum globules required for clustering')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed cluster analysis')
 @click.option('--export', '-e', help='Export results to JSON file')
-async def cluster(min_globules: int, verbose: bool, export: Optional[str]) -> None:
+@click.pass_context
+async def cluster(ctx: click.Context, min_globules: int, verbose: bool, export: Optional[str]) -> None:
     """
     Discover semantic clusters and themes in your thoughts.
     
     This command demonstrates Phase 2 clustering capabilities by automatically
     grouping related content and identifying common themes across your knowledge base.
-    
-    Examples:
-    \b
-    globule cluster                          # Basic clustering
-    globule cluster --min-globules 3        # Lower threshold
-    globule cluster --verbose               # Detailed analysis
-    globule cluster --export clusters.json  # Save results
     """
+    # Use context verbose setting if not overridden
+    verbose = verbose or ctx.obj.get('verbose', False)
+    
     try:
-        # Initialize components
-        storage = SQLiteStorageManager()
-        await storage.initialize()
+        # Initialize context
+        context: GlobuleContext = ctx.obj['context']
+        await context.initialize(verbose)
         
-        from globule.clustering.semantic_clustering import SemanticClusteringEngine
-        clustering_engine = SemanticClusteringEngine(storage)
+        from globule.services.clustering.semantic_clustering import SemanticClusteringEngine
+        clustering_engine = SemanticClusteringEngine(context.storage)
         
         click.echo(f"CLUSTERING: Analyzing semantic patterns in your thoughts...")
         click.echo(f"PARAMS: min_globules={min_globules}")
@@ -411,23 +416,19 @@ async def cluster(min_globules: int, verbose: bool, export: Optional[str]) -> No
                 json.dump(analysis.to_dict(), f, indent=2)
             click.echo(f"\nEXPORTED: Results saved to {export}")
         
-        # Cleanup
-        await storage.close()
-        
     except Exception as e:
         logger.error(f"Clustering failed: {e}")
         click.echo(f"Error: {e}", err=True)
         raise click.Abort()
 
 
-# REMOVED: save command is now redundant - files are created automatically during 'add'
-
 @cli.command()
 @click.option('--mode', '-m', 
               type=click.Choice(['interactive', 'demo', 'debug']), 
               default='demo',
               help='Glass Engine mode: interactive (guided tutorial), demo (technical showcase), debug (raw system traces)')
-async def tutorial(mode: str) -> None:
+@click.pass_context
+async def tutorial(ctx: click.Context, mode: str) -> None:
     """
     Run the Glass Engine tutorial to see how Globule works under the hood.
     
@@ -437,9 +438,6 @@ async def tutorial(mode: str) -> None:
     • INTERACTIVE: Guided tutorial with hands-on learning (best for new users)
     • DEMO: Professional technical showcase with automated examples (best for stakeholders)  
     • DEBUG: Raw execution traces and system introspection (best for engineers/debugging)
-    
-    Each mode embodies the Glass Engine philosophy: tests become tutorials,
-    tutorials become showcases, showcases become tests. Complete transparency.
     """
     
     try:
@@ -473,29 +471,23 @@ async def tutorial(mode: str) -> None:
 @cli.command()
 @click.option('--auto', is_flag=True, help='Run reconciliation automatically without prompts')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed reconciliation output')
-async def reconcile(auto: bool, verbose: bool) -> None:
+@click.pass_context
+async def reconcile(ctx: click.Context, auto: bool, verbose: bool) -> None:
     """
     Reconcile files on disk with database records using UUID canonical links.
     
     This is the core of Priority 4: ensuring database records reflect the actual
     state of files on disk, regardless of how users have moved or renamed them.
-    
-    The system uses UUIDs embedded in YAML frontmatter as the canonical link
-    between files and database records. This allows users to organize, rename,
-    and move files freely while maintaining system integrity.
-    
-    Examples:
-    \\b
-    globule reconcile                    # Interactive reconciliation with prompts
-    globule reconcile --auto            # Automatic reconciliation
-    globule reconcile --auto --verbose  # Detailed output
     """
+    # Use context verbose setting if not overridden
+    verbose = verbose or ctx.obj.get('verbose', False)
+    
     try:
         from globule.storage.file_manager import FileManager
         
-        # Initialize components
-        storage = SQLiteStorageManager()
-        await storage.initialize()
+        # Initialize context
+        context: GlobuleContext = ctx.obj['context']
+        await context.initialize(verbose)
         
         file_manager = FileManager()
         
@@ -510,10 +502,10 @@ async def reconcile(auto: bool, verbose: bool) -> None:
                 return
         
         click.echo("RECONCILIATION: Starting file-database reconciliation...")
-        stats = await file_manager.reconcile_files_with_database(storage)
+        stats = await file_manager.reconcile_files_with_database(context.storage)
         
         # Display results
-        click.echo(f"\\nRECONCILIATION COMPLETE:")
+        click.echo(f"\nRECONCILIATION COMPLETE:")
         click.echo(f"  Files scanned: {stats['files_scanned']}")
         click.echo(f"  Files reconciled: {stats['files_reconciled']}")
         click.echo(f"  Database records updated: {stats['database_records_updated']}")
@@ -526,16 +518,13 @@ async def reconcile(auto: bool, verbose: bool) -> None:
                     click.echo(f"    - {error}")
         
         if stats['files_orphaned'] > 0:
-            click.echo(f"\\nORPHANED FILES: Found {stats['files_orphaned']} files without UUIDs.")
+            click.echo(f"\nORPHANED FILES: Found {stats['files_orphaned']} files without UUIDs.")
             click.echo("These files exist on disk but aren't tracked in the database.")
             click.echo("Use 'globule import' to add them to the system (when implemented).")
         
         if stats['database_records_updated'] > 0:
-            click.echo(f"\\nUPDATE: {stats['database_records_updated']} database records updated to reflect actual file locations.")
+            click.echo(f"\nUPDATE: {stats['database_records_updated']} database records updated to reflect actual file locations.")
             click.echo("PRINCIPLE: The filename is for the human; the UUID is for the machine.")
-        
-        # Cleanup
-        await storage.close()
         
     except Exception as e:
         logger.error(f"Reconciliation failed: {e}")
@@ -548,7 +537,24 @@ def main():
     # Convert click commands to async
     def async_command(f):
         def wrapper(*args, **kwargs):
-            return asyncio.run(f(*args, **kwargs))
+            # Get context from click if available
+            ctx = None
+            for arg in args:
+                if isinstance(arg, click.Context):
+                    ctx = arg
+                    break
+            
+            # Run the async command
+            try:
+                result = asyncio.run(f(*args, **kwargs))
+                return result
+            finally:
+                # Clean up context if it exists
+                if ctx and ctx.obj and 'context' in ctx.obj:
+                    context = ctx.obj['context']
+                    if context._initialized:
+                        asyncio.run(context.cleanup())
+    
         return wrapper
     
     # Make commands async-compatible
@@ -556,7 +562,6 @@ def main():
     cli.commands['draft'].callback = async_command(cli.commands['draft'].callback)
     cli.commands['search'].callback = async_command(cli.commands['search'].callback)
     cli.commands['cluster'].callback = async_command(cli.commands['cluster'].callback)
-    # REMOVED: save command - files are now created automatically during 'add'
     cli.commands['tutorial'].callback = async_command(cli.commands['tutorial'].callback)
     cli.commands['reconcile'].callback = async_command(cli.commands['reconcile'].callback)
     
