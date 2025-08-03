@@ -79,6 +79,6 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests/unit", "tests/integration"]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
