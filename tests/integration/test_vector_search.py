@@ -51,7 +51,7 @@ class TestVectorSearchIntegration:
         storage = populated_real_storage
         
         # Test that we can retrieve stored globules
-        globule = await storage.get_globule("real_1")
+        globule = await storage.get_globule("fitness_progressive_overload")
         assert globule is not None
         assert globule.text == "Progressive overload in fitness means gradually increasing weight, frequency, or number of reps in your strength training routine. This principle ensures continuous adaptation and growth."
         assert globule.parsed_data["domain"] == "fitness"
@@ -64,7 +64,7 @@ class TestVectorSearchIntegration:
         storage = populated_real_storage
         
         # Get a real embedding to search with
-        globule = await storage.get_globule("real_1")
+        globule = await storage.get_globule("fitness_progressive_overload")
         query_embedding = globule.embedding
         
         # Search for similar content
@@ -75,7 +75,7 @@ class TestVectorSearchIntegration:
         # Should find results including the original globule
         assert len(results) > 0
         found_ids = [g.id for g, _ in results]
-        assert "real_1" in found_ids
+        assert "fitness_progressive_overload" in found_ids
         
         # Results should be sorted by similarity
         scores = [score for _, score in results]
@@ -91,7 +91,7 @@ class TestVectorSearchIntegration:
         storage = populated_real_storage
         
         # Get a real embedding for testing
-        globule = await storage.get_globule("real_2")  # Technical debt globule
+        globule = await storage.get_globule("software_technical_debt")  # Technical debt globule
         query_embedding = globule.embedding
         query_text = "software development"
         
@@ -104,7 +104,7 @@ class TestVectorSearchIntegration:
         
         # Should find the technical debt globule
         found_ids = [g.id for g, _ in results]
-        assert "real_2" in found_ids
+        assert "software_technical_debt" in found_ids
         
         # Check that text matching influences results
         for globule, score in results:
@@ -118,7 +118,7 @@ class TestVectorSearchIntegration:
         storage = populated_real_storage
         
         # Use Feynman Technique embedding (learning domain)
-        learning_globule = await storage.get_globule("real_4")
+        learning_globule = await storage.get_globule("learning_feynman_technique")
         
         # Search with finance domain query but learning methodology
         results = await storage.search_by_embedding(
@@ -139,7 +139,7 @@ class TestVectorSearchIntegration:
         storage = populated_real_storage
         
         # Get a query embedding
-        globule = await storage.get_globule("real_1")
+        globule = await storage.get_globule("fitness_progressive_overload")
         query_embedding = globule.embedding
         
         # All our test data has confidence > 0.3, so should get results
@@ -157,7 +157,7 @@ class TestVectorSearchIntegration:
         storage = populated_real_storage
         
         # Get results with very low threshold to see ordering
-        globule = await storage.get_globule("real_1")
+        globule = await storage.get_globule("fitness_progressive_overload")
         results = await storage.search_by_embedding(
             globule.embedding, limit=10, similarity_threshold=0.0
         )
@@ -176,7 +176,7 @@ class TestVectorSearchIntegration:
         storage = populated_real_storage
         
         # Perform multiple search operations
-        globule = await storage.get_globule("real_1")
+        globule = await storage.get_globule("fitness_progressive_overload")
         
         # Run several searches
         for i in range(5):
@@ -189,7 +189,7 @@ class TestVectorSearchIntegration:
         db = await storage._get_connection()
         cursor = await db.execute("SELECT COUNT(*) FROM globules")
         count = await cursor.fetchone()
-        assert count[0] == 5  # Should have 5 test globules
+        assert count[0] == 8  # Should have 8 test globules from our deterministic dataset
 
     @pytest.mark.asyncio
     async def test_concurrent_search_operations(self, populated_real_storage):
@@ -197,9 +197,9 @@ class TestVectorSearchIntegration:
         storage = populated_real_storage
         
         # Get different query embeddings
-        globule1 = await storage.get_globule("real_1")
-        globule2 = await storage.get_globule("real_2")
-        globule3 = await storage.get_globule("real_3")
+        globule1 = await storage.get_globule("fitness_progressive_overload")
+        globule2 = await storage.get_globule("software_technical_debt")
+        globule3 = await storage.get_globule("wellness_mindfulness_meditation")
         
         # Run concurrent searches
         tasks = [
@@ -306,9 +306,9 @@ class TestVectorSearchPerformance:
         avg_search_time = sum(search_times) / len(search_times)
         max_search_time = max(search_times)
         
-        # Should handle 10k records efficiently
-        assert avg_search_time < 0.5, f"Average search time {avg_search_time:.3f}s too slow"
-        assert max_search_time < 1.0, f"Max search time {max_search_time:.3f}s too slow"
+        # Should handle 100k records efficiently - more lenient thresholds for larger dataset
+        assert avg_search_time < 1.0, f"Average search time {avg_search_time:.3f}s too slow"
+        assert max_search_time < 2.0, f"Max search time {max_search_time:.3f}s too slow"
         
         print(f"Performance: Avg={avg_search_time:.3f}s, Max={max_search_time:.3f}s")
 
@@ -340,8 +340,8 @@ class TestVectorSearchPerformance:
         for results in results_list:
             assert len(results) >= 0  # May be empty with high threshold
         
-        # Performance requirement: 20 concurrent searches should complete in reasonable time
-        assert total_time < 5.0, f"Batch search time {total_time:.3f}s too slow"
+        # Performance requirement: 20 concurrent searches should complete in reasonable time (adjusted for 100k dataset)
+        assert total_time < 10.0, f"Batch search time {total_time:.3f}s too slow"
         
         print(f"Batch Performance: 20 concurrent searches in {total_time:.3f}s")
 
@@ -440,9 +440,9 @@ class TestVectorSearchPerformance:
         assert avg_time < 0.5, f"Average time {avg_time:.3f}s too slow under load"
         assert max_time < 2.0, f"Max time {max_time:.3f}s shows performance degradation"
         
-        # Should handle reasonable throughput
+        # Should handle reasonable throughput (adjusted for 100k dataset)
         throughput = search_count / 30  # searches per second
-        assert throughput > 10, f"Throughput {throughput:.1f} searches/sec too low"
+        assert throughput > 5, f"Throughput {throughput:.1f} searches/sec too low"
         
         print(f"Sustained Load: {search_count} searches in 30s, avg={avg_time:.3f}s, throughput={throughput:.1f}/sec")
 
@@ -455,7 +455,7 @@ class TestVectorSearchPerformance:
         db = await storage._get_connection()
         cursor = await db.execute("SELECT COUNT(*) FROM globules")
         count = await cursor.fetchone()
-        assert count[0] >= 10000, f"Expected at least 10k records, got {count[0]}"
+        assert count[0] >= 100000, f"Expected at least 100k records, got {count[0]}"
         
         query_embedding = np.random.rand(1024).astype(np.float32)
         
@@ -477,9 +477,9 @@ class TestVectorSearchPerformance:
             # Should get up to the limit
             assert len(results) <= limit
         
-        # Performance should scale reasonably with result limit
+        # Performance should scale reasonably with result limit (adjusted for 100k dataset)
         for limit, search_time in limit_times.items():
-            assert search_time < 2.0, f"Limit {limit} took {search_time:.3f}s"
+            assert search_time < 3.0, f"Limit {limit} took {search_time:.3f}s"
         
         print(f"Limit Performance: {limit_times}")
 
@@ -495,7 +495,7 @@ class TestRealWorldScenarios:
         
         # Scenario: User searches for "learning techniques"
         # This would normally come from an embedding provider
-        learning_globule = await storage.get_globule("real_4")  # Feynman technique
+        learning_globule = await storage.get_globule("learning_feynman_technique")  # Feynman technique
         search_embedding = learning_globule.embedding
         
         # User does a hybrid search
@@ -519,7 +519,7 @@ class TestRealWorldScenarios:
         storage = populated_real_storage
         
         # Search with progressive overload concept (fitness)
-        fitness_globule = await storage.get_globule("real_1")
+        fitness_globule = await storage.get_globule("fitness_progressive_overload")
         
         # Should find conceptually similar ideas in other domains
         results = await storage.search_by_embedding(

@@ -17,6 +17,11 @@ from typing import List, Dict, Any
 
 from globule.core.models import ProcessedGlobule, FileDecision
 from globule.storage.sqlite_manager import SQLiteStorageManager
+from tests.utils.embedding_generator import (
+    generate_all_test_embeddings, 
+    generate_performance_embeddings,
+    load_test_embeddings
+)
 
 
 @pytest.fixture
@@ -46,175 +51,38 @@ async def real_storage_manager(tmp_path):
 
 @pytest.fixture
 def real_test_data():
-    """Load real test data from JSON file with pre-computed embeddings."""
-    # This would normally load from a checked-in JSON file
-    # For now, creating realistic data inline
-    return {
-        "globules": [
-            {
-                "id": "real_1",
-                "text": "Progressive overload in fitness means gradually increasing weight, frequency, or number of reps in your strength training routine. This principle ensures continuous adaptation and growth.",
-                "embedding": np.random.rand(1024).astype(np.float32).tolist(),
-                "embedding_confidence": 0.92,
-                "parsed_data": {
-                    "title": "Progressive Overload Principle",
-                    "domain": "fitness",
-                    "category": "concept",
-                    "keywords": ["progressive", "overload", "strength", "training", "adaptation"],
-                    "metadata": {"parser_type": "ollama_llm", "confidence_score": 0.89}
-                },
-                "parsing_confidence": 0.89,
-                "file_decision": {
-                    "semantic_path": "fitness/principles",
-                    "filename": "progressive-overload.md",
-                    "metadata": {},
-                    "confidence": 0.85,
-                    "alternative_paths": []
-                },
-                "created_at": (datetime.now() - timedelta(days=7)).isoformat()
+    """Load real test data with pre-computed deterministic embeddings."""
+    config = load_test_embeddings()
+    embeddings = generate_all_test_embeddings()
+    
+    globules = []
+    for globule_config in config["test_globules"]:
+        globule_data = {
+            "id": globule_config["id"],
+            "text": globule_config["text"],
+            "embedding": embeddings[globule_config["id"]].tolist(),
+            "embedding_confidence": globule_config["embedding_confidence"],
+            "parsed_data": globule_config["parsed_data"],
+            "parsing_confidence": globule_config["parsing_confidence"],
+            "file_decision": {
+                "semantic_path": globule_config["file_decision"]["semantic_path"],
+                "filename": globule_config["file_decision"]["filename"],
+                "metadata": {},
+                "confidence": globule_config["file_decision"]["confidence"],
+                "alternative_paths": []
             },
-            {
-                "id": "real_2",
-                "text": "The concept of technical debt in software development refers to the implied cost of additional rework caused by choosing an easy solution now instead of using a better approach that would take longer.",
-                "embedding": np.random.rand(1024).astype(np.float32).tolist(),
-                "embedding_confidence": 0.88,
-                "parsed_data": {
-                    "title": "Technical Debt Definition",
-                    "domain": "software",
-                    "category": "concept",
-                    "keywords": ["technical", "debt", "software", "development", "rework"],
-                    "metadata": {"parser_type": "ollama_llm", "confidence_score": 0.86}
-                },
-                "parsing_confidence": 0.86,
-                "file_decision": {
-                    "semantic_path": "software/concepts",
-                    "filename": "technical-debt.md",
-                    "metadata": {},
-                    "confidence": 0.82,
-                    "alternative_paths": []
-                },
-                "created_at": (datetime.now() - timedelta(days=5)).isoformat()
-            },
-            {
-                "id": "real_3",
-                "text": "Mindfulness meditation involves paying attention to the present moment without judgment. Regular practice can reduce stress and improve focus and emotional regulation.",
-                "embedding": np.random.rand(1024).astype(np.float32).tolist(),
-                "embedding_confidence": 0.85,
-                "parsed_data": {
-                    "title": "Mindfulness Meditation Practice",
-                    "domain": "wellness",
-                    "category": "practice",
-                    "keywords": ["mindfulness", "meditation", "present", "stress", "focus"],
-                    "metadata": {"parser_type": "ollama_llm", "confidence_score": 0.83}
-                },
-                "parsing_confidence": 0.83,
-                "file_decision": {
-                    "semantic_path": "wellness/practices",
-                    "filename": "mindfulness-meditation.md",
-                    "metadata": {},
-                    "confidence": 0.80,
-                    "alternative_paths": []
-                },
-                "created_at": (datetime.now() - timedelta(days=3)).isoformat()
-            },
-            {
-                "id": "real_4",
-                "text": "The Feynman Technique is a learning method where you explain a concept in simple terms as if teaching it to a child. This helps identify gaps in understanding.",
-                "embedding": np.random.rand(1024).astype(np.float32).tolist(),
-                "embedding_confidence": 0.90,
-                "parsed_data": {
-                    "title": "Feynman Technique for Learning",
-                    "domain": "learning",
-                    "category": "technique",
-                    "keywords": ["feynman", "technique", "learning", "explain", "understanding"],
-                    "metadata": {"parser_type": "ollama_llm", "confidence_score": 0.87}
-                },
-                "parsing_confidence": 0.87,
-                "file_decision": {
-                    "semantic_path": "learning/techniques",
-                    "filename": "feynman-technique.md",
-                    "metadata": {},
-                    "confidence": 0.88,
-                    "alternative_paths": []
-                },
-                "created_at": (datetime.now() - timedelta(days=1)).isoformat()
-            },
-            {
-                "id": "real_5",
-                "text": "Compound interest is the addition of interest to the principal sum of a loan or deposit. Einstein allegedly called it the eighth wonder of the world.",
-                "embedding": np.random.rand(1024).astype(np.float32).tolist(),
-                "embedding_confidence": 0.87,
-                "parsed_data": {
-                    "title": "Compound Interest Concept",
-                    "domain": "finance",
-                    "category": "concept",
-                    "keywords": ["compound", "interest", "principal", "finance", "investment"],
-                    "metadata": {"parser_type": "ollama_llm", "confidence_score": 0.84}
-                },
-                "parsing_confidence": 0.84,
-                "file_decision": {
-                    "semantic_path": "finance/concepts",
-                    "filename": "compound-interest.md",
-                    "metadata": {},
-                    "confidence": 0.81,
-                    "alternative_paths": []
-                },
-                "created_at": (datetime.now() - timedelta(days=2)).isoformat()
-            }
-        ]
-    }
+            "created_at": (datetime.now() - timedelta(days=globule_config["days_ago"])).isoformat()
+        }
+        globules.append(globule_data)
+    
+    return {"globules": globules}
 
 
 @pytest.fixture
 def large_test_dataset():
-    """Generate a large dataset for performance testing (10k+ records)."""
-    domains = ["fitness", "software", "wellness", "learning", "finance", "productivity", "creativity", "science"]
-    categories = ["concept", "technique", "practice", "idea", "note", "reflection"]
-    
-    # Create base embeddings for each domain to ensure semantic clustering
-    domain_embeddings = {}
-    for domain in domains:
-        domain_embeddings[domain] = np.random.rand(1024).astype(np.float32)
-    
-    dataset = []
-    for i in range(10000):
-        domain = domains[i % len(domains)]
-        category = categories[i % len(categories)]
-        
-        # Create embedding similar to domain base with some noise
-        base_embedding = domain_embeddings[domain]
-        noise = np.random.normal(0, 0.2, 1024).astype(np.float32)
-        embedding = base_embedding + noise
-        
-        # Normalize to unit vector
-        norm = np.linalg.norm(embedding)
-        if norm > 0:
-            embedding = embedding / norm
-        
-        globule_data = {
-            "id": f"perf_{i:05d}",
-            "text": f"Performance test entry {i} in {domain} domain discussing {category} with substantial content to make search meaningful and realistic for testing purposes.",
-            "embedding": embedding.tolist(),
-            "embedding_confidence": 0.7 + (i % 30) * 0.01,  # 0.7 to 0.99
-            "parsed_data": {
-                "title": f"Performance Test Entry {i}",
-                "domain": domain,
-                "category": category,
-                "keywords": [domain, category, "performance", "test", f"entry_{i}"],
-                "metadata": {"parser_type": "test_parser", "confidence_score": 0.75 + (i % 25) * 0.01}
-            },
-            "parsing_confidence": 0.75 + (i % 25) * 0.01,
-            "file_decision": {
-                "semantic_path": f"{domain}/{category}",
-                "filename": f"perf-test-{i:05d}.md",
-                "metadata": {},
-                "confidence": 0.7 + (i % 30) * 0.01,
-                "alternative_paths": []
-            },
-            "created_at": (datetime.now() - timedelta(days=i % 365)).isoformat()
-        }
-        dataset.append(globule_data)
-    
+    """Generate a large dataset for performance testing (100k+ records)."""
+    # Generate 100k records with deterministic embeddings for proper performance testing
+    dataset = generate_performance_embeddings(count=100000)
     return {"globules": dataset}
 
 
@@ -222,7 +90,7 @@ def large_test_dataset():
 async def populated_real_storage(real_storage_manager, real_test_data):
     """Create a real storage manager populated with realistic test data."""
     for globule_data in real_test_data["globules"]:
-        # Convert dict to ProcessedGlobule
+        # Convert dict to ProcessedGlobule with relative paths
         globule = ProcessedGlobule(
             id=globule_data["id"],
             text=globule_data["text"],
@@ -253,10 +121,12 @@ async def populated_real_storage(real_storage_manager, real_test_data):
 
 @pytest.fixture
 async def large_populated_storage(real_storage_manager, large_test_dataset):
-    """Create a storage manager populated with large dataset for performance testing."""
-    # Store data in batches for better performance
-    batch_size = 100
+    """Create a storage manager populated with large dataset for performance testing (100k records)."""
+    # Store data in larger batches for better performance with 100k records
+    batch_size = 1000
     globules_data = large_test_dataset["globules"]
+    
+    print(f"Loading {len(globules_data)} records for performance testing...")
     
     for i in range(0, len(globules_data), batch_size):
         batch = globules_data[i:i + batch_size]
@@ -272,9 +142,9 @@ async def large_populated_storage(real_storage_manager, large_test_dataset):
                 file_decision=FileDecision(
                     semantic_path=Path(globule_data["file_decision"]["semantic_path"]),
                     filename=globule_data["file_decision"]["filename"],
-                    metadata=globule_data["file_decision"]["metadata"],
+                    metadata=globule_data["file_decision"].get("metadata", {}),
                     confidence=globule_data["file_decision"]["confidence"],
-                    alternative_paths=globule_data["file_decision"]["alternative_paths"]
+                    alternative_paths=globule_data["file_decision"].get("alternative_paths", [])
                 ),
                 orchestration_strategy="parallel",
                 processing_time_ms={"total_ms": 400},
@@ -283,10 +153,15 @@ async def large_populated_storage(real_storage_manager, large_test_dataset):
                 has_nuance=False,
                 semantic_neighbors=[],
                 processing_notes=[],
-                created_at=datetime.fromisoformat(globule_data["created_at"])
+                created_at=datetime.now() - timedelta(days=globule_data["days_ago"])
             )
             await real_storage_manager.store_globule(globule)
+        
+        # Progress indicator for large dataset
+        if (i + batch_size) % 10000 == 0:
+            print(f"Loaded {min(i + batch_size, len(globules_data))}/{len(globules_data)} records...")
     
+    print(f"Completed loading {len(globules_data)} records for performance testing.")
     return real_storage_manager
 
 
