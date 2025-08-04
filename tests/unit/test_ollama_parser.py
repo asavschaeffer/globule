@@ -58,8 +58,9 @@ class TestOllamaParser:
         """Test parser initialization."""
         assert parser.config is not None
         assert parser.session is None  # Not initialized yet
-        assert parser.parsing_prompt is not None
-        assert "JSON" in parser.parsing_prompt
+        assert parser.base_parsing_prompt is not None
+        assert "schema" in parser.base_parsing_prompt.lower()
+        assert parser.schema_manager is not None
 
     @pytest.mark.asyncio
     async def test_health_check_success(self, parser):
@@ -353,7 +354,7 @@ class TestOllamaParser:
             # Missing other required fields
         }
         
-        with pytest.raises(ValueError, match="Missing required field"):
+        with pytest.raises(ValueError, match="Schema validation failed"):
             parser._validate_parsed_result(invalid_result)
         
         # Test valid result
@@ -375,9 +376,26 @@ class TestOllamaParser:
     async def test_configuration_usage(self, parser):
         """Test that parser uses configuration correctly."""
         # Check that config values are used
-        assert parser.config.default_parsing_model in parser.parsing_prompt or "llama" in parser.config.default_parsing_model
+        assert parser.config.default_parsing_model  # Should have a default model
         assert parser.config.ollama_base_url.startswith("http")
         assert parser.config.ollama_timeout > 0
+        assert parser.default_schema_name == parser.config.default_schema
+
+    @pytest.mark.asyncio 
+    async def test_schema_handling(self, parser):
+        """Test schema parameter handling."""
+        # Test default schema
+        assert parser._determine_schema_name(None) == "default"
+        
+        # Test named schema
+        assert parser._determine_schema_name({"name": "technical"}) == "technical"
+        
+        # Test domain-based schema selection
+        assert parser._determine_schema_name({"domain": "academic"}) == "academic"
+        assert parser._determine_schema_name({"domain": "creative"}) == "creative"
+        
+        # Test unknown schema falls back to default
+        assert parser._determine_schema_name({"name": "unknown"}) == "default"
 
     @pytest.mark.asyncio
     async def test_error_handling_and_logging(self, parser, sample_texts, caplog):

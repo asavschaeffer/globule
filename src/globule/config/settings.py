@@ -33,6 +33,10 @@ class GlobuleConfig:
     embedding_cache_size: int = 1000
     max_concurrent_requests: int = 5
     
+    # Schema settings
+    default_schema: str = "default"
+    auto_schema_detection: bool = True
+    
     @classmethod
     def get_config_path(cls) -> Path:
         """Get the path to the configuration file"""
@@ -73,6 +77,8 @@ class GlobuleConfig:
             'ollama_timeout': self.ollama_timeout,
             'embedding_cache_size': self.embedding_cache_size,
             'max_concurrent_requests': self.max_concurrent_requests,
+            'default_schema': self.default_schema,
+            'auto_schema_detection': self.auto_schema_detection,
         }
         
         with open(config_path, 'w', encoding='utf-8') as f:

@@ -33,6 +33,7 @@ dependencies = [
     "rich>=13.0.0",
     "psutil>=5.9.0",
     "sqlite-vec>=0.0.2",
+    "jsonschema>=4.17.0",
 ]
 
 [project.optional-dependencies]

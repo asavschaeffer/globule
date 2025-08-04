@@ -25,6 +25,7 @@ from dataclasses import dataclass
 import aiohttp
 from globule.core.interfaces import ParsingProvider
 from globule.config.settings import get_config
+from globule.schemas.manager import get_schema_manager, validate_data, format_schema_for_llm, get_schema_for_domain
 
 
 @dataclass
@@ -54,6 +55,7 @@ class OllamaParser(ParsingProvider):
         self.config = get_config()
         self.logger = logging.getLogger(__name__)
         self.session: Optional[aiohttp.ClientSession] = None
+        self.schema_manager = get_schema_manager()
         
         # Compiled regex patterns for fast path classification
         self.URL_REGEX = re.compile(r'^https?://\S+')
@@ -64,41 +66,19 @@ class OllamaParser(ParsingProvider):
         self.BACKTICK_CODE_REGEX = re.compile(r'```[\s\S]*?```|`[^`]+`')
         self.FILE_PATH_REGEX = re.compile(r'^[a-zA-Z]:\\|^/[a-zA-Z0-9_./\-]+|^\./[a-zA-Z0-9_./\-]+|\.[a-zA-Z]{2,4}$')
         
-        # JSON schema for LLM prompts
-        self.JSON_SCHEMA = '''
-{
-  "title": "A concise, meaningful title (max 80 chars)",
-  "category": "one of: note, idea, question, task, reference, draft, quote, observation",
-  "domain": "one of: creative, technical, personal, academic, business, philosophy, other",
-  "keywords": ["key", "terms", "from", "text"],
-  "entities": ["people", "places", "concepts", "mentioned"],
-  "sentiment": "one of: positive, negative, neutral, mixed",
-  "content_type": "one of: prose, list, code, data, dialogue, poetry, instructions",
-  "confidence_score": 0.85,
-  "reasoning": "Brief explanation of your classification decisions"
-}
-'''
+        # Default schema name from config
+        self.default_schema_name = self.config.default_schema
         
-        # Parsing prompt template for structured extraction
-        self.parsing_prompt = """
-You are an expert content analyst. Analyze the following text and extract structured information.
+        # Base parsing prompt template (schema will be injected dynamically)
+        self.base_parsing_prompt = """
+You are an expert content analyst. Analyze the following text and extract structured information according to the provided schema.
 
 Text to analyze:
 {text}
 
-Return your analysis as valid JSON with this exact structure:
-{{
-    "title": "A concise, meaningful title (max 80 chars)",
-    "category": "one of: note, idea, question, task, reference, draft, quote, observation",
-    "domain": "one of: creative, technical, personal, academic, business, philosophy, other",
-    "keywords": ["key", "terms", "from", "text"],
-    "entities": ["people", "places", "concepts", "mentioned"],
-    "sentiment": "one of: positive, negative, neutral, mixed",
-    "content_type": "one of: prose, list, code, data, dialogue, poetry, instructions",
-    "confidence_score": 0.85,
-    "reasoning": "Brief explanation of your classification decisions"
-}}
+{schema_description}
 
+Return your analysis as valid JSON that strictly conforms to the schema above.
 Be precise and analytical. Focus on semantic meaning over surface features.
 """
 
@@ -231,17 +211,24 @@ Be precise and analytical. Focus on semantic meaning over surface features.
 
     async def parse(self, text: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Parse text using resilient fast/slow path architecture.
+        Parse text using resilient fast/slow path architecture with dynamic schema support.
         
         Args:
             text: Input text to analyze
-            schema: Optional schema hints (not used in this implementation)
+            schema: Optional schema specification. Can be:
+                   - Dict with 'name' key for schema name (e.g., {'name': 'technical'})
+                   - Dict with 'domain' key to auto-select schema (e.g., {'domain': 'academic'})
+                   - Full JSON schema dict
+                   - None to use default schema
             
         Returns:
             Dict containing structured parsing results
         """
+        # Determine which schema to use
+        schema_name = self._determine_schema_name(schema)
+        
         # 1. Attempt the fast path first.
-        fast_result = self._fast_path_parse(text)
+        fast_result = self._fast_path_parse(text, schema_name)
         if fast_result:
             self.logger.info(f"Handled by fast path: {fast_result['metadata']['parser_type']}")
             return fast_result
@@ -250,17 +237,50 @@ Be precise and analytical. Focus on semantic meaning over surface features.
         try:
             # Check if Ollama service is healthy before attempting LLM parsing
             if await self.health_check():
-                return await self._slow_path_parse_with_retry(text)
+                return await self._slow_path_parse_with_retry(text, schema_name)
             else:
                 # Ollama not available, skip directly to fallback
                 self.logger.info("Ollama service unavailable, using fallback parsing")
-                return self._create_fallback_result(text, "Ollama service unavailable")
+                return self._create_fallback_result(text, "Ollama service unavailable", schema_name)
         except Exception as e:
             self.logger.error(f"LLM parsing failed after all retries: {e}")
             # 3. If all else fails, return a safe, minimal structure.
-            return self._create_fallback_result(text, str(e))
+            return self._create_fallback_result(text, str(e), schema_name)
 
-    def _fast_path_parse(self, text: str) -> Optional[Dict]:
+    def _determine_schema_name(self, schema: Optional[Dict[str, Any]]) -> str:
+        """
+        Determine which schema to use based on the schema parameter.
+        
+        Args:
+            schema: Schema specification from parse method
+            
+        Returns:
+            Schema name to use
+        """
+        if schema is None:
+            return self.default_schema_name
+        
+        # If schema has a 'name' key, use that
+        if isinstance(schema, dict) and 'name' in schema:
+            schema_name = schema['name']
+            if self.schema_manager.get_schema(schema_name):
+                return schema_name
+            else:
+                self.logger.warning(f"Schema '{schema_name}' not found, using default")
+                return self.default_schema_name
+        
+        # If schema has a 'domain' key, auto-select based on domain
+        if isinstance(schema, dict) and 'domain' in schema:
+            return get_schema_for_domain(schema['domain'])
+        
+        # If it's a full schema dict (has $schema or properties), use default name but log it
+        if isinstance(schema, dict) and ('$schema' in schema or 'properties' in schema):
+            self.logger.info("Using inline schema specification (not yet supported), falling back to default")
+            return self.default_schema_name
+        
+        return self.default_schema_name
+    
+    def _fast_path_parse(self, text: str, schema_name: str = 'default') -> Optional[Dict]:
         """
         Fast path: Cheap, deterministic regex-based classifiers.
         
@@ -378,7 +398,7 @@ Be precise and analytical. Focus on semantic meaning over surface features.
         # If no high-confidence match, return None to proceed to slow path
         return None
 
-    async def _slow_path_parse_with_retry(self, text: str, max_retries: int = 2) -> Dict[str, Any]:
+    async def _slow_path_parse_with_retry(self, text: str, schema_name: str = 'default', max_retries: int = 2) -> Dict[str, Any]:
         """
         Slow path: LLM parsing with self-healing retry mechanism.
         
@@ -396,25 +416,29 @@ Be precise and analytical. Focus on semantic meaning over surface features.
         last_exception = None
 
         for attempt in range(max_retries):
-            prompt = self._build_llm_prompt(text, last_exception)
+            prompt = self._build_llm_prompt(text, schema_name, last_exception)
             
             raw_response = await self._call_llm(prompt)
 
             try:
                 # Attempt to parse the JSON
                 parsed_json = json.loads(raw_response)
-                # If successful, validate and return immediately
-                self._validate_parsed_result(parsed_json)
+                # Validate against schema and return if successful
+                self._validate_parsed_result(parsed_json, schema_name)
                 return self._format_result(parsed_json)
             except json.JSONDecodeError as e:
                 self.logger.warning(f"LLM returned malformed JSON on attempt {attempt + 1}. Retrying.")
                 last_exception = f"JSONDecodeError: {e}. The malformed text was: {raw_response}"
                 # The loop will continue to the next attempt
+            except ValueError as e:
+                self.logger.warning(f"Schema validation failed on attempt {attempt + 1}: {e}")
+                last_exception = f"ValidationError: {e}. The JSON was: {raw_response}"
+                # The loop will continue to the next attempt
 
         # If the loop finishes without returning, all retries have failed
         raise Exception(f"Failed to parse LLM response after {max_retries} attempts. Last error: {last_exception}")
 
-    def _build_llm_prompt(self, text: str, error_context: Optional[str] = None) -> str:
+    def _build_llm_prompt(self, text: str, schema_name: str = 'default', error_context: Optional[str] = None) -> str:
         """
         Build LLM prompt with optional error context for self-healing.
         
@@ -425,23 +449,25 @@ Be precise and analytical. Focus on semantic meaning over surface features.
         Returns:
             Formatted prompt string
         """
+        # Get schema description for the prompt
+        schema_description = format_schema_for_llm(schema_name)
+        
         if error_context:
-            # This is the self-healing prompt
+            # This is the self-healing prompt with schema context
             return f"""
 You previously failed to generate valid JSON. Correct your mistake.
 The error was: {error_context}
 
-Provide ONLY the valid JSON object. Do not include any other text or apologies.
+{schema_description}
+
+Provide ONLY the valid JSON object that conforms to the schema above. Do not include any other text or apologies.
 """
         else:
-            # This is the standard initial prompt  
-            return f"""
-Analyze the text and return a valid JSON object conforming to the following schema:
-{self.JSON_SCHEMA}
-
-Text to analyze:
-{text}
-"""
+            # This is the standard initial prompt with dynamic schema
+            return self.base_parsing_prompt.format(
+                text=text,
+                schema_description=schema_description
+            )
 
     async def _call_llm(self, prompt: str) -> str:
         """Make the actual LLM API call."""
@@ -465,7 +491,7 @@ Text to analyze:
             data = await response.json()
             return data.get("response", "").strip()
 
-    def _create_fallback_result(self, text: str, error_message: Optional[str] = None) -> Dict[str, Any]:
+    def _create_fallback_result(self, text: str, error_message: Optional[str] = None, schema_name: str = 'default') -> Dict[str, Any]:
         """
         Final safety net: Create minimal safe result when all else fails.
         
@@ -499,13 +525,23 @@ Text to analyze:
         }
 
 
-    def _validate_parsed_result(self, result: Dict[str, Any]) -> None:
-        """Validate that parsed result has required fields."""
-        required_fields = ["title", "category", "domain", "keywords", "entities", "sentiment", "content_type", "confidence_score"]
+    def _validate_parsed_result(self, result: Dict[str, Any], schema_name: str = 'default') -> None:
+        """
+        Validate parsed result against the specified schema.
         
-        for field in required_fields:
-            if field not in result:
-                raise ValueError(f"Missing required field: {field}")
+        Args:
+            result: Parsed data to validate  
+            schema_name: Name of schema to validate against
+            
+        Raises:
+            ValueError: If validation fails
+        """
+        is_valid, errors = validate_data(result, schema_name)
+        
+        if not is_valid:
+            error_message = f"Schema validation failed for '{schema_name}': {'; '.join(errors)}"
+            self.logger.warning(error_message)
+            raise ValueError(error_message)
 
     def _format_result(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
         """Format parsing result for consistency with interface."""
