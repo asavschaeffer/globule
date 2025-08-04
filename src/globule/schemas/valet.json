@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Valet Service Schema",
+  "description": "Basic schema per senior spec - enhancements in future steps",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Descriptive title for the valet entry"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "note", "idea", "question", "task", "reference", "draft", "quote", "observation"
+      ],
+      "description": "Primary category of the content"
+    },
+    "domain": {
+      "type": "string",
+      "enum": ["valet"],
+      "description": "Domain classification"
+    },
+    "valet_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of the valet handling the event"
+    },
+    "vehicle_make": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Manufacturer of the vehicle, e.g., 'Toyota'"
+    },
+    "vehicle_model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Model of the vehicle, e.g., 'Camry'"
+    },
+    "license_plate": {
+      "type": "string",
+      "minLength": 6,
+      "description": "Unique vehicle identifier for potential future correlations, e.g., '5-SAM-123'"
+    },
+    "parking_spot": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Parking location, e.g., 'C7'"
+    },
+    "damage_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "description": "List of any damage observations, e.g., ['small scratch on rear bumper']"
+    },
+    "keywords": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Relevant keywords extracted from the text"
+    },
+    "entities": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Named entities found in the text"
+    },
+    "sentiment": {
+      "type": "string",
+      "enum": ["positive", "negative", "neutral", "mixed"],
+      "description": "Overall sentiment of the interaction"
+    },
+    "content_type": {
+      "type": "string",
+      "enum": ["prose", "data", "instructions", "log_entry"],
+      "description": "Type of content structure"
+    },
+    "confidence_score": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Confidence in the parsing accuracy"
+    }
+  },
+  "required": [
+    "title",
+    "category",
+    "domain",
+    "valet_name",
+    "vehicle_make",
+    "vehicle_model",
+    "license_plate",
+    "parking_spot",
+    "keywords",
+    "entities",
+    "sentiment",
+    "content_type",
+    "confidence_score"
+  ],
+  "additionalProperties": false
+}

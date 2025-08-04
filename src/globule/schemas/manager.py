@@ -121,6 +121,7 @@ class SchemaManager:
             'technical': 'technical',
             'creative': 'creative', 
             'academic': 'academic',
+            'valet': 'valet',
             'computer_science': 'academic',
             'research': 'academic',
             'engineering': 'technical',

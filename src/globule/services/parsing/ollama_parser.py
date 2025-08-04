@@ -545,7 +545,8 @@ Provide ONLY the valid JSON object that conforms to the schema above. Do not inc
 
     def _format_result(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
         """Format parsing result for consistency with interface."""
-        return {
+        # Standard fields
+        result = {
             "title": parsed_data.get("title", "Untitled"),
             "category": parsed_data.get("category", "note"),
             "domain": parsed_data.get("domain", "other"),
@@ -560,3 +561,11 @@ Provide ONLY the valid JSON object that conforms to the schema above. Do not inc
                 "reasoning": parsed_data.get("reasoning", "")
             }
         }
+        
+        # Include any custom schema fields not already in standard fields
+        standard_fields = {"title", "category", "domain", "keywords", "entities", "sentiment", "content_type", "confidence_score", "reasoning"}
+        for key, value in parsed_data.items():
+            if key not in standard_fields:
+                result[key] = value
+        
+        return result
