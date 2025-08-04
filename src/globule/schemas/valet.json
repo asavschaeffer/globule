@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Valet Service Schema",
-  "description": "Basic schema per senior spec - enhancements in future steps",
+  "description": "Step 2: Enhanced validation for data quality and analysis consistency. Future: Triggers for workflow detection",
   "type": "object",
   "properties": {
     "title": {
@@ -28,7 +28,8 @@
     "vehicle_make": {
       "type": "string",
       "minLength": 1,
-      "description": "Manufacturer of the vehicle, e.g., 'Toyota'"
+      "enum": ["Toyota", "Honda", "Ford", "Other"],
+      "description": "Manufacturer – use 'Other' for uncommon"
     },
     "vehicle_model": {
       "type": "string",
@@ -38,12 +39,18 @@
     "license_plate": {
       "type": "string",
       "minLength": 6,
-      "description": "Unique vehicle identifier for potential future correlations, e.g., '5-SAM-123'"
+      "pattern": "^[A-Z0-9-]{6,10}$",
+      "description": "Unique ID – standard plate format for validation"
     },
     "parking_spot": {
       "type": "string",
       "minLength": 1,
       "description": "Parking location, e.g., 'C7'"
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Unix timestamp (auto-fill) for time-based analysis, e.g., daily counts"
     },
     "damage_notes": {
       "type": "array",
@@ -89,6 +96,7 @@
     "vehicle_model",
     "license_plate",
     "parking_spot",
+    "timestamp",
     "keywords",
     "entities",
     "sentiment",
