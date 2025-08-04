@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Valet Service Schema",
-  "description": "Step 2: Enhanced validation for data quality and analysis consistency. Future: Triggers for workflow detection",
+  "description": "Basic schema for valet service operations.",
   "type": "object",
   "properties": {
     "title": {
@@ -28,8 +28,7 @@
     "vehicle_make": {
       "type": "string",
       "minLength": 1,
-      "enum": ["Toyota", "Honda", "Ford", "Other"],
-      "description": "Manufacturer – use 'Other' for uncommon"
+      "description": "Manufacturer of the vehicle, e.g., 'Toyota'"
     },
     "vehicle_model": {
       "type": "string",
@@ -40,7 +39,7 @@
       "type": "string",
       "minLength": 6,
       "pattern": "^[A-Z0-9-]{6,10}$",
-      "description": "Unique ID – standard plate format for validation"
+      "description": "Unique vehicle identifier for potential future correlations, e.g., '5-SAM-123'"
     },
     "parking_spot": {
       "type": "string",
@@ -48,9 +47,9 @@
       "description": "Parking location, e.g., 'C7'"
     },
     "timestamp": {
-      "type": "integer",
+      "type": ["integer", "null"],
       "minimum": 0,
-      "description": "Unix timestamp (auto-fill) for time-based analysis, e.g., daily counts"
+      "description": "Unix timestamp for time-based analysis, e.g., daily counts"
     },
     "damage_notes": {
       "type": "array",
@@ -96,12 +95,8 @@
     "vehicle_model",
     "license_plate",
     "parking_spot",
-    "timestamp",
     "keywords",
-    "entities",
-    "sentiment",
-    "content_type",
-    "confidence_score"
+    "entities"
   ],
   "additionalProperties": false
 }

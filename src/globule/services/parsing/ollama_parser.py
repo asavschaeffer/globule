@@ -69,18 +69,32 @@ class OllamaParser(ParsingProvider):
         # Default schema name from config
         self.default_schema_name = self.config.default_schema
         
-        # Base parsing prompt template (schema will be injected dynamically)
+        # Enhanced parsing prompt template with few-shot examples and inference rules
         self.base_parsing_prompt = """
-You are an expert content analyst. Analyze the following text and extract structured information according to the provided schema.
+You are a precise JSON extractor. Parse the following text and return ONLY a valid JSON object conforming exactly to the provided schema.
+
+CRITICAL RULES:
+- Return ONLY valid JSON, nothing else
+- For required fields, infer reasonable values if not explicit in text
+- For title: Create a concise 3-8 word summary of the main action
+- For category: Choose from the enum based on content type
+- For timestamp: Use null if not mentioned in text
+- For arrays: Use empty [] if no relevant data found
+- For damage_notes: Extract as array of strings if damage mentioned, empty [] otherwise
+- Do not add extra fields beyond the schema
+- Use "neutral" for sentiment if not clearly positive/negative
+
+Example for valet domain:
+Input: "Alice parked a red Ford Focus with plate ABC-123 in spot A1. Small dent on door."
+Output: {{"title": "Alice parked Ford Focus", "category": "note", "domain": "valet", "valet_name": "Alice", "vehicle_make": "Ford", "vehicle_model": "Focus", "license_plate": "ABC-123", "parking_spot": "A1", "timestamp": null, "damage_notes": ["Small dent on door"], "keywords": ["parked", "Ford Focus", "dent"], "entities": ["Alice", "Ford Focus", "ABC-123", "A1"]}}
 
 Text to analyze:
 {text}
 
+Schema requirements:
 {schema_description}
 
-Return your analysis as valid JSON that strictly conforms to the schema above.
-Be precise and analytical. Focus on semantic meaning over surface features.
-"""
+Return ONLY the JSON object:"""
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -453,15 +467,24 @@ Be precise and analytical. Focus on semantic meaning over surface features.
         schema_description = format_schema_for_llm(schema_name)
         
         if error_context:
-            # This is the self-healing prompt with schema context
+            # Enhanced self-healing prompt with specific error guidance
             return f"""
-You previously failed to generate valid JSON. Correct your mistake.
-The error was: {error_context}
+RETRY: Your previous JSON was invalid. Fix the error and return ONLY valid JSON.
+
+Error: {error_context}
+
+CRITICAL: 
+- Return ONLY a JSON object, no explanations
+- Ensure all required fields are present
+- Use null for missing optional values (e.g., timestamp: null)
+- Use empty arrays [] for missing lists
+- Do not add extra fields beyond the schema
 
 {schema_description}
 
-Provide ONLY the valid JSON object that conforms to the schema above. Do not include any other text or apologies.
-"""
+Text to parse: {text}
+
+Return ONLY the corrected JSON:"""
         else:
             # This is the standard initial prompt with dynamic schema
             return self.base_parsing_prompt.format(
@@ -489,7 +512,46 @@ Provide ONLY the valid JSON object that conforms to the schema above. Do not inc
                 raise Exception(f"Ollama request failed with status {response.status}")
                 
             data = await response.json()
-            return data.get("response", "").strip()
+            raw_response = data.get("response", "").strip()
+            
+            # Clean up LLM response to extract JSON
+            return self._clean_llm_response(raw_response)
+    
+    def _clean_llm_response(self, response: str) -> str:
+        """Clean LLM response to extract valid JSON."""
+        # Remove common LLM prefixes/suffixes
+        response = response.strip()
+        
+        # Remove markdown code blocks if present
+        if response.startswith("```json"):
+            response = response[7:]
+        elif response.startswith("```"):
+            response = response[3:]
+        if response.endswith("```"):
+            response = response[:-3]
+        
+        # Remove common LLM text before JSON
+        prefixes_to_remove = [
+            "Here is the JSON:",
+            "Here's the JSON:",
+            "The JSON object is:",
+            "JSON:",
+            "Output:",
+            "Result:",
+        ]
+        
+        for prefix in prefixes_to_remove:
+            if response.startswith(prefix):
+                response = response[len(prefix):].strip()
+        
+        # Find JSON object boundaries
+        start_idx = response.find('{')
+        end_idx = response.rfind('}')
+        
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            response = response[start_idx:end_idx + 1]
+        
+        return response.strip()
 
     def _create_fallback_result(self, text: str, error_message: Optional[str] = None, schema_name: str = 'default') -> Dict[str, Any]:
         """
