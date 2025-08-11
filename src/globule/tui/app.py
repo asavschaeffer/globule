@@ -23,9 +23,40 @@ import io
 import re
 import smtplib
 import os
+import sys
+import logging
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
+# Configure logging - level DEBUG for details, INFO for user-visible
+# Check if we have a log file argument (launched by CLI with log redirection)
+log_file_path = None
+if '--log-file' in sys.argv:
+    try:
+        idx = sys.argv.index('--log-file')
+        if idx + 1 < len(sys.argv):
+            log_file_path = sys.argv[idx + 1]
+    except (ValueError, IndexError):
+        pass
+
+if log_file_path:
+    # Running in separate window with log file - redirect logs to file
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file_path, encoding='utf-8'),
+            logging.NullHandler()  # Suppress console output
+        ]
+    )
+elif '--topic' in sys.argv and len(sys.argv) > 1:
+    # Running in separate window - suppress console logging to keep TUI clean
+    logging.basicConfig(level=logging.CRITICAL + 1, format='%(asctime)s - %(levelname)s - %(message)s')
+else:
+    # Running standalone - show logs normally
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 try:
     import jinja2
@@ -115,6 +146,12 @@ class ThoughtPalette(Vertical):
         self.parser = None  # Will be initialized for LLM queries
         
         # Detect schemas from topic
+        # Handle command line arguments
+        if '--topic' in sys.argv:
+            idx = sys.argv.index('--topic')
+            if idx + 1 < len(sys.argv):
+                topic = sys.argv[idx + 1]
+        
         if topic:
             self.detected_schema = detect_schema_for_text(topic)
             self.output_schema_name = detect_output_schema_for_topic(topic)
@@ -246,6 +283,7 @@ class ThoughtPalette(Vertical):
             status_node.set_label("🧠 Generating SQL...")
             self.app.update_status(f"🧠 Generating SQL for: {nl_query[:30]}...")
             sql = await self._nl_to_sql(nl_query)
+            logger.info(f"Generated SQL for query '{nl_query}': {sql}")
             self.app.notify(f"Generated SQL: {sql[:100]}...")
             
             # Phase 2: Execute the SQL query
@@ -487,6 +525,7 @@ Return only the raw SQL SELECT statement, no explanations.
                     f.seek(0)
                     json.dump(data, f, indent=4)
                     f.truncate()
+                logger.info(f"Module '{module_data['name']}' saved to {schema_path}")
                 self.app.notify("✅ Saved to schema!")
                 self.app.update_status(f"✅ Saved module: {module_data['name'][:50]}...")
             except Exception as e:
@@ -2187,3 +2226,34 @@ class DashboardApp(App):
             
         except Exception as e:
             self.notify(f"❌ Export error: {e}")
+
+
+if __name__ == "__main__":
+    import sys
+    import asyncio
+    from globule.storage.sqlite_manager import SQLiteStorageManager
+    
+    async def main():
+        # Parse command line arguments
+        topic = "default"
+        if '--topic' in sys.argv:
+            idx = sys.argv.index('--topic')
+            if idx + 1 < len(sys.argv):
+                topic = sys.argv[idx + 1]
+        
+        # Log file is handled globally above, just log that we're starting
+        logger.info(f"Starting TUI for topic: {topic}")
+        
+        # Initialize storage manager
+        storage = SQLiteStorageManager()
+        await storage.initialize()
+        
+        try:
+            # Create and run the dashboard app
+            app = DashboardApp(storage, topic)
+            await app.run_async()
+        finally:
+            await storage.close()
+    
+    # Run the app
+    asyncio.run(main())

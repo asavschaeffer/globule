@@ -14,6 +14,9 @@ Refactored for performance and maintainability:
 import asyncio
 import click
 import logging
+import subprocess
+import platform
+import sys
 from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
@@ -194,38 +197,143 @@ async def draft(ctx: click.Context, topic: str, limit: int, output: Optional[str
     """
     Interactive drafting from clustered thoughts.
     
-    This command provides a keyboard-driven interface for building drafts:
-    1. Searches for globules related to the topic
-    2. Clusters the results using semantic analysis  
-    3. Launches an interactive TUI for navigation and selection
-    4. Lets you add thoughts to your draft and export the result
+    Launches the TUI in a new terminal window while keeping logs in the original terminal.
+    This provides a clean separation between the interactive UI and debugging information.
     """
     
-    async with ctx.obj['context'] as context:
+    # Set up logging in CLI (for parent logs)
+    verbose = ctx.obj.get('verbose', False)
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+    
+    # Prepare TUI command
+    tui_module = 'globule.tui.app'
+    tui_cmd = [sys.executable, '-m', tui_module, '--topic', topic]
+    
+    # Platform-specific launch for new window/tab
+    launch_cmd = []
+    if platform.system() == 'Darwin':  # macOS - Use AppleScript for new Terminal tab
+        applescript = f'tell app "Terminal" to do script "{" ".join(tui_cmd)}"'
+        launch_cmd = ['osascript', '-e', applescript]
+    elif platform.system() == 'Linux':  # Linux - Use gnome-terminal (or xterm if preferred)
+        launch_cmd = ['gnome-terminal', '--', *tui_cmd]
+        # Alternative: ['xterm', '-e', *tui_cmd]
+    elif platform.system() == 'Windows':  # Windows - New cmd window
+        launch_cmd = ['cmd', '/c', 'start', 'cmd', '/k', *tui_cmd]
+    else:
+        logger.error("Unsupported platform - Launch TUI manually")
+        click.echo(f"Unsupported platform: {platform.system()}", err=True)
+        click.echo(f"Please run manually: {' '.join(tui_cmd)}")
+        return
+    
+    # Launch and log
+    try:
+        import tempfile
+        import os
+        
+        # Create a temporary log file for communication between processes
+        log_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.log', prefix='globule_tui_')
+        log_file_path = log_file.name
+        log_file.close()
+        
+        # Modify TUI command to include log file path
+        tui_cmd_with_log = tui_cmd + ['--log-file', log_file_path]
+        
+        # Update launch command for different platforms
+        if platform.system() == 'Darwin':  # macOS
+            applescript = f'tell app "Terminal" to do script "{" ".join(tui_cmd_with_log)}"'
+            launch_cmd = ['osascript', '-e', applescript]
+        elif platform.system() == 'Linux':  # Linux
+            launch_cmd = ['gnome-terminal', '--', *tui_cmd_with_log]
+        elif platform.system() == 'Windows':  # Windows
+            launch_cmd = ['cmd', '/c', 'start', 'cmd', '/k', *tui_cmd_with_log]
+        
+        # Launch the TUI in new window
+        process = subprocess.Popen(launch_cmd)
+        
+        logger.info(f"TUI launched in new window for topic '{topic}'. Monitoring logs here...")
+        click.echo(f"[TUI] Launched in new window for topic '{topic}'")
+        click.echo("[LOGS] Monitoring TUI activity (logs will appear below):")
+        click.echo("=" * 50)
+        
+        # Monitor the log file and display new entries
+        last_position = 0
+        no_activity_count = 0
+        max_no_activity = 120  # Stop after 60 seconds of no log activity (120 * 0.5s)
+        
         try:
-            from rich.console import Console
-            from globule.tui.app import DashboardApp
-            
-            console = Console()
-            
-            # Initialize context
-            await context.initialize(ctx.obj.get('verbose', False))
-            
-            # Launch new analytics dashboard TUI
-            console.print(f"[blue]DASHBOARD:[/blue] Launching analytics dashboard for '{topic}'...")
-            console.print("[green]TIP:[/green] Use Tab to switch panes, Ctrl+D for dashboard mode")
-            
-            # Create and run the dashboard app
-            app = DashboardApp(context.storage, topic)
-            await app.run_async()
-            
-            console.print("\n[green]Dashboard session complete[/green]")
-            
+            while True:
+                # Read new log entries from the file
+                found_new_content = False
+                try:
+                    if os.path.exists(log_file_path) and os.path.getsize(log_file_path) > last_position:
+                        with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            f.seek(last_position)
+                            new_content = f.read()
+                            if new_content:
+                                found_new_content = True
+                                # Display new log entries
+                                for line in new_content.strip().split('\n'):
+                                    if line.strip():
+                                        click.echo(f"[TUI-LOG] {line.strip()}")
+                                last_position = f.tell()
+                                no_activity_count = 0  # Reset counter when we find new content
+                except (FileNotFoundError, PermissionError):
+                    # Log file might not exist yet or be locked
+                    pass
+                
+                if not found_new_content:
+                    no_activity_count += 1
+                    if no_activity_count >= max_no_activity:
+                        click.echo("[LOGS] No TUI activity detected for 60 seconds, stopping monitoring")
+                        break
+                
+                await asyncio.sleep(0.5)  # Check every 500ms
+                
         except KeyboardInterrupt:
-            click.echo("\nDrafting session cancelled")
-        except Exception as e:
-            logger.error(f"Failed to run interactive draft: {e}")
-            click.echo(f"Error: {e}", err=True)
+            click.echo("\n[LOGS] Stopping log monitoring...")
+        
+        # Final log read
+        try:
+            if os.path.exists(log_file_path):
+                with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    f.seek(last_position)
+                    final_content = f.read()
+                    if final_content:
+                        for line in final_content.strip().split('\n'):
+                            if line.strip():
+                                click.echo(f"[TUI-LOG] {line.strip()}")
+        except:
+            pass
+        
+        # Clean up log file
+        try:
+            os.unlink(log_file_path)
+        except:
+            pass
+            
+        click.echo("[LOGS] TUI session monitoring ended")
+            
+    except Exception as e:
+        logger.error(f"Failed to launch TUI: {e}")
+        click.echo(f"[ERROR] Failed to launch TUI: {e}", err=True)
+        
+        # Fallback: try to run inline
+        click.echo("[FALLBACK] Attempting fallback inline launch...")
+        try:
+            async with ctx.obj['context'] as context:
+                from globule.tui.app import DashboardApp
+                
+                # Initialize context
+                await context.initialize(verbose)
+                
+                # Create and run the dashboard app inline as fallback
+                app = DashboardApp(context.storage, topic)
+                await app.run_async()
+                
+        except Exception as fallback_error:
+            logger.error(f"Fallback also failed: {fallback_error}")
+            click.echo(f"[ERROR] Fallback failed: {fallback_error}", err=True)
             raise click.Abort()
 
 
