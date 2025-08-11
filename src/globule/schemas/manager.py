@@ -44,16 +44,64 @@ class SchemaManager:
         self._load_schemas()
     
     def _load_schemas(self) -> None:
-        """Load schemas from both built-in and user directories."""
+        """Load schemas from both built-in and user directories, including output schemas."""
         # Load from built-in directory (JSON only for now)
         for schema_file in self.built_in_dir.glob("*.json"):
             self._load_schema_file(schema_file)
         
-        # Load from user directory (JSON and YAML)
+        # Load regular schemas first (excluding output_ prefixed)
         for pattern in ["*.json", "*.yaml", "*.yml"]:
             for schema_file in self.user_dir.glob(pattern):
-                self._load_schema_file(schema_file)
+                if not schema_file.stem.startswith('output_'):
+                    self._load_schema_file(schema_file)
+                
+        # Load output schemas with special handling
+        for pattern in ["output_*.yaml", "output_*.yml"]:
+            for schema_file in self.user_dir.glob(pattern):
+                self._load_output_schema_file(schema_file)
     
+    def _load_output_schema_file(self, schema_file: Path) -> None:
+        """Load an output schema file with special handling for queries/viz/templates/exports."""
+        schema_name = schema_file.stem
+        try:
+            # Load YAML data
+            with open(schema_file, 'r', encoding='utf-8') as f:
+                schema_data = yaml.safe_load(f)
+            
+            # Validate output schema structure
+            self._validate_output_schema_structure(schema_data)
+            
+            # Store in cache with metadata indicating it's an output schema
+            schema_data['_schema_type'] = 'output'
+            schema_data['_file_path'] = str(schema_file)
+            self._schema_cache[schema_name] = schema_data
+            
+            logger.info(f"Loaded output schema: {schema_name}")
+            
+        except Exception as e:
+            logger.error(f"Failed to load output schema {schema_file}: {e}")
+    
+    def _validate_output_schema_structure(self, schema_data: Dict[str, Any]) -> None:
+        """Validate output schema structure has required sections."""
+        required_sections = ['queries', 'template']
+        for section in required_sections:
+            if section not in schema_data:
+                raise ValueError(f"Output schema missing required section: {section}")
+        
+        # Validate queries structure
+        if not isinstance(schema_data['queries'], list):
+            raise ValueError("Output schema 'queries' must be a list")
+        
+        for query in schema_data['queries']:
+            if not isinstance(query, dict) or 'name' not in query:
+                raise ValueError("Each query must be a dict with 'name' field")
+            if 'sql' not in query and 'llm_prompt' not in query:
+                raise ValueError("Each query must have either 'sql' or 'llm_prompt' field")
+        
+        # Validate template is string
+        if not isinstance(schema_data['template'], str):
+            raise ValueError("Output schema 'template' must be a string")
+
     def _load_schema_file(self, schema_file: Path) -> None:
         """Load a single schema file with inheritance support."""
         schema_name = schema_file.stem
@@ -179,9 +227,67 @@ class SchemaManager:
     def detect_schema_for_text(self, text: str) -> Optional[str]:
         """Detect the best schema for given text using triggers."""
         for schema_name, schema_data in self._schema_cache.items():
+            # Skip output schemas in text detection
+            if schema_data.get('_schema_type') == 'output':
+                continue
             if self._matches_triggers(text, schema_data.get('triggers', [])):
                 return schema_name
         return None
+    
+    def detect_output_schema_for_topic(self, topic: str) -> Optional[str]:
+        """Detect output schema based on topic/draft intent."""
+        if not topic:
+            return None
+            
+        topic_lower = topic.lower()
+        
+        # Direct mapping patterns
+        topic_mappings = {
+            'valet': ['valet', 'parking', 'car'],
+            'waitress': ['waitress', 'server', 'restaurant', 'dining'],
+            'tweet': ['tweet', 'twitter', 'x', 'social'],
+            'dashboard': ['dashboard', 'analytics', 'report'],
+            'summary': ['summary', 'recap', 'overview']
+        }
+        
+        # Check for output schema matches
+        for schema_name, schema in self._schema_cache.items():
+            if not schema.get('_schema_type') == 'output':
+                continue
+                
+            # Try direct name match (output_valet -> valet)
+            base_name = schema_name.replace('output_', '')
+            if base_name in topic_lower:
+                return schema_name
+            
+            # Try keyword mapping
+            for keyword_group, keywords in topic_mappings.items():
+                if keyword_group in base_name and any(kw in topic_lower for kw in keywords):
+                    return schema_name
+        
+        # Check if topic contains words that suggest an output schema intent
+        output_indicators = ['dashboard', 'report', 'summary', 'tweet', 'post', 'export']
+        if any(indicator in topic_lower for indicator in output_indicators):
+            # Try to match with base schema name
+            for schema_name, schema in self._schema_cache.items():
+                if schema.get('_schema_type') == 'output':
+                    base_name = schema_name.replace('output_', '')
+                    if any(word in topic_lower for word in base_name.split('_')):
+                        return schema_name
+        
+        return None
+    
+    def get_output_schema(self, schema_name: str) -> Optional[Dict[str, Any]]:
+        """Get output schema by name."""
+        schema = self._schema_cache.get(schema_name)
+        if schema and schema.get('_schema_type') == 'output':
+            return schema
+        return None
+    
+    def list_output_schemas(self) -> List[str]:
+        """List all available output schema names."""
+        return [name for name, schema in self._schema_cache.items() 
+                if schema.get('_schema_type') == 'output']
     
     def _matches_triggers(self, text: str, triggers: List[Dict[str, Any]]) -> bool:
         """Check if text matches any of the schema triggers."""
@@ -470,3 +576,18 @@ def apply_schema_actions(text: str, schema_name: str) -> Dict[str, Any]:
 def create_pydantic_model(schema_name: str) -> Optional[type]:
     """Create Pydantic model for schema."""
     return get_schema_manager().create_pydantic_model(schema_name)
+
+
+def detect_output_schema_for_topic(topic: str) -> Optional[str]:
+    """Detect output schema for topic using triggers."""
+    return get_schema_manager().detect_output_schema_for_topic(topic)
+
+
+def get_output_schema(schema_name: str) -> Optional[Dict[str, Any]]:
+    """Get output schema by name."""
+    return get_schema_manager().get_output_schema(schema_name)
+
+
+def list_output_schemas() -> List[str]:
+    """List all available output schema names."""
+    return get_schema_manager().list_output_schemas()
