@@ -1,98 +1,60 @@
 """
-Real Ollama Parser for Phase 2 Intelligence.
+Enhanced Ollama Parser with Pydantic validation and dynamic prompting.
 
-This module implements intelligent content analysis using Ollama LLMs,
-replacing the mock parser with genuine AI-powered text understanding.
-
-Features:
-- Semantic title generation
-- Domain and category classification
-- Keyword and entity extraction
-- Sentiment and content type detection
-- Structured metadata generation
+This module implements robust content analysis using Ollama LLMs with:
+- Dynamic prompt generation from schema
+- Pydantic validation for structured outputs  
+- Few-shot learning for better extraction
+- Graceful error handling and retries
 
 Author: Globule Team
-Version: 2.0.0
+Version: 3.0.0 (Pydantic-enhanced)
 """
 
 import json
 import logging
 import asyncio
 import re
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
+from typing import Dict, Any, Optional, List, Type
+from datetime import datetime
 
 import aiohttp
+from pydantic import BaseModel, ValidationError as PydanticError, create_model, field_validator
+from jsonschema import validate, ValidationError
+
 from globule.core.interfaces import ParsingProvider
 from globule.config.settings import get_config
-from globule.schemas.manager import get_schema_manager, validate_data, format_schema_for_llm, get_schema_for_domain
+from globule.schemas.manager import get_schema_manager, format_schema_for_llm, get_schema_for_domain
 
-
-@dataclass
-class ParsedContent:
-    """Structured representation of parsed content."""
-    title: str
-    category: str
-    domain: str
-    keywords: List[str]
-    entities: List[str]
-    sentiment: str
-    content_type: str
-    confidence_score: float
-    metadata: Dict[str, Any]
+logger = logging.getLogger(__name__)
 
 
 class OllamaParser(ParsingProvider):
     """
-    Production Ollama parser implementing intelligent content analysis.
+    Enhanced Ollama parser with dynamic prompting and Pydantic validation.
     
-    This parser uses sophisticated LLM prompting to extract meaningful
-    structure and metadata from unstructured text input.
+    Features:
+    - Dynamic few-shot prompt generation from schema
+    - Pydantic models for robust validation and defaults
+    - Intelligent retry logic with error context
+    - Clean JSON extraction from LLM responses
     """
-    
+
     def __init__(self):
-        """Initialize the Ollama parser with configuration."""
+        """Initialize the enhanced Ollama parser."""
         self.config = get_config()
         self.logger = logging.getLogger(__name__)
         self.session: Optional[aiohttp.ClientSession] = None
         self.schema_manager = get_schema_manager()
+        self.max_retries = 2
         
-        # Compiled regex patterns for fast path classification
-        self.URL_REGEX = re.compile(r'^https?://\S+')
-        self.TODO_REGEX = re.compile(r'^(TODO|TASK):', re.IGNORECASE)
-        self.CODE_REGEX = re.compile(r'(def\s+\w+|function\s+\w+|class\s+\w+|SELECT\s+.*FROM)', re.IGNORECASE)
-        self.EMAIL_REGEX = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
-        self.QUESTION_REGEX = re.compile(r'.+\?\s*$')
-        self.BACKTICK_CODE_REGEX = re.compile(r'```[\s\S]*?```|`[^`]+`')
-        self.FILE_PATH_REGEX = re.compile(r'^[a-zA-Z]:\\|^/[a-zA-Z0-9_./\-]+|^\./[a-zA-Z0-9_./\-]+|\.[a-zA-Z]{2,4}$')
-        
-        # Default schema name from config
-        self.default_schema_name = self.config.default_schema
-        
-        # Enhanced parsing prompt template with few-shot examples and inference rules
+        # Enhanced base prompt template with schema context
         self.base_parsing_prompt = """
-You are a precise JSON extractor. Parse the following text and return ONLY a valid JSON object conforming exactly to the provided schema.
+You are a precise text analyzer. Parse the following text and return ONLY a valid JSON object with the extracted data according to the provided schema.
 
-CRITICAL RULES:
-- Return ONLY valid JSON, nothing else
-- For required fields, infer reasonable values if not explicit in text
-- For title: Create a concise 3-8 word summary of the main action
-- For category: Choose from the enum based on content type
-- For timestamp: Use null if not mentioned in text
-- For arrays: Use empty [] if no relevant data found
-- For damage_notes: Extract as array of strings if damage mentioned, empty [] otherwise
-- Do not add extra fields beyond the schema
-- Use "neutral" for sentiment if not clearly positive/negative
+Text: {text}
 
-Example for valet domain:
-Input: "Alice parked a red Ford Focus with plate ABC-123 in spot A1. Small dent on door."
-Output: {{"title": "Alice parked Ford Focus", "category": "note", "domain": "valet", "valet_name": "Alice", "vehicle_make": "Ford", "vehicle_model": "Focus", "license_plate": "ABC-123", "parking_spot": "A1", "timestamp": null, "damage_notes": ["Small dent on door"], "keywords": ["parked", "Ford Focus", "dent"], "entities": ["Alice", "Ford Focus", "ABC-123", "A1"]}}
-
-Text to analyze:
-{text}
-
-Schema requirements:
-{schema_description}
+Schema: {schema_info}
 
 Return ONLY the JSON object:"""
 
@@ -126,7 +88,6 @@ Return ONLY the JSON object:"""
             async with self.session.get(url) as response:
                 if response.status == 200:
                     data = await response.json()
-                    # Check if our parsing model is available
                     models = [model["name"] for model in data.get("models", [])]
                     return self.config.default_parsing_model in models
                     
@@ -135,373 +96,484 @@ Return ONLY the JSON object:"""
             
         return False
 
-    async def get_cpu_safe_model(self) -> str:
-        """
-        Get CPU-safe model for systems without GPU acceleration.
-        
-        Automatically detects available lightweight models and returns
-        the most appropriate one for CPU-only execution.
-        """
-        try:
-            await self._ensure_session()
-            url = f"{self.config.ollama_base_url}/api/tags"
-            
-            async with self.session.get(url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    models = [model["name"] for model in data.get("models", [])]
-                    
-                    # Priority order: fastest to slowest for CPU
-                    cpu_safe_models = ["tinyllama", "phi3:mini", "gemma2:2b", "llama3.2:1b"]
-                    
-                    for model in cpu_safe_models:
-                        if any(model in available for available in models):
-                            self.logger.info(f"CPU-safe mode: Using {model} for faster processing")
-                            return model
-                    
-                    # Fallback to configured model if no CPU-safe alternatives
-                    return self.config.default_parsing_model
-                    
-        except Exception as e:
-            self.logger.warning(f"CPU-safe model detection failed: {e}")
-            return self.config.default_parsing_model
-
-    async def health_check_with_cpu_fallback(self) -> tuple[bool, str]:
-        """
-        Enhanced health check that detects optimal model for current system.
-        
-        Returns:
-            tuple: (is_healthy, optimal_model_name)
-        """
-        try:
-            await self._ensure_session()
-            url = f"{self.config.ollama_base_url}/api/tags"
-            
-            async with self.session.get(url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    models = [model["name"] for model in data.get("models", [])]
-                    
-                    # First try configured model
-                    if self.config.default_parsing_model in models:
-                        # Test if model loads quickly (indicates GPU acceleration)
-                        quick_model = await self._test_model_speed(self.config.default_parsing_model)
-                        if quick_model:
-                            return True, self.config.default_parsing_model
-                    
-                    # If slow or unavailable, find CPU-safe alternative
-                    cpu_model = await self.get_cpu_safe_model()
-                    cpu_model_available = any(cpu_model in available for available in models)
-                    
-                    return cpu_model_available, cpu_model
-                    
-        except Exception as e:
-            self.logger.warning(f"Enhanced health check failed: {e}")
-            
-        return False, self.config.default_parsing_model
-
-    async def _test_model_speed(self, model_name: str) -> bool:
-        """Test if model loads/responds quickly (indicates GPU acceleration)."""
-        try:
-            test_payload = {
-                "model": model_name,
-                "prompt": "Test",
-                "stream": False,
-                "options": {"max_tokens": 1}
-            }
-            
-            url = f"{self.config.ollama_base_url}/api/generate"
-            
-            # Set aggressive timeout for speed test
-            import aiohttp
-            timeout = aiohttp.ClientTimeout(total=5.0)  # 5 second max
-            
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, json=test_payload) as response:
-                    return response.status == 200
-                    
-        except Exception:
-            return False
-
     async def parse(self, text: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Parse text using resilient fast/slow path architecture with dynamic schema support.
+        Parse text using hybrid approach: regex fast-path + LLM with Pydantic validation.
         
         Args:
             text: Input text to analyze
-            schema: Optional schema specification. Can be:
-                   - Dict with 'name' key for schema name (e.g., {'name': 'technical'})
-                   - Dict with 'domain' key to auto-select schema (e.g., {'domain': 'academic'})
-                   - Full JSON schema dict
-                   - None to use default schema
+            schema: Optional schema specification
             
         Returns:
             Dict containing structured parsing results
         """
-        # Determine which schema to use
+        # Determine which schema to use - try auto-detection for better accuracy
         schema_name = self._determine_schema_name(schema)
         
-        # 1. Attempt the fast path first.
-        fast_result = self._fast_path_parse(text, schema_name)
-        if fast_result:
-            self.logger.info(f"Handled by fast path: {fast_result['metadata']['parser_type']}")
-            return fast_result
-
-        # 2. If fast path fails, check if Ollama is available before proceeding to slow path.
-        try:
-            # Check if Ollama service is healthy before attempting LLM parsing
-            if await self.health_check():
-                return await self._slow_path_parse_with_retry(text, schema_name)
-            else:
-                # Ollama not available, skip directly to fallback
-                self.logger.info("Ollama service unavailable, using fallback parsing")
-                return self._create_fallback_result(text, "Ollama service unavailable", schema_name)
-        except Exception as e:
-            self.logger.error(f"LLM parsing failed after all retries: {e}")
-            # 3. If all else fails, return a safe, minimal structure.
-            return self._create_fallback_result(text, str(e), schema_name)
-
-    def _determine_schema_name(self, schema: Optional[Dict[str, Any]]) -> str:
-        """
-        Determine which schema to use based on the schema parameter.
+        # Auto-detect schema if no specific schema requested or if using default
+        if text.strip() and (not schema or schema_name == 'default'):
+            detected_schema = self.schema_manager.detect_schema_for_text(text)
+            if detected_schema and detected_schema != 'default':
+                schema_name = detected_schema
         
-        Args:
-            schema: Schema specification from parse method
+        schema_dict = self.schema_manager.get_schema(schema_name) if schema_name else None
+        
+        # Apply schema actions for enrichment
+        enriched_data = {}
+        if schema_dict and text.strip():
+            try:
+                enrichment = self.schema_manager.apply_schema_actions(text, schema_name)
+                enriched_data = enrichment.get('enriched', {})
+            except Exception as e:
+                self.logger.warning(f"Schema actions failed: {e}")
+        
+        # Try fast-path regex parsing first
+        fast_result = self._fast_path_parse(text, schema_name, enriched_data)
+        if fast_result:
+            # Validate with Pydantic if schema available
+            if schema_dict:
+                try:
+                    dynamic_model = self._create_dynamic_model(schema_dict)
+                    validated = dynamic_model(**fast_result)
+                    result = validated.model_dump()
+                    result["metadata"] = {
+                        "parser_type": "hybrid_regex",
+                        "parser_version": "3.0.0", 
+                        "schema_used": schema_name,
+                        "confidence_score": fast_result.get("confidence_score", 0.9)
+                    }
+                    # Ensure confidence_score is in the main result too
+                    if "confidence_score" not in result:
+                        result["confidence_score"] = fast_result.get("confidence_score", 0.9)
+                    return result
+                except PydanticError:
+                    # Fall through to LLM if validation fails
+                    self.logger.debug("Fast-path validation failed, falling back to LLM")
+            else:
+                return fast_result
+        
+        # Health check before LLM parsing
+        if not await self.health_check():
+            return self._create_fallback_result(text, "Ollama unavailable")
+        
+        # Use fallback if no schema available  
+        if not schema_dict:
+            return await self._parse_without_schema(text)
+        
+        # Generate dynamic prompt with few-shots
+        few_shots = self._generate_few_shots(schema_dict)
+        prompt = self._build_dynamic_prompt(text, schema_dict, few_shots)
+        
+        # Attempt parsing with retries
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                await self._ensure_session()
+                response = await self._call_ollama_api(prompt)
+                cleaned = self._clean_llm_response(response)
+                parsed = json.loads(cleaned)
+                
+                # Create dynamic Pydantic model and validate
+                dynamic_model = self._create_dynamic_model(schema_dict)
+                
+                try:
+                    validated = dynamic_model(**parsed)
+                    
+                    # Return with parser metadata
+                    result = validated.model_dump()
+                    result["metadata"] = {
+                        "parser_type": "ollama_llm",
+                        "parser_version": "3.0.0",
+                        "schema_used": schema_name,
+                        "attempts": attempt
+                    }
+                    
+                    return result
+                    
+                except PydanticError as pydantic_err:
+                    # Try to salvage the data by filtering out problematic fields
+                    cleaned_data = self._clean_data_for_schema(parsed, schema_dict)
+                    try:
+                        validated = dynamic_model(**cleaned_data)
+                        result = validated.model_dump()
+                        result["metadata"] = {
+                            "parser_type": "ollama_llm",
+                            "parser_version": "3.0.0",
+                            "schema_used": schema_name,
+                            "attempts": attempt,
+                            "pydantic_cleaned": True
+                        }
+                        return result
+                    except PydanticError:
+                        # Re-raise original error for retry logic
+                        raise pydantic_err
+                
+            except (json.JSONDecodeError, PydanticError, ValidationError) as e:
+                self.logger.warning(f"Parsing attempt {attempt} failed: {e}")
+                if attempt < self.max_retries:
+                    # Enhanced retry prompt with error context
+                    prompt = self._build_retry_prompt(text, schema_dict, str(e))
+                else:
+                    self.logger.error(f"Parsing failed after {self.max_retries} attempts: {e}")
+                    return self._create_fallback_result(text, str(e), schema_name)
+            except Exception as e:
+                self.logger.error(f"Unexpected error during parsing: {e}")
+                return self._create_fallback_result(text, str(e), schema_name)
+        
+        return self._create_fallback_result(text, "Max retries exceeded", schema_name)
+
+    async def _parse_without_schema(self, text: str) -> Dict[str, Any]:
+        """Parse text without schema using basic prompt."""
+        prompt = self.base_parsing_prompt.format(text=text)
+        
+        try:
+            await self._ensure_session()
+            response = await self._call_ollama_api(prompt)
+            cleaned = self._clean_llm_response(response)
+            parsed = json.loads(cleaned)
             
-        Returns:
-            Schema name to use
-        """
+            # Add basic metadata
+            parsed["metadata"] = {
+                "parser_type": "ollama_llm",
+                "parser_version": "3.0.0",
+                "schema_used": "none"
+            }
+            
+            return parsed
+            
+        except Exception as e:
+            self.logger.error(f"Schema-less parsing failed: {e}")
+            return self._create_fallback_result(text, str(e))
+
+    def _determine_schema_name(self, schema: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Determine which schema to use based on the schema parameter."""
         if schema is None:
-            return self.default_schema_name
+            return self.config.default_schema
         
         # If schema has a 'name' key, use that
         if isinstance(schema, dict) and 'name' in schema:
-            schema_name = schema['name']
-            if self.schema_manager.get_schema(schema_name):
-                return schema_name
-            else:
-                self.logger.warning(f"Schema '{schema_name}' not found, using default")
-                return self.default_schema_name
+            return schema['name']
         
         # If schema has a 'domain' key, auto-select based on domain
         if isinstance(schema, dict) and 'domain' in schema:
             return get_schema_for_domain(schema['domain'])
         
-        # If it's a full schema dict (has $schema or properties), use default name but log it
-        if isinstance(schema, dict) and ('$schema' in schema or 'properties' in schema):
-            self.logger.info("Using inline schema specification (not yet supported), falling back to default")
-            return self.default_schema_name
-        
-        return self.default_schema_name
-    
-    def _fast_path_parse(self, text: str, schema_name: str = 'default') -> Optional[Dict]:
-        """
-        Fast path: Cheap, deterministic regex-based classifiers.
-        
-        Returns complete structured result if high-confidence match found,
-        None if no match (proceed to slow path).
-        """
-        text_stripped = text.strip()
-        
-        # URL Pattern
-        if self.URL_REGEX.match(text_stripped):
-            return {
-                "title": text_stripped,
-                "category": "reference",
-                "domain": "weblink",
-                "keywords": ["url", "link"],
-                "entities": [],
-                "sentiment": "neutral",
-                "content_type": "data",
-                "confidence_score": 1.0,
-                "reasoning": "Detected URL pattern",
-                "metadata": {"parser_type": "fast_path_url", "confidence_score": 1.0}
-            }
-        
-        # TODO Pattern
-        elif self.TODO_REGEX.match(text_stripped):
-            task_text = text_stripped[5:].strip()  # Remove "TODO:" prefix
-            return {
-                "title": task_text,
-                "category": "task",
-                "domain": "personal",
-                "keywords": ["task", "todo"],
-                "entities": [],
-                "sentiment": "neutral",
-                "content_type": "instructions",
-                "confidence_score": 1.0,
-                "reasoning": "Detected TODO pattern",
-                "metadata": {"parser_type": "fast_path_task", "confidence_score": 1.0}
-            }
-        
-        # Code Pattern
-        elif self.CODE_REGEX.search(text_stripped):
-            return {
-                "title": "Code snippet",
-                "category": "reference",
-                "domain": "technical",
-                "keywords": ["code", "programming"],
-                "entities": [],
-                "sentiment": "neutral",
-                "content_type": "code",
-                "confidence_score": 1.0,
-                "reasoning": "Detected code pattern",
-                "metadata": {"parser_type": "fast_path_code", "confidence_score": 1.0}
-            }
-        
-        # Email Pattern
-        elif self.EMAIL_REGEX.search(text_stripped):
-            return {
-                "title": "Email address",
-                "category": "reference",
-                "domain": "personal",
-                "keywords": ["email", "contact"],
-                "entities": [],
-                "sentiment": "neutral",
-                "content_type": "data",
-                "confidence_score": 1.0,
-                "reasoning": "Detected email pattern",
-                "metadata": {"parser_type": "fast_path_email", "confidence_score": 1.0}
-            }
-        
-        # Question Pattern
-        elif self.QUESTION_REGEX.match(text_stripped) and len(text_stripped.split()) <= 20:
-            return {
-                "title": text_stripped,
-                "category": "question",
-                "domain": "other",
-                "keywords": ["question", "inquiry"],
-                "entities": [],
-                "sentiment": "neutral",
-                "content_type": "prose",
-                "confidence_score": 1.0,
-                "reasoning": "Detected short question pattern",
-                "metadata": {"parser_type": "fast_path_question", "confidence_score": 1.0}
-            }
-        
-        # Backtick Code Pattern
-        elif self.BACKTICK_CODE_REGEX.search(text_stripped):
-            return {
-                "title": "Code block",
-                "category": "reference",
-                "domain": "technical",
-                "keywords": ["code", "programming", "snippet"],
-                "entities": [],
-                "sentiment": "neutral",
-                "content_type": "code",
-                "confidence_score": 1.0,
-                "reasoning": "Detected backtick code block pattern",
-                "metadata": {"parser_type": "fast_path_code_block", "confidence_score": 1.0}
-            }
-        
-        # File Path Pattern
-        elif self.FILE_PATH_REGEX.match(text_stripped):
-            return {
-                "title": f"File path: {text_stripped}",
-                "category": "reference",
-                "domain": "technical",
-                "keywords": ["file", "path", "system"],
-                "entities": [],
-                "sentiment": "neutral",
-                "content_type": "data",
-                "confidence_score": 1.0,
-                "reasoning": "Detected file path pattern",
-                "metadata": {"parser_type": "fast_path_file_path", "confidence_score": 1.0}
-            }
-        
-        # If no high-confidence match, return None to proceed to slow path
-        return None
+        return self.config.default_schema
 
-    async def _slow_path_parse_with_retry(self, text: str, schema_name: str = 'default', max_retries: int = 2) -> Dict[str, Any]:
-        """
-        Slow path: LLM parsing with self-healing retry mechanism.
-        
-        Args:
-            text: Text to parse
-            max_retries: Maximum number of retry attempts
+    def _build_dynamic_prompt(self, text: str, schema: Dict[str, Any], few_shots: List[str]) -> str:
+        """Build dynamic prompt with schema rules and few-shot examples."""
+        # Generate field-specific rules
+        rules = []
+        for field, props in schema.get('properties', {}).items():
+            rule = f"- {field}: {props.get('description', 'No description')} (Type: {props.get('type', 'any')})"
             
-        Returns:
-            Parsed result dictionary
-            
-        Raises:
-            Exception: If all retries fail
-        """
-        await self._ensure_session()
-        last_exception = None
-
-        for attempt in range(max_retries):
-            prompt = self._build_llm_prompt(text, schema_name, last_exception)
-            
-            raw_response = await self._call_llm(prompt)
-
-            try:
-                # Attempt to parse the JSON
-                parsed_json = json.loads(raw_response)
-                # Validate against schema and return if successful
-                self._validate_parsed_result(parsed_json, schema_name)
-                return self._format_result(parsed_json)
-            except json.JSONDecodeError as e:
-                self.logger.warning(f"LLM returned malformed JSON on attempt {attempt + 1}. Retrying.")
-                last_exception = f"JSONDecodeError: {e}. The malformed text was: {raw_response}"
-                # The loop will continue to the next attempt
-            except ValueError as e:
-                self.logger.warning(f"Schema validation failed on attempt {attempt + 1}: {e}")
-                last_exception = f"ValidationError: {e}. The JSON was: {raw_response}"
-                # The loop will continue to the next attempt
-
-        # If the loop finishes without returning, all retries have failed
-        raise Exception(f"Failed to parse LLM response after {max_retries} attempts. Last error: {last_exception}")
-
-    def _build_llm_prompt(self, text: str, schema_name: str = 'default', error_context: Optional[str] = None) -> str:
-        """
-        Build LLM prompt with optional error context for self-healing.
+            if field in schema.get('required', []):
+                rule += " [REQUIRED - infer if not explicit]"
+            else:
+                rule += " [OPTIONAL - use null/empty if not present]"
+                
+            # Add enum constraints
+            if 'enum' in props:
+                rule += f" [Options: {', '.join(props['enum'])}]"
+                
+            rules.append(rule)
         
-        Args:
-            text: Original text to analyze  
-            error_context: Previous error for self-healing prompt
-            
-        Returns:
-            Formatted prompt string
-        """
-        # Get schema description for the prompt
-        schema_description = format_schema_for_llm(schema_name)
+        rules_str = "\n".join(rules)
+        shots_str = "\n\n".join(few_shots)
         
-        if error_context:
-            # Enhanced self-healing prompt with specific error guidance
-            return f"""
+        return f"""
+You are a precise JSON extractor. Return ONLY a valid JSON object conforming exactly to this schema.
+
+SCHEMA: {schema.get('title', 'Unknown Schema')}
+{schema.get('description', '')}
+
+FIELD RULES:
+{rules_str}
+
+CRITICAL INSTRUCTIONS:
+- Return ONLY valid JSON, no explanations
+- For required fields: infer reasonable values if not explicit
+- For optional fields: use null or empty arrays if not present  
+- For confidence_score: use 0.85-0.95 based on text clarity
+- For sentiment: use "neutral" if not clearly positive/negative
+- For arrays: use empty [] if no relevant data found
+
+EXAMPLES:
+{shots_str}
+
+TEXT TO PARSE:
+{text}
+
+JSON OUTPUT:"""
+
+    def _build_retry_prompt(self, text: str, schema: Dict[str, Any], error: str) -> str:
+        """Build retry prompt with specific error context."""
+        return f"""
 RETRY: Your previous JSON was invalid. Fix the error and return ONLY valid JSON.
 
-Error: {error_context}
+ERROR: {error}
 
-CRITICAL: 
-- Return ONLY a JSON object, no explanations
-- Ensure all required fields are present
-- Use null for missing optional values (e.g., timestamp: null)
-- Use empty arrays [] for missing lists
-- Do not add extra fields beyond the schema
+SCHEMA REQUIREMENTS:
+- All required fields must be present: {', '.join(schema.get('required', []))}
+- Use exact field names from schema
+- Follow type constraints (string, array, etc.)
+- No additional fields beyond schema
 
-{schema_description}
+TEXT TO PARSE:
+{text}
 
-Text to parse: {text}
+CORRECTED JSON:"""
 
-Return ONLY the corrected JSON:"""
-        else:
-            # This is the standard initial prompt with dynamic schema
-            return self.base_parsing_prompt.format(
-                text=text,
-                schema_description=schema_description
-            )
+    def _generate_few_shots(self, schema: Dict[str, Any]) -> List[str]:
+        """Generate synthetic few-shot examples based on schema."""
+        examples = []
+        
+        # Create base example with reasonable defaults
+        base_example = {}
+        for field, props in schema.get('properties', {}).items():
+            field_type = props.get('type', 'string')
+            
+            if 'enum' in props:
+                base_example[field] = props['enum'][0]
+            elif field_type == 'string':
+                if 'name' in field.lower():
+                    base_example[field] = "John Smith"
+                elif 'vehicle' in field.lower():
+                    base_example[field] = "Toyota" if 'make' in field else "Camry"
+                elif 'license' in field.lower():
+                    base_example[field] = "ABC-123"
+                elif 'spot' in field.lower():
+                    base_example[field] = "A1"
+                else:
+                    base_example[field] = f"Sample {field}"
+            elif field_type == 'array':
+                if 'damage' in field.lower():
+                    base_example[field] = ["small scratch on door"]
+                elif 'keyword' in field.lower():
+                    base_example[field] = ["parking", "vehicle"]
+                else:
+                    base_example[field] = ["sample item"]
+            elif field_type == 'number':
+                base_example[field] = 0.9 if 'confidence' in field else 1
+            elif field_type == 'integer':
+                base_example[field] = int(datetime.now().timestamp()) if 'timestamp' in field else 1
+            elif field_type == ['integer', 'null']:
+                base_example[field] = None
+        
+        # Example 1: Complete entry with damage
+        examples.append(f"Input: John parked a Toyota Camry with plate ABC-123 in spot A1. Small dent noted.\nOutput: {json.dumps(base_example)}")
+        
+        # Example 2: Clean entry without damage  
+        clean_example = base_example.copy()
+        clean_example['damage_notes'] = []
+        if 'timestamp' in clean_example:
+            clean_example['timestamp'] = None
+        examples.append(f"Input: Alice parked Honda Civic, plate XYZ-789 in B2. No issues.\nOutput: {json.dumps(clean_example)}")
+        
+        return examples
 
-    async def _call_llm(self, prompt: str) -> str:
-        """Make the actual LLM API call."""
+    def _fast_path_parse(self, text: str, schema_name: Optional[str], enriched_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Fast regex-based parsing for common patterns.
+        
+        Args:
+            text: Input text to parse
+            schema_name: Schema name if available
+            enriched_data: Pre-enriched data from schema actions
+            
+        Returns:
+            Parsed result dict if successful, None if no patterns match
+        """
+        if not text.strip():
+            return None
+        
+        result = {}
+        confidence = 0.0
+        patterns_matched = 0
+        
+        # Use enriched data if available (from schema actions)
+        if enriched_data:
+            result.update(enriched_data)
+            confidence = 0.8  # High confidence from schema actions
+            patterns_matched += len([k for k, v in enriched_data.items() if v and k != 'text'])
+        
+        # Schema-specific fast paths
+        if schema_name == 'valet' or schema_name == 'valet_enhanced':
+            # License plate patterns
+            plate_patterns = [
+                r'(?:plate|license)\s+([A-Z0-9\-]{3,10})',
+                r'([A-Z]{1,3}[-\s]?\d{3,4})',
+                r'(\d{3}[-\s]?[A-Z]{3})',
+            ]
+            
+            for pattern in plate_patterns:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match and 'license_plate' not in result:
+                    result['license_plate'] = match.group(1).upper()
+                    confidence += 0.3
+                    patterns_matched += 1
+                    break
+            
+            # Parking spot patterns  
+            spot_patterns = [
+                r'(?:spot|space|bay)\s+([A-Z0-9]+)',
+                r'(?:level|floor)\s+(\d+)[A-Z]?[-\s]?([A-Z0-9]+)',
+            ]
+            
+            for pattern in spot_patterns:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match and 'parking_spot' not in result:
+                    result['parking_spot'] = match.group(1).upper()
+                    confidence += 0.2
+                    patterns_matched += 1
+                    break
+            
+            # Damage keywords
+            damage_patterns = r'\b(scratch|dent|damage|broken|cracked|chipped)\b'
+            damage_matches = re.findall(damage_patterns, text, re.IGNORECASE)
+            if damage_matches and 'damage_notes' not in result:
+                result['damage_notes'] = list(set(damage_matches))
+                confidence += 0.1
+                patterns_matched += 1
+        
+        # General patterns for any schema
+        
+        # URL pattern
+        url_pattern = r'https?://[^\s]+'
+        urls = re.findall(url_pattern, text)
+        if urls:
+            result['urls'] = urls
+            confidence += 0.1
+            patterns_matched += 1
+        
+        # Email pattern
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        emails = re.findall(email_pattern, text)
+        if emails:
+            result['emails'] = emails
+            confidence += 0.1
+            patterns_matched += 1
+        
+        # Question detection
+        if text.strip().endswith('?'):
+            result['category'] = 'question'
+            confidence += 0.1
+            patterns_matched += 1
+        
+        # Code detection (triple backticks or function patterns)
+        if '```' in text or re.search(r'\b(def|function|class|import)\s+\w+', text):
+            result['content_type'] = 'code'
+            result['category'] = 'reference'
+            confidence += 0.2
+            patterns_matched += 1
+        
+        # Only return if we found meaningful patterns
+        if patterns_matched >= 1 and confidence > 0.3:
+            # Add metadata
+            result.update({
+                'confidence_score': min(confidence, 1.0),
+                'title': text[:50] + ('...' if len(text) > 50 else ''),
+                'category': result.get('category', 'note'),
+                'domain': result.get('domain', 'general'),
+                'keywords': result.get('keywords', []),
+                'entities': result.get('entities', []),
+                'sentiment': 'neutral',
+                'content_type': result.get('content_type', 'prose')
+            })
+            return result
+        
+        return None
+
+    def _create_dynamic_model(self, schema: Dict[str, Any]) -> Type[BaseModel]:
+        """Create dynamic Pydantic model from JSON schema."""
+        fields = {}
+        
+        for field, props in schema.get('properties', {}).items():
+            field_type = props.get('type', 'string')
+            is_required = field in schema.get('required', [])
+            
+            # Map JSON schema types to Python types
+            if field_type == 'string':
+                python_type = str
+                default = ... if is_required else None
+            elif field_type == 'array':
+                python_type = List[str]
+                default = ... if is_required else []
+            elif field_type == 'number':
+                python_type = float
+                default = ... if is_required else 0.85
+            elif field_type == 'integer':
+                python_type = int
+                default = ... if is_required else None
+            elif field_type == ['integer', 'null']:
+                python_type = Optional[int]
+                default = None
+            else:
+                python_type = Any
+                default = ... if is_required else None
+            
+            fields[field] = (python_type, default)
+        
+        return create_model('DynamicSchemaModel', **fields)
+
+    def _clean_data_for_schema(self, data: Dict[str, Any], schema: Dict[str, Any]) -> Dict[str, Any]:
+        """Clean data to match schema requirements, removing invalid fields and fixing types."""
+        cleaned = {}
+        properties = schema.get('properties', {})
+        
+        for field, props in properties.items():
+            if field not in data:
+                continue
+                
+            value = data[field]
+            field_type = props.get('type', 'string')
+            
+            try:
+                # Type conversion attempts
+                if field_type == 'string' and not isinstance(value, str):
+                    cleaned[field] = str(value)
+                elif field_type == 'number' and not isinstance(value, (int, float)):
+                    # Try to convert strings to float
+                    if isinstance(value, str) and value.isdigit():
+                        cleaned[field] = float(value)
+                    else:
+                        # Use default for invalid numeric values
+                        cleaned[field] = 0.85 if 'confidence' in field else 0.0
+                elif field_type == 'integer' and not isinstance(value, int):
+                    if isinstance(value, str) and value.isdigit():
+                        cleaned[field] = int(value)
+                    else:
+                        cleaned[field] = None
+                elif field_type == 'array' and not isinstance(value, list):
+                    cleaned[field] = []
+                else:
+                    cleaned[field] = value
+                    
+            except (ValueError, TypeError):
+                # Use schema defaults or safe fallbacks
+                if field_type == 'string':
+                    cleaned[field] = ""
+                elif field_type == 'array':
+                    cleaned[field] = []
+                elif field_type == 'number':
+                    cleaned[field] = 0.85 if 'confidence' in field else 0.0
+                elif field_type == 'integer':
+                    cleaned[field] = None
+                else:
+                    cleaned[field] = value
+        
+        return cleaned
+
+    async def _call_ollama_api(self, prompt: str) -> str:
+        """Make Ollama API call with enhanced configuration."""
         payload = {
             "model": self.config.default_parsing_model,
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": 0.1,  # Low temperature for consistent structured output
+                "temperature": 0.3,  # Slightly higher for creativity while maintaining structure
                 "top_p": 0.9,
                 "top_k": 40,
+                "max_tokens": 1000,  # Ensure sufficient space for complete JSON
             }
         }
         
@@ -514,37 +586,26 @@ Return ONLY the corrected JSON:"""
             data = await response.json()
             raw_response = data.get("response", "").strip()
             
-            # Clean up LLM response to extract JSON
-            return self._clean_llm_response(raw_response)
-    
+            return raw_response
+
     def _clean_llm_response(self, response: str) -> str:
-        """Clean LLM response to extract valid JSON."""
-        # Remove common LLM prefixes/suffixes
+        """Clean LLM response to extract valid JSON with minimal processing."""
         response = response.strip()
         
-        # Remove markdown code blocks if present
+        # Remove markdown code blocks
         if response.startswith("```json"):
-            response = response[7:]
+            response = response[7:].rstrip("```").strip()
         elif response.startswith("```"):
-            response = response[3:]
-        if response.endswith("```"):
-            response = response[:-3]
+            response = response[3:].rstrip("```").strip()
         
-        # Remove common LLM text before JSON
-        prefixes_to_remove = [
-            "Here is the JSON:",
-            "Here's the JSON:",
-            "The JSON object is:",
-            "JSON:",
-            "Output:",
-            "Result:",
-        ]
-        
-        for prefix in prefixes_to_remove:
+        # Remove common prefixes
+        prefixes = ["Here is the JSON:", "JSON:", "Output:", "Result:"]
+        for prefix in prefixes:
             if response.startswith(prefix):
                 response = response[len(prefix):].strip()
+                break
         
-        # Find JSON object boundaries
+        # Extract JSON object boundaries
         start_idx = response.find('{')
         end_idx = response.rfind('}')
         
@@ -553,81 +614,19 @@ Return ONLY the corrected JSON:"""
         
         return response.strip()
 
-    def _create_fallback_result(self, text: str, error_message: Optional[str] = None, schema_name: str = 'default') -> Dict[str, Any]:
-        """
-        Final safety net: Create minimal safe result when all else fails.
-        
-        Args:
-            text: Original input text
-            error_message: Optional error details for debugging
-            
-        Returns:
-            Safe fallback result dictionary with error context
-        """
-        reasoning = "Fallback parser - all other methods failed"
-        if error_message:
-            reasoning += f". Error: {error_message}"
-            
+    def _create_fallback_result(self, text: str, error_message: Optional[str] = None, schema_name: Optional[str] = None) -> Dict[str, Any]:
+        """Create safe fallback result when parsing fails."""
         return {
-            "title": text[:50],
+            "title": text[:50] + "..." if len(text) > 50 else text,
             "category": "note",
             "domain": "general",
             "keywords": [],
             "entities": [],
-            "sentiment": "neutral",
-            "content_type": "prose",
-            "confidence_score": 0.1,
-            "reasoning": reasoning,
+            "error": error_message or "Parsing failed",
             "metadata": {
-                "parser_type": "fatal_fallback", 
-                "confidence_score": 0.1,
-                "error_details": error_message,
-                "processing_notes": [f"Parser failure: {error_message}"] if error_message else ["Parser failure: unknown error"]
-            }
-        }
-
-
-    def _validate_parsed_result(self, result: Dict[str, Any], schema_name: str = 'default') -> None:
-        """
-        Validate parsed result against the specified schema.
-        
-        Args:
-            result: Parsed data to validate  
-            schema_name: Name of schema to validate against
-            
-        Raises:
-            ValueError: If validation fails
-        """
-        is_valid, errors = validate_data(result, schema_name)
-        
-        if not is_valid:
-            error_message = f"Schema validation failed for '{schema_name}': {'; '.join(errors)}"
-            self.logger.warning(error_message)
-            raise ValueError(error_message)
-
-    def _format_result(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Format parsing result for consistency with interface."""
-        # Standard fields
-        result = {
-            "title": parsed_data.get("title", "Untitled"),
-            "category": parsed_data.get("category", "note"),
-            "domain": parsed_data.get("domain", "other"),
-            "keywords": parsed_data.get("keywords", []),
-            "entities": parsed_data.get("entities", []),
-            "metadata": {
-                "parser_type": "ollama_llm",
+                "parser_type": "fatal_fallback",
                 "parser_version": "3.0.0",
-                "sentiment": parsed_data.get("sentiment", "neutral"),
-                "content_type": parsed_data.get("content_type", "prose"),
-                "confidence_score": parsed_data.get("confidence_score", 0.0),
-                "reasoning": parsed_data.get("reasoning", "")
+                "schema_used": schema_name,
+                "error_details": error_message
             }
         }
-        
-        # Include any custom schema fields not already in standard fields
-        standard_fields = {"title", "category", "domain", "keywords", "entities", "sentiment", "content_type", "confidence_score", "reasoning"}
-        for key, value in parsed_data.items():
-            if key not in standard_fields:
-                result[key] = value
-        
-        return result
