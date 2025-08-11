@@ -127,6 +127,13 @@ class ThoughtPalette(Vertical):
         yield Tree(label="Results", id="palette-tree")
         
         # OLD: Removed for unified view - Multiple sections below were commented out
+    
+    def on_key(self, event: events.Key) -> None:
+        if event.name == "enter":
+            tree = self.query_one("#palette-tree", Tree)
+            if tree.has_focus:
+                self.action_add_to_canvas()
+                event.stop()  # Prevent Tree's default toggle
         # OLD: yield Static("📊 ANALYTICS PALETTE", classes="palette-header")
         # OLD: Schema detection info section
         # OLD: yield Static("🔍 QUERY EXPLORER:", classes="section-header")
@@ -153,6 +160,8 @@ class ThoughtPalette(Vertical):
                 cluster_node = tree.root.add(cluster_name, expand=True)
                 for item in items:
                     cluster_node.add_leaf(item['label'], data=item['content'])
+        
+        tree.focus()
     
     async def _fetch_globules(self, topic: str) -> list:
         """Fetch globules using semantic search with fallback to text search"""
@@ -259,7 +268,10 @@ class ThoughtPalette(Vertical):
             # Add as a new expandable module in the tree
             module_node = tree.root.add(f"📊 Module: {nl_query[:50]}...", expand=True)
             
-            # Instead of storing in data, create individual result nodes
+            # Add a Preview node with the full formatted module content
+            module_node.add_leaf("📋 Preview (Press Enter to add to canvas)", data=module_content)
+            
+            # Create individual result nodes for browsing
             if results:
                 for i, row in enumerate(results[:10]):  # Show first 10 results
                     # Create a readable summary for each result
@@ -267,9 +279,13 @@ class ThoughtPalette(Vertical):
                         # Use the text field (usually index 1) for the display
                         if len(row) > 1 and row[1]:  # text field
                             display_text = str(row[1])[:80] + "..." if len(str(row[1])) > 80 else str(row[1])
+                            # Add individual row content as data for the leaf
+                            row_content = f"**Row {i+1}:** {display_text}\n\n"
+                            module_node.add_leaf(f"• {display_text}", data=row_content)
                         else:
                             display_text = str(row[0])  # fallback to ID
-                        module_node.add_leaf(f"• {display_text}")
+                            row_content = f"**Row {i+1}:** {display_text}\n\n"
+                            module_node.add_leaf(f"• {display_text}", data=row_content)
                     else:
                         module_node.add_leaf(f"• Row {i+1}")
                 
@@ -285,6 +301,7 @@ class ThoughtPalette(Vertical):
         finally:
             # Remove the status node
             status_node.remove()
+            tree.focus()
 
     async def _nl_to_sql(self, nl_query: str) -> str:
         """Convert natural language query to SQL using AI"""
@@ -376,7 +393,12 @@ Return only the raw SQL SELECT statement, no explanations.
         return md
 
     def action_add_to_canvas(self):
-        pass  # Will add to canvas later
+        tree = self.query_one("#palette-tree", Tree)
+        node = tree.cursor_node
+        if node and hasattr(node, 'data') and node.data:
+            self.post_message(ItemSelected(node.data))
+        else:
+            tree.add("⚠️ Select an item with content first")
 
     def action_save_module(self):
         pass  # Will save later
@@ -1826,6 +1848,12 @@ class DashboardApp(App):
             canvas = self.query_one("#viz-canvas", VizCanvas)
             canvas.text += f"\n⚠️ **Initialization Warning:** {e}\n"
     
+    async def on_item_selected(self, message: ItemSelected) -> None:
+        canvas = self.query_one("#viz-canvas", VizCanvas)
+        canvas.text += message.content + "\n\n"  # Append as block with spacing
+        canvas.focus()
+        self.notify("✅ Added to canvas!")
+    
     async def on_thought_palette_query_executed(self, message: ThoughtPalette.QueryExecuted) -> None:
         """Handle query execution from palette"""
         canvas = self.query_one("#viz-canvas", VizCanvas)
@@ -1919,6 +1947,15 @@ class DashboardApp(App):
                     # Get palette and execute query
                     palette = self.query_one("#thought-palette", ThoughtPalette)
                     asyncio.create_task(palette.execute_query(query))
+            elif self.focused.id == "palette-tree":
+                # Delegate to palette's add_to_canvas action
+                palette = self.query_one("#thought-palette", ThoughtPalette)
+                palette.action_add_to_canvas()
+            else:
+                # Check if focused widget is within the thought palette
+                palette = self.query_one("#thought-palette", ThoughtPalette)
+                if palette in self.focused.ancestors_with_self:
+                    palette.action_add_to_canvas()
     
     def action_save_draft(self) -> None:
         """Save canvas content as Markdown"""
