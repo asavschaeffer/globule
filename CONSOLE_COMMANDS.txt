@@ -1,0 +1,453 @@
+GLOBULE CONSOLE COMMANDS REFERENCE
+==================================
+
+This comprehensive guide covers EVERY possible way to run Globule commands from the console.
+Written to be exhaustive and handle the complexity of our multi-interface architecture.
+
+COMMAND INVOCATION METHODS (ALL VARIATIONS)
+-------------------------------------------
+
+1. DIRECT COMMAND (when installed as package):
+   globule <command> <args>
+   
+2. PYTHON MODULE INVOCATION (development/source):
+   python -m globule.interfaces.cli.main <command> <args>
+   
+3. DIRECT PYTHON EXECUTION:
+   python src/globule/interfaces/cli/main.py <command> <args>
+   
+4. TUI DIRECT MODULE ACCESS:
+   python -m globule.tui.app [--topic <topic>] [--log-file <file>]
+   
+5. TUI DIRECT PYTHON EXECUTION:
+   python src/globule/tui/app.py [--topic <topic>] [--log-file <file>]
+   
+6. TUTORIAL DIRECT ACCESS:
+   python -m globule.tutorial.glass_engine
+   python -m globule.tutorial.glass_engine_ascii
+   python src/globule/tutorial/glass_engine.py
+   python src/globule/tutorial/glass_engine_ascii.py
+
+COMPLETE COMMAND REFERENCE
+--------------------------
+
+1. ADD - Capture a new thought/globule into the system
+   
+   Primary Usage:
+   globule add "your thought here"
+   
+   Alternative Invocations:
+   python -m globule.interfaces.cli.main add "your thought here"
+   python src/globule/interfaces/cli/main.py add "your thought here"
+   
+   Options:
+   --verbose, -v    Enable verbose output for this specific command
+   
+   What it does:
+   - Processes text through orchestration engine
+   - Generates embeddings and parsed metadata
+   - Stores in SQLite database with semantic indexing
+   - Shows processing time, confidence scores, suggested file paths
+   
+   Examples:
+   globule add "Need to research React hooks for the authentication flow"
+   globule add --verbose "Complex technical implementation details here"
+   python -m globule.interfaces.cli.main add "Emergency bug fix needed"
+
+2. DRAFT - Launch interactive TUI for drafting (TWO-TERMINAL SETUP)
+   
+   Primary Usage:
+   globule draft "topic"
+   
+   Alternative Invocations:
+   python -m globule.interfaces.cli.main draft "topic"
+   python src/globule/interfaces/cli/main.py draft "topic"
+   
+   *** MAJOR FEATURE: Two-Terminal Architecture ***
+   - TUI opens in NEW terminal window/tab (clean interface)
+   - Logs appear in ORIGINAL terminal (real-time debugging)
+   - Cross-platform support (Windows/macOS/Linux)
+   - Fallback to inline mode if new window fails
+   
+   Options:
+   --limit, -l      Maximum globules to search (default: 100)
+   --output, -o     Output draft to file (currently unused in TUI)
+   
+   What it does:
+   - Detects topic schema and output templates
+   - Loads related globules and clusters them
+   - Provides analytics dashboard with SQL query generation
+   - Supports natural language search with AI-powered SQL translation
+   - Allows drag-and-drop of query results to canvas
+   - Real-time template processing with jinja2
+   - Export capabilities (PDF, email, Twitter, clipboard)
+   
+   Examples:
+   globule draft "valet"           # Uses valet schema if detected
+   globule draft "authentication" # General topic exploration
+   globule draft "project-review" # Custom topic analysis
+
+3. SEARCH - Semantic vector search for similar thoughts
+   
+   Primary Usage:
+   globule search "query text"
+   
+   Alternative Invocations:
+   python -m globule.interfaces.cli.main search "query text"
+   python src/globule/interfaces/cli/main.py search "query text"
+   
+   Options:
+   --limit, -l      Maximum results to return (default: 10)
+   --threshold, -t  Minimum similarity threshold 0.0-1.0 (default: 0.4)
+   --verbose, -v    Show detailed search results with metadata
+   
+   What it does:
+   - Generates semantic embeddings for query
+   - Performs vector similarity search in database
+   - Returns ranked results with similarity scores
+   - Shows content previews and metadata
+   - Displays processing statistics
+   
+   Examples:
+   globule search "authentication" --limit 20 --verbose
+   globule search "bug fix" --threshold 0.6
+   python -m globule.interfaces.cli.main search "React hooks" --limit 5
+
+4. CLUSTER - Discover semantic clusters and themes in your knowledge base
+   
+   Primary Usage:
+   globule cluster
+   
+   Alternative Invocations:
+   python -m globule.interfaces.cli.main cluster
+   python src/globule/interfaces/cli/main.py cluster
+   
+   Options:
+   --min-globules, -m  Minimum globules required for clustering (default: 5)
+   --verbose, -v       Show detailed cluster analysis with samples
+   --export, -e        Export results to JSON file
+   
+   What it does:
+   - Uses HDBSCAN semantic clustering on embeddings
+   - Identifies themes and patterns across thoughts
+   - Provides confidence scores and quality metrics
+   - Shows temporal analysis and representative samples
+   - Calculates DBCV validation scores
+   
+   Examples:
+   globule cluster --min-globules 3 --verbose
+   globule cluster --export analysis.json
+   python -m globule.interfaces.cli.main cluster --min-globules 10
+
+5. TUTORIAL - Run Glass Engine tutorial/demonstration system
+   
+   Primary Usage:
+   globule tutorial
+   
+   Alternative Invocations:
+   python -m globule.interfaces.cli.main tutorial
+   python src/globule/interfaces/cli/main.py tutorial
+   python -m globule.tutorial.glass_engine
+   python src/globule/tutorial/glass_engine.py
+   python -m globule.tutorial.glass_engine_ascii
+   python src/globule/tutorial/glass_engine_ascii.py
+   
+   Options:
+   --mode, -m       Tutorial mode: interactive, demo, or debug (default: demo)
+   
+   Modes:
+   - interactive: Guided tutorial with hands-on learning (best for new users)
+   - demo: Professional technical showcase with automated examples (best for stakeholders)
+   - debug: Raw execution traces and system introspection (best for engineers)
+   
+   What it does:
+   - Demonstrates core Globule functionality
+   - Shows internal operations transparently
+   - Provides educational content about semantic processing
+   - Validates system components and performance
+   
+   Examples:
+   globule tutorial --mode interactive
+   globule tutorial --mode debug
+   python -m globule.tutorial.glass_engine_ascii
+
+6. RECONCILE - Reconcile files on disk with database records
+   
+   Primary Usage:
+   globule reconcile
+   
+   Alternative Invocations:
+   python -m globule.interfaces.cli.main reconcile
+   python src/globule/interfaces/cli/main.py reconcile
+   
+   Options:
+   --auto          Run reconciliation without user prompts
+   --verbose, -v   Show detailed reconciliation output and statistics
+   
+   What it does:
+   - Scans filesystem for globule files with UUID frontmatter
+   - Updates database records to match actual file locations
+   - Handles file moves, renames, and organizational changes
+   - Identifies orphaned files without database records
+   - Maintains UUID-based canonical linking system
+   
+   Examples:
+   globule reconcile --verbose
+   globule reconcile --auto
+   python -m globule.interfaces.cli.main reconcile --auto --verbose
+
+GLOBAL CLI OPTIONS
+-----------------
+
+These work with ANY command:
+
+--version        Show version information (globule --version)
+--help           Show detailed help for command (globule <cmd> --help)
+--verbose, -v    Enable verbose output globally (overridden by command-specific -v)
+
+Context-sensitive help:
+globule --help                    # Show all commands
+globule add --help               # Show add command help
+globule draft --help             # Show draft command help with options
+python -m globule.interfaces.cli.main --help  # Same via module
+
+TUI DIRECT ACCESS (BYPASS CLI WRAPPER)
+--------------------------------------
+
+Single Terminal Mode (logs mixed with TUI):
+python -m globule.tui.app --topic "your_topic"
+python src/globule/tui/app.py --topic "your_topic"
+
+With Custom Log File:
+python -m globule.tui.app --topic "test" --log-file "custom.log"
+python src/globule/tui/app.py --topic "test" --log-file "custom.log"
+
+TUI Arguments:
+--topic      Topic to focus analysis on (default: "default")
+--log-file   Custom log file path (used by two-terminal setup internally)
+
+What TUI provides:
+- Two-pane interface: Palette (search/queries) + Canvas (composition)
+- Natural language to SQL query translation
+- Real-time analytics dashboard
+- Schema-driven templates and export
+- Drag-and-drop query results
+- AI-powered text expansion and summarization
+- Multi-format export (MD, PDF, email, Twitter, clipboard)
+
+ADVANCED MODULE ACCESS
+----------------------
+
+Direct Engine/Core Access:
+python -c "from globule.orchestration.engine import OrchestrationEngine; print('Engine loaded')"
+
+Direct Storage Access:
+python -c "from globule.storage.sqlite_manager import SQLiteStorageManager; print('Storage loaded')"
+
+Schema Manager:
+python -c "from globule.schemas.manager import get_schema_manager; print(get_schema_manager().list_schemas())"
+
+Service Components:
+python -c "from globule.services.embedding.ollama_provider import OllamaEmbeddingProvider; print('Embeddings loaded')"
+python -c "from globule.services.parsing.ollama_parser import OllamaParser; print('Parser loaded')"
+
+INSTALLATION-DEPENDENT BEHAVIOR
+-------------------------------
+
+CASE 1: Package Installation (pip install -e . or pip install globule)
+- Creates 'globule' console script via pyproject.toml [project.scripts]
+- globule = "globule.interfaces.cli.main:main"
+- Direct commands work: globule add, globule draft, etc.
+
+CASE 2: Development/Source Mode (no installation)
+- No console script available
+- Must use: python -m globule.interfaces.cli.main <command>
+- Or direct execution: python src/globule/interfaces/cli/main.py <command>
+
+CASE 3: Partial Installation Issues
+- If console script broken: python -m globule.interfaces.cli.main works
+- If module path issues: use direct Python execution with full paths
+
+COMPREHENSIVE EXAMPLES
+----------------------
+
+Basic Workflow:
+# 1. Add some thoughts
+globule add "Need to implement OAuth2 flow"
+globule add "Database performance is slow on large datasets"
+globule add "User feedback suggests confusing navigation"
+
+# 2. Search and analyze
+globule search "authentication" --verbose
+globule cluster --min-globules 2
+
+# 3. Create interactive draft
+globule draft "authentication-improvements"  # Two-terminal mode
+
+# 4. Reconcile any file changes
+globule reconcile --verbose
+
+Development Workflow:
+# Using module paths for development
+python -m globule.interfaces.cli.main add "Development note"
+python -m globule.interfaces.cli.main search "development" --limit 5
+
+# Direct TUI access for debugging
+python -m globule.tui.app --topic "debug-session" --log-file "debug.log"
+
+# Tutorial and learning
+python -m globule.interfaces.cli.main tutorial --mode interactive
+
+Automation/Scripting Examples:
+# Batch processing
+echo "First thought" | xargs globule add
+echo "Second thought" | xargs globule add
+
+# Search and export
+globule search "important" --limit 100 > important_findings.txt
+globule cluster --export cluster_analysis.json
+
+# Combined operations
+globule add "Critical bug found" && globule search "bug" --verbose
+
+PLATFORM-SPECIFIC CONSIDERATIONS
+--------------------------------
+
+Windows:
+- Use double quotes for arguments with spaces
+- Console encoding may affect Unicode output
+- Two-terminal setup uses: cmd /c start cmd /k <command>
+
+macOS:
+- Single quotes work for arguments
+- Two-terminal setup uses AppleScript with Terminal.app
+- Requires: osascript -e 'tell app "Terminal" to do script "<command>"'
+
+Linux:
+- Both quote styles work
+- Two-terminal setup requires gnome-terminal (or xterm as fallback)
+- Uses: gnome-terminal -- <command>
+
+DEBUGGING AND TROUBLESHOOTING
+-----------------------------
+
+Command Not Found Issues:
+1. Try: python -m globule.interfaces.cli.main <command>
+2. Check current directory: pwd / echo %CD%
+3. Verify Python path: python -c "import sys; print(sys.path)"
+4. Check installation: pip show globule
+
+Module Import Issues:
+1. Verify project structure: ls src/globule/
+2. Check PYTHONPATH: echo $PYTHONPATH (Unix) / echo %PYTHONPATH% (Windows)
+3. Try absolute paths: python /full/path/to/src/globule/interfaces/cli/main.py
+
+Two-Terminal Setup Issues:
+1. Linux: Install gnome-terminal: sudo apt install gnome-terminal
+2. macOS: Ensure Terminal.app is accessible
+3. Windows: Standard cmd.exe should work
+4. Fallback: All commands fall back to single-terminal mode on failure
+
+Database/Storage Issues:
+1. Check database location: ~/.globule/data/globules.db
+2. Verify permissions: ls -la ~/.globule/
+3. Reset database: rm ~/.globule/data/globules.db (will recreate)
+4. Check disk space: df -h
+
+Dependency Issues:
+1. Install all dependencies: pip install -e .[clustering,dev]
+2. Check specific imports: python -c "import textual; print('TUI OK')"
+3. Ollama connection: Check if Ollama service is running
+4. Vector extension: pip install --force-reinstall sqlite-vec
+
+Log Analysis:
+1. Enable verbose mode: --verbose on any command
+2. Check log levels in src/globule/interfaces/cli/main.py
+3. TUI logs: Use --log-file to capture TUI operations
+4. Direct debugging: Add print statements in development
+
+Performance Issues:
+1. Database size: Check ~/.globule/data/ directory size
+2. Embedding provider: Verify Ollama is running efficiently
+3. Memory usage: Monitor with top/htop during operations
+4. Vector operations: Consider enabling clustering dependencies
+
+FILE SYSTEM INTEGRATION
+-----------------------
+
+Configuration Files:
+~/.globule/config.yaml        # Main configuration
+~/.globule/data/globules.db   # SQLite database
+~/.globule/schemas/           # Custom schemas
+
+Generated Files:
+drafts/                       # Draft outputs from TUI
+exports/                      # Export outputs (PDF, etc.)
+*.log                        # Log files from two-terminal setup
+
+Working Directory Files:
+CONSOLE_COMMANDS.txt         # This file
+pyproject.toml              # Project configuration
+src/globule/schemas/        # Built-in schemas
+
+INTEGRATION WITH OTHER TOOLS
+----------------------------
+
+Shell Integration:
+# Bash/Zsh aliases
+alias ga='globule add'
+alias gs='globule search'
+alias gd='globule draft'
+
+# Pipe integration
+echo "Pipe this thought" | xargs globule add
+globule search "keyword" | grep "specific_term"
+
+Editor Integration:
+# Vim: Add thoughts from buffer
+:!globule add "<C-r>""
+
+# VSCode: Could integrate via tasks.json
+# Emacs: Could integrate via shell commands
+
+LLM/AI Integration:
+# Chain commands for AI workflows
+globule search "authentication" > context.txt
+# Feed context.txt to LLM for analysis
+# Add LLM output back: globule add "$(cat llm_output.txt)"
+
+API/Service Integration:
+# Web hooks (hypothetical)
+curl -X POST api/thoughts -d "$(globule search 'urgent')"
+
+# Database exports
+globule cluster --export | jq '.clusters[0]'
+
+CODEBASE ARCHITECTURE NOTES
+---------------------------
+
+This complexity exists because:
+1. Multiple interfaces: CLI, TUI, direct module access
+2. Development vs. production installation modes  
+3. Cross-platform compatibility requirements
+4. Two-terminal architecture for debugging
+5. Extensible plugin/schema system
+6. Multiple service providers (Ollama, mock, etc.)
+
+Entry Points:
+- pyproject.toml: [project.scripts] globule = "globule.interfaces.cli.main:main"
+- src/globule/interfaces/cli/main.py: main() function
+- src/globule/tui/app.py: __main__ block with asyncio.run()
+
+Key Abstractions:
+- OrchestrationEngine: Coordinates all services
+- StorageManager: Database operations and caching
+- EmbeddingProvider: Vector generation (Ollama/mock)
+- ParsingProvider: Text analysis and metadata extraction
+- SchemaManager: Template and validation system
+
+This comprehensive reference covers every possible way to invoke Globule functionality.
+For issues not covered here, check the source code or create a GitHub issue.
+
+Generated: 2025-08-11
+Updated: Complete comprehensive reference covering all invocation methods
