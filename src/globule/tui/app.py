@@ -401,7 +401,37 @@ Return only the raw SQL SELECT statement, no explanations.
             tree.add("⚠️ Select an item with content first")
 
     def action_save_module(self):
-        pass  # Will save later
+        tree = self.query_one("#palette-tree", Tree)
+        node = tree.cursor_node
+        if node and hasattr(node, 'data') and node.data:
+            module_data = {
+                "name": str(node.label),  # e.g., "Module: car make: honda..."
+                "content": node.data
+            }
+            # Create a modules data file (not the schema definition)
+            schema_path = 'src/globule/schemas/valet_modules.json'  # Change to dynamic if self.topic available
+            try:
+                import json
+                import os
+                
+                # Create file if it doesn't exist
+                if not os.path.exists(schema_path):
+                    with open(schema_path, 'w') as f:
+                        json.dump({"modules": []}, f, indent=4)
+                
+                with open(schema_path, 'r+') as f:
+                    data = json.load(f)
+                    if 'modules' not in data:
+                        data['modules'] = []
+                    data['modules'].append(module_data)
+                    f.seek(0)
+                    json.dump(data, f, indent=4)
+                    f.truncate()
+                self.app.notify("✅ Saved to schema!")
+            except Exception as e:
+                tree.add(f"❌ Save error: {str(e)}")
+        else:
+            tree.add("⚠️ Select a module with content first")
     
     def _get_default_query(self) -> str:
         """Get default query based on detected schema"""
