@@ -21,7 +21,18 @@ import base64
 import sqlite3
 import io
 import re
+import smtplib
+import os
 from datetime import datetime, timedelta
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+try:
+    import jinja2
+    HAS_JINJA2 = True
+except ImportError:
+    HAS_JINJA2 = False
+
 try:
     import matplotlib.pyplot as plt
     import matplotlib
@@ -30,6 +41,21 @@ try:
 except ImportError:
     HAS_MATPLOTLIB = False
 
+try:
+    import tweepy
+    HAS_TWEEPY = True
+except ImportError:
+    HAS_TWEEPY = False
+
+try:
+    import pyperclip
+    HAS_PYPERCLIP = True
+except ImportError:
+    HAS_PYPERCLIP = False
+
+# WeasyPrint import moved to function level to avoid startup issues
+HAS_WEASYPRINT = True
+
 from globule.core.interfaces import StorageManager
 from globule.core.models import ProcessedGlobule, SynthesisState, UIMode, GlobuleCluster
 from globule.services.clustering.semantic_clustering import SemanticClusteringEngine
@@ -37,8 +63,19 @@ from globule.services.parsing.ollama_parser import OllamaParser
 from globule.schemas.manager import get_schema_manager, detect_schema_for_text, detect_output_schema_for_topic, get_output_schema
 
 
-class AnalyticsPalette(VerticalScroll):
+class ItemSelected(Message):
+    def __init__(self, content: str) -> None:
+        self.content = content
+        super().__init__()
+
+
+class ThoughtPalette(Vertical):
     """Enhanced palette: Data/query explorer with analytics capabilities"""
+    
+    BINDINGS = [
+        ("enter", "add_to_canvas", "Add Selection"),
+        ("ctrl+s", "save_module", "Save Module to Schema"),
+    ]
     
     class QueryExecuted(Message):
         """Message sent when a query is executed"""
@@ -84,51 +121,32 @@ class AnalyticsPalette(VerticalScroll):
                 self.output_schema = get_output_schema(self.output_schema_name)
     
     def compose(self) -> ComposeResult:
-        """Compose analytics palette with query input and results tree"""
-        yield Static("📊 ANALYTICS PALETTE", classes="palette-header")
+        """Compose the unified ThoughtPalette with search and tree"""
+        yield Input(placeholder="Search thoughts (e.g., car make: honda parked by valet:maria)", id="palette-search")
+        yield Tree(label="Results", id="palette-tree")
         
-        # Schema detection info
-        if self.output_schema_name:
-            yield Static(f"🎯 Output Schema: {self.output_schema_name}", classes="schema-info")
-        elif self.detected_schema:
-            yield Static(f"🎯 Input Schema: {self.detected_schema}", classes="schema-info")
-        
-        # Query input section
-        yield Static("🔍 QUERY EXPLORER:", classes="section-header")
-        
-        # Pre-populate with schema-specific query if available
-        placeholder_query = self._get_default_query()
-        yield Input(
-            placeholder=placeholder_query,
-            id="query-input"
-        )
-        
-        # Pre-defined queries from schema
-        schema_queries = self._get_schema_queries()
-        if schema_queries:
-            yield Static("📋 PRE-DEFINED QUERIES:", classes="section-header")
-            queries_tree = Tree("Quick Queries", id="schema-queries")
-            root = queries_tree.root
-            for i, query in enumerate(schema_queries):
-                query_node = root.add(f"▶️ {query['name']}")
-                query_node.add_leaf(f"📝 {query['description']}")
-                query_node.add_leaf(f"📊 Viz: {query.get('visualization', 'table')}")
-            yield queries_tree
-        
-        # Query results section
-        yield Static("📈 RESULTS:", classes="section-header")
-        yield Tree("Analytics", id="results-tree")
-        
-        # Clusters section
-        if self.clusters:
-            yield Static(f"🗂️ CLUSTERS ({len(self.clusters)}):", classes="section-header")
-            clusters_tree = Tree("Clusters", id="clusters-tree")
-            root = clusters_tree.root
-            for cluster in self.clusters:
-                confidence_bar = "█" * max(1, int(cluster.metadata.get('confidence_score', 0.5) * 10))
-                cluster_title = f"{cluster.label} ({len(cluster.globules)}) [{confidence_bar}]"
-                root.add_leaf(cluster_title)
-            yield clusters_tree
+        # OLD: Removed for unified view - Multiple sections below were commented out
+        # OLD: yield Static("📊 ANALYTICS PALETTE", classes="palette-header")
+        # OLD: Schema detection info section
+        # OLD: yield Static("🔍 QUERY EXPLORER:", classes="section-header")
+        # OLD: yield Input(..., id="query-input")
+        # OLD: yield Static("📋 PRE-DEFINED QUERIES:", classes="section-header")
+        # OLD: queries_tree creation and population
+        # OLD: yield Static("📈 RESULTS:", classes="section-header")
+        # OLD: yield Tree("Analytics", id="results-tree")
+        # OLD: Clusters section with confidence bars
+    
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        pass  # Will handle search later
+
+    async def _orchestrate_search(self, nl_query: str):
+        pass  # Will add AI logic later
+
+    def action_add_to_canvas(self):
+        pass  # Will add to canvas later
+
+    def action_save_module(self):
+        pass  # Will save later
     
     def _get_default_query(self) -> str:
         """Get default query based on detected schema"""
@@ -382,9 +400,27 @@ class AnalyticsPalette(VerticalScroll):
         if self.drag_data and event.button == 1:  # Left click
             self.is_dragging = True
     
+    async def on_mouse_move(self, event: MouseMove) -> None:
+        """Handle mouse move during drag operation"""
+        if self.is_dragging and self.drag_data:
+            # Get query name for overlay
+            query_name = self.drag_data.get('name', 'Query Result')
+            
+            # Create drag overlay (simulated - textual doesn't support real overlay)
+            # We'll show a notification instead
+            app = self.app
+            if hasattr(app, '_drag_notification_shown') and not app._drag_notification_shown:
+                app.notify(f"🎯 Dragging: {query_name}")
+                app._drag_notification_shown = True
+    
     async def on_mouse_up(self, event: MouseUp) -> None:
         """Handle mouse up to complete drag operation"""
         if self.is_dragging and self.drag_data:
+            # Reset drag notification flag
+            app = self.app
+            if hasattr(app, '_drag_notification_shown'):
+                app._drag_notification_shown = False
+            
             # Check if we're dropping onto the canvas area
             # For now, just send the message - the app will handle positioning
             self.post_message(self.QueryResultDragged(self.drag_data))
@@ -415,33 +451,66 @@ class VizCanvas(TextArea):
         self.parser = None  # For AI actions
     
     def add_dragged_result(self, query_result: Dict[str, Any]) -> None:
-        """Add dragged query result to canvas at cursor position"""
+        """Add dragged query result to canvas with smart placeholder matching"""
+        query_name = query_result.get('name', 'Query Result')
         query = query_result.get('query', 'Unknown Query')
         result = query_result.get('results', [])
         query_type = query_result.get('type', 'sql')
+        viz_type = query_result.get('viz_type', 'table')
         
-        # Generate visualization
-        viz_content = self._generate_visualization(query, result, query_type)
-        
-        # Insert at current cursor position
-        cursor = self.cursor_position
+        # Check for template placeholder matching
         current_text = self.text
+        cursor = self.cursor_position
         
-        # Add header with drag indicator
-        new_content = f"\n\n## 🎯 Dragged Query Result\n\n**Query:** `{query}`\n**Dragged at:** {datetime.now().strftime('%H:%M:%S')}\n\n{viz_content}\n"
+        # Look for matching placeholders in the template
+        placeholder_patterns = [
+            f"{{bar: {query_name.lower().replace(' ', '_')}}}",
+            f"{{table: {query_name.lower().replace(' ', '_')}}}",
+            f"{{line: {query_name.lower().replace(' ', '_')}}}",
+            f"{{pie: {query_name.lower().replace(' ', '_')}}}",
+            f"{{metrics: {query_name.lower().replace(' ', '_')}}}",
+        ]
         
-        # Insert at cursor position
-        before = current_text[:cursor[1] if cursor else len(current_text)]
-        after = current_text[cursor[1] if cursor else len(current_text):]
-        self.text = before + new_content + after
+        matched_placeholder = None
+        for pattern in placeholder_patterns:
+            if pattern in current_text:
+                matched_placeholder = pattern
+                break
+        
+        if matched_placeholder and self.template:
+            # Replace the placeholder with actual visualization
+            viz_content = self._generate_visualization(query_name, result, query_type, viz_type)
+            self.text = current_text.replace(matched_placeholder, viz_content)
+            
+            # Store data for future template processing
+            self.query_data[query_name.lower().replace(' ', '_')] = {
+                'results': result,
+                'type': query_type,
+                'viz_type': viz_type,
+                'timestamp': datetime.now().isoformat()
+            }
+        else:
+            # Standard insertion at cursor position
+            viz_content = self._generate_visualization(query_name, result, query_type, viz_type)
+            
+            # Add header with drag indicator
+            new_content = f"\n\n## 🎯 Dragged Query Result\n\n**Query:** `{query}`\n**Dragged at:** {datetime.now().strftime('%H:%M:%S')}\n\n{viz_content}\n"
+            
+            # Insert at cursor position
+            before = current_text[:cursor[1] if cursor else len(current_text)]
+            after = current_text[cursor[1] if cursor else len(current_text):]
+            self.text = before + new_content + after
         
         # Track incorporation
         self.incorporated_results.append({
             'query': query,
+            'name': query_name,
             'result': result,
             'type': query_type,
+            'viz_type': viz_type,
             'timestamp': datetime.now().isoformat(),
-            'method': 'drag_drop'
+            'method': 'drag_drop',
+            'placeholder_matched': matched_placeholder is not None
         })
     
     def get_selected_text(self) -> Optional[str]:
@@ -457,7 +526,7 @@ class VizCanvas(TextArea):
         return None
     
     async def expand_text_ai(self, text: str) -> None:
-        """Request AI expansion of text using real parser"""
+        """Request AI expansion of text using real parser with schema context"""
         if not text:
             return
             
@@ -466,11 +535,35 @@ class VizCanvas(TextArea):
             if not self.parser:
                 self.parser = OllamaParser()
             
+            # Build context with schema and query data
+            context = {
+                'action': 'expand', 
+                'output_format': 'markdown'
+            }
+            
+            # Add schema context if available
+            if self.output_schema:
+                context['schema'] = self.output_schema
+                context['schema_title'] = self.output_schema.get('title', 'Output Schema')
+                
+            # Add query data context
+            if self.query_data:
+                context['query_data'] = self.query_data
+                context['available_queries'] = list(self.query_data.keys())
+            
+            # Enhanced prompt with schema awareness
+            base_prompt = f"Expand and elaborate on this text with additional context, examples, and insights: {text}"
+            
+            if self.output_schema:
+                schema_info = f"\nSchema Context: {self.output_schema.get('title', 'Output Schema')} - {self.output_schema.get('description', 'No description')}"
+                base_prompt += schema_info
+                
+            if self.query_data:
+                available_data = f"\nAvailable Data: {', '.join(self.query_data.keys())}"
+                base_prompt += available_data
+            
             # Use parser to expand the text
-            expansion_result = await self.parser.parse(
-                f"Expand and elaborate on this text with additional context, examples, and insights: {text}",
-                {'action': 'expand', 'output_format': 'markdown'}
-            )
+            expansion_result = await self.parser.parse(base_prompt, context)
             
             # Extract the expanded content
             expanded_content = expansion_result.get('title', '') + '\n\n' + expansion_result.get('reasoning', 'AI expansion completed.')
@@ -488,7 +581,7 @@ class VizCanvas(TextArea):
             }))
     
     async def summarize_text_ai(self, text: str) -> None:
-        """Request AI summarization of text using real parser"""
+        """Request AI summarization of text using real parser with schema context"""
         if not text:
             return
             
@@ -497,11 +590,35 @@ class VizCanvas(TextArea):
             if not self.parser:
                 self.parser = OllamaParser()
             
+            # Build context with schema and query data
+            context = {
+                'action': 'summarize', 
+                'output_format': 'bullet_points'
+            }
+            
+            # Add schema context if available
+            if self.output_schema:
+                context['schema'] = self.output_schema
+                context['schema_title'] = self.output_schema.get('title', 'Output Schema')
+                
+            # Add query data context
+            if self.query_data:
+                context['query_data'] = self.query_data
+                context['available_queries'] = list(self.query_data.keys())
+            
+            # Enhanced prompt with schema awareness
+            base_prompt = f"Summarize this text into key points and main ideas: {text}"
+            
+            if self.output_schema:
+                schema_info = f"\nSchema Context: {self.output_schema.get('title', 'Output Schema')} - Focus on elements relevant to this schema"
+                base_prompt += schema_info
+                
+            if self.query_data:
+                data_info = f"\nData Context: Consider the available analytics data: {', '.join(self.query_data.keys())}"
+                base_prompt += data_info
+            
             # Use parser to summarize the text
-            summary_result = await self.parser.parse(
-                f"Summarize this text into key points and main ideas: {text}",
-                {'action': 'summarize', 'output_format': 'bullet_points'}
-            )
+            summary_result = await self.parser.parse(base_prompt, context)
             
             # Extract the summary content
             summary_content = summary_result.get('title', 'Summary') + '\n\n' + summary_result.get('reasoning', 'AI summarization completed.')
@@ -552,14 +669,59 @@ class VizCanvas(TextArea):
         })
     
     def _update_template_content(self) -> None:
-        """Update canvas content using template with current query data"""
+        """Update canvas content using template with current query data and jinja2 processing"""
         if not self.template:
             return
             
-        # Start with template
         content = self.template
         
-        # Replace timestamp placeholder
+        # Try jinja2 processing first if available
+        if HAS_JINJA2:
+            content = self._process_jinja2_template(content)
+        else:
+            # Fallback to simple template processing
+            content = self._process_simple_template(content)
+        
+        self.text = content
+    
+    def _process_jinja2_template(self, template_content: str) -> str:
+        """Process template using jinja2 for advanced substitutions"""
+        try:
+            # Create jinja2 environment
+            env = jinja2.Environment(loader=jinja2.BaseLoader(), autoescape=False)
+            template = env.from_string(template_content)
+            
+            # Build template context
+            context = {
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'date': datetime.now().strftime('%Y-%m-%d'),
+                'time': datetime.now().strftime('%H:%M:%S'),
+                'year': datetime.now().year,
+                'month': datetime.now().month,
+                'day': datetime.now().day,
+                'query_data': self.query_data,
+                'schema': self.output_schema,
+            }
+            
+            # Add each query's results as top-level variables
+            for query_name, query_info in self.query_data.items():
+                context[query_name] = query_info['results']
+            
+            # Add helper functions
+            context['generate_viz'] = lambda query_name, viz_type='table': self._generate_visualization_for_template(query_name, viz_type)
+            
+            # Render template
+            return template.render(**context)
+            
+        except Exception as e:
+            # Fallback to simple processing if jinja2 fails
+            return self._process_simple_template(template_content) + f"\n\n*Jinja2 processing error: {e}*"
+    
+    def _process_simple_template(self, template_content: str) -> str:
+        """Fallback simple template processing"""
+        content = template_content
+        
+        # Replace timestamp placeholders
         content = content.replace('{timestamp}', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         content = content.replace('{date}', datetime.now().strftime('%Y-%m-%d'))
         
@@ -615,7 +777,15 @@ class VizCanvas(TextArea):
         
         content = re.sub(array_pattern, replace_array_access, content)
         
-        self.text = content
+        return content
+    
+    def _generate_visualization_for_template(self, query_name: str, viz_type: str = 'table') -> str:
+        """Generate visualization for jinja2 template usage"""
+        if query_name not in self.query_data:
+            return f"*[Query '{query_name}' not executed yet]*"
+        
+        query_info = self.query_data[query_name]
+        return self._generate_visualization(query_name, query_info['results'], query_info['type'], viz_type)
     
     def _generate_visualization(self, query_name: str, result: Any, query_type: str, viz_type: str = None) -> str:
         """Generate enhanced visualization content with matplotlib support"""
@@ -654,7 +824,7 @@ class VizCanvas(TextArea):
             return None
             
         try:
-            fig, ax = plt.subplots(figsize=(8, 6))
+            fig, ax = plt.subplots(figsize=(8, 6), dpi=200)
             
             if viz_type == 'bar' and len(data[0]) >= 2:
                 # Bar chart
@@ -684,25 +854,41 @@ class VizCanvas(TextArea):
                     ax.set_title(f"{title} - Distribution")
                 
             elif viz_type == 'line' and len(data[0]) >= 2:
-                # Line chart
+                # Line chart with date sorting support
                 keys = list(data[0].keys())
                 x_key, y_key = keys[0], keys[1]
                 
-                x_data = range(len(data[:10]))
-                y_data = [row[y_key] for row in data[:10] if isinstance(row[y_key], (int, float))]
-                x_labels = [str(row[x_key]) for row in data[:10]]
+                # Try to sort by date if x_key looks like date/time
+                sorted_data = data[:15]  # Limit to 15 points for clarity
+                if any(date_word in x_key.lower() for date_word in ['date', 'time', 'created', 'day']):
+                    try:
+                        # Attempt to sort by date
+                        from datetime import datetime
+                        sorted_data = sorted(sorted_data, key=lambda row: 
+                            datetime.fromisoformat(str(row[x_key]).replace('Z', '+00:00')) 
+                            if 'T' in str(row[x_key]) 
+                            else datetime.strptime(str(row[x_key])[:10], '%Y-%m-%d')
+                        )
+                    except (ValueError, KeyError):
+                        pass  # Use original order if date parsing fails
+                
+                x_data = range(len(sorted_data))
+                y_data = [row[y_key] for row in sorted_data if isinstance(row[y_key], (int, float))]
+                x_labels = [str(row[x_key])[:10] if 'date' in x_key.lower() else str(row[x_key]) for row in sorted_data]
                 
                 if len(y_data) > 1:
-                    ax.plot(x_data[:len(y_data)], y_data, marker='o')
+                    ax.plot(x_data[:len(y_data)], y_data, marker='o', linewidth=2, markersize=6)
                     ax.set_title(f"{title} - Trend")
                     ax.set_ylabel(y_key.replace('_', ' ').title())
+                    ax.set_xlabel(x_key.replace('_', ' ').title())
                     ax.set_xticks(x_data[:len(x_labels)])
                     ax.set_xticklabels(x_labels, rotation=45, ha='right')
+                    ax.grid(True, alpha=0.3)
             
             # Convert to base64
             buffer = io.BytesIO()
             plt.tight_layout()
-            plt.savefig(buffer, format='png', dpi=100, bbox_inches='tight')
+            plt.savefig(buffer, format='png', dpi=200, bbox_inches='tight')
             buffer.seek(0)
             image_base64 = base64.b64encode(buffer.read()).decode()
             plt.close(fig)
@@ -887,12 +1073,17 @@ class VizCanvas(TextArea):
         return "\n".join([f"- {item}" for item in data[:20]]) + "\n"
     
     async def toggle_dashboard_mode(self) -> None:
-        """Toggle dashboard mode with auto-run queries"""
-        self.dashboard_mode = not self.dashboard_mode
-        if self.dashboard_mode:
-            await self._setup_dashboard_template()
+        """Toggle dashboard mode - unified interface now auto-detects schema"""
+        # In unified mode, always enable dashboard if schema is available
+        if self.output_schema:
+            self.dashboard_mode = True
+            self._update_template_content()
         else:
-            await self._setup_edit_template()
+            self.dashboard_mode = not self.dashboard_mode
+            if self.dashboard_mode:
+                await self._setup_dashboard_template()
+            else:
+                await self._setup_edit_template()
     
     async def export_content(self, export_type: str) -> None:
         """Export canvas content using schema export configurations"""
@@ -929,27 +1120,87 @@ class VizCanvas(TextArea):
             self.post_message(self.ExportCompleted("error", f"Export failed: {str(e)}"))
     
     async def _export_to_twitter(self, export_config: Dict[str, Any]) -> None:
-        """Export to Twitter/X (placeholder - would need real API integration)"""
+        """Export to Twitter/X using tweepy"""
         template = export_config.get('template', '')
         
         # Process template with current data
         processed_content = self._process_export_template(template)
         
-        # Placeholder - in real implementation would use tweepy
-        self.post_message(self.ExportCompleted("success", f"Tweet prepared: {processed_content[:100]}..."))
+        if not HAS_TWEEPY:
+            self.post_message(self.ExportCompleted("error", "tweepy not installed. Install with: pip install tweepy"))
+            return
+        
+        try:
+            # Get API credentials from export config or environment
+            api_key = export_config.get('api_key') or os.getenv('TWITTER_API_KEY')
+            api_secret = export_config.get('api_secret') or os.getenv('TWITTER_API_SECRET')
+            access_token = export_config.get('access_token') or os.getenv('TWITTER_ACCESS_TOKEN')
+            access_token_secret = export_config.get('access_token_secret') or os.getenv('TWITTER_ACCESS_TOKEN_SECRET')
+            
+            if not all([api_key, api_secret, access_token, access_token_secret]):
+                self.post_message(self.ExportCompleted("error", "Twitter API credentials not configured in schema or environment"))
+                return
+            
+            # Authenticate to Twitter
+            auth = tweepy.OAuthHandler(api_key, api_secret)
+            auth.set_access_token(access_token, access_token_secret)
+            api = tweepy.API(auth)
+            
+            # Truncate to Twitter's character limit
+            if len(processed_content) > 280:
+                processed_content = processed_content[:277] + "..."
+            
+            # Post tweet
+            tweet = api.update_status(processed_content)
+            
+            self.post_message(self.ExportCompleted("success", f"Tweet posted successfully: {tweet.id}"))
+            
+        except Exception as e:
+            self.post_message(self.ExportCompleted("error", f"Twitter export failed: {str(e)}"))
     
     async def _export_to_email(self, export_config: Dict[str, Any]) -> None:
-        """Export via email (placeholder)"""
+        """Export via email using smtplib"""
         template = export_config.get('template', '')
         subject = export_config.get('subject', 'Globule Export')
         
         processed_content = self._process_export_template(template)
         
-        # Placeholder - in real implementation would use smtplib
-        self.post_message(self.ExportCompleted("success", f"Email prepared: {subject}"))
+        try:
+            # Get email configuration
+            smtp_server = export_config.get('smtp_server') or os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+            smtp_port = export_config.get('smtp_port', 587)
+            email = export_config.get('email') or os.getenv('EMAIL')
+            password = export_config.get('password') or os.getenv('EMAIL_PASSWORD')
+            to_email = export_config.get('to_email') or email
+            
+            if not all([email, password, to_email]):
+                self.post_message(self.ExportCompleted("error", "Email credentials not configured in schema or environment"))
+                return
+            
+            # Create message
+            msg = MIMEMultipart()
+            msg['From'] = email
+            msg['To'] = to_email
+            msg['Subject'] = subject
+            
+            # Add body
+            msg.attach(MIMEText(processed_content, 'plain'))
+            
+            # Connect and send
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(email, password)
+            text = msg.as_string()
+            server.sendmail(email, to_email, text)
+            server.quit()
+            
+            self.post_message(self.ExportCompleted("success", f"Email sent successfully to {to_email}"))
+            
+        except Exception as e:
+            self.post_message(self.ExportCompleted("error", f"Email export failed: {str(e)}"))
     
     async def _export_to_pdf(self, export_config: Dict[str, Any]) -> None:
-        """Export to PDF (placeholder)"""
+        """Export to PDF using weasyprint"""
         template = export_config.get('template', '{full_template}')
         
         if template == '{full_template}':
@@ -957,29 +1208,131 @@ class VizCanvas(TextArea):
         else:
             content = self._process_export_template(template)
         
-        # Placeholder - in real implementation would use weasyprint or reportlab
-        filename = f"globule_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        self.post_message(self.ExportCompleted("success", f"PDF ready: {filename}"))
+        try:
+            # Try to import weasyprint at runtime
+            import weasyprint
+        except (ImportError, OSError) as e:
+            self.post_message(self.ExportCompleted("error", f"weasyprint not available. Install with: pip install weasyprint. Error: {e}"))
+            return
+        
+        try:
+            # Create filename
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = export_config.get('filename', f"globule_export_{timestamp}.pdf")
+            
+            # Ensure output directory exists
+            output_dir = export_config.get('output_dir', 'exports')
+            os.makedirs(output_dir, exist_ok=True)
+            filepath = os.path.join(output_dir, filename)
+            
+            # Convert markdown to HTML (basic conversion)
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }}
+                    h1, h2, h3 {{ color: #333; }}
+                    pre {{ background: #f4f4f4; padding: 10px; border-radius: 5px; }}
+                    table {{ border-collapse: collapse; width: 100%; }}
+                    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                    th {{ background-color: #f2f2f2; }}
+                </style>
+            </head>
+            <body>
+                <pre>{content}</pre>
+            </body>
+            </html>
+            """
+            
+            # Generate PDF
+            weasyprint.HTML(string=html_content).write_pdf(filepath)
+            
+            self.post_message(self.ExportCompleted("success", f"PDF created: {filepath}"))
+            
+        except Exception as e:
+            self.post_message(self.ExportCompleted("error", f"PDF export failed: {str(e)}"))
     
     async def _export_to_clipboard(self, export_config: Dict[str, Any]) -> None:
-        """Export to clipboard (placeholder)"""
+        """Export to clipboard using pyperclip"""
         template = export_config.get('template', '')
         
-        processed_content = self._process_export_template(template)
+        if not template:
+            processed_content = self.text
+        else:
+            processed_content = self._process_export_template(template)
         
-        # Placeholder - in real implementation would use pyperclip
-        self.post_message(self.ExportCompleted("success", "Content copied to clipboard"))
+        if not HAS_PYPERCLIP:
+            self.post_message(self.ExportCompleted("error", "pyperclip not installed. Install with: pip install pyperclip"))
+            return
+        
+        try:
+            # Copy to clipboard
+            pyperclip.copy(processed_content)
+            
+            # Get clipboard content length for confirmation
+            content_length = len(processed_content)
+            self.post_message(self.ExportCompleted("success", f"Content copied to clipboard ({content_length} characters)"))
+            
+        except Exception as e:
+            self.post_message(self.ExportCompleted("error", f"Clipboard export failed: {str(e)}"))
     
     def _process_export_template(self, template: str) -> str:
-        """Process export template with current query data"""
+        """Process export template with current query data using jinja2 or fallback"""
         if not template:
             return self.text
         
+        # Try jinja2 processing first if available
+        if HAS_JINJA2:
+            return self._process_jinja2_export_template(template)
+        else:
+            # Fallback to simple processing
+            return self._process_simple_export_template(template)
+    
+    def _process_jinja2_export_template(self, template: str) -> str:
+        """Process export template using jinja2"""
+        try:
+            # Create jinja2 environment
+            env = jinja2.Environment(loader=jinja2.BaseLoader(), autoescape=False)
+            template_obj = env.from_string(template)
+            
+            # Build template context
+            context = {
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'date': datetime.now().strftime('%Y-%m-%d'),
+                'time': datetime.now().strftime('%H:%M:%S'),
+                'year': datetime.now().year,
+                'month': datetime.now().month,
+                'day': datetime.now().day,
+                'query_data': self.query_data,
+                'schema': self.output_schema,
+                'full_content': self.text,
+            }
+            
+            # Add each query's results as top-level variables
+            for query_name, query_info in self.query_data.items():
+                context[query_name] = query_info['results']
+            
+            # Add helper functions
+            context['generate_viz'] = lambda query_name, viz_type='table': self._generate_visualization_for_template(query_name, viz_type)
+            context['get_summary'] = lambda data, field: self._get_summary_for_export(data, field)
+            
+            # Render template
+            return template_obj.render(**context)
+            
+        except Exception as e:
+            # Fallback to simple processing if jinja2 fails
+            return self._process_simple_export_template(template) + f"\n\n*Jinja2 processing error: {e}*"
+    
+    def _process_simple_export_template(self, template: str) -> str:
+        """Fallback simple export template processing"""
         content = template
         
         # Use the same template processing logic as _update_template_content
         content = content.replace('{timestamp}', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         content = content.replace('{date}', datetime.now().strftime('%Y-%m-%d'))
+        content = content.replace('{full_content}', self.text)
         
         # Process data placeholders
         for query_name, query_data in self.query_data.items():
@@ -992,6 +1345,24 @@ class VizCanvas(TextArea):
                         content = content.replace(placeholder, str(value))
         
         return content
+    
+    def _get_summary_for_export(self, data: List[Dict], field: str) -> str:
+        """Helper function for export templates to get summary statistics"""
+        if not data or not isinstance(data, list):
+            return "No data"
+        
+        try:
+            values = [row.get(field) for row in data if isinstance(row, dict) and field in row]
+            numeric_values = [v for v in values if isinstance(v, (int, float))]
+            
+            if numeric_values:
+                total = sum(numeric_values)
+                avg = total / len(numeric_values)
+                return f"Total: {total}, Average: {avg:.1f}, Count: {len(numeric_values)}"
+            else:
+                return f"Count: {len(values)}"
+        except Exception:
+            return "Summary unavailable"
     
     class ExportCompleted(Message):
         """Message sent when export is completed"""
@@ -1093,11 +1464,11 @@ class DashboardApp(App):
         ("tab", "switch_focus", "Switch Pane"),
         ("enter", "execute_action", "Execute"),
         ("ctrl+s", "save_draft", "Save MD"),
-        ("ctrl+d", "toggle_dashboard", "Dashboard"),
         ("ctrl+e", "expand_text", "AI Expand"),
         ("ctrl+r", "summarize_text", "AI Summarize"),
         ("ctrl+u", "summarize_text", "AI Summarize"),
         ("ctrl+x", "export_content", "Export"),
+        ("ctrl+t", "refresh_template", "Refresh"),
     ]
     
     def __init__(self, storage_manager: StorageManager, topic: Optional[str] = None):
@@ -1119,52 +1490,66 @@ class DashboardApp(App):
         yield Header()
         
         with Horizontal():
-            # Left pane: Analytics Palette (30%)
-            with Vertical(id="palette"):
-                yield AnalyticsPalette(
-                    self.storage_manager, 
-                    self.topic, 
-                    id="analytics-palette"
-                )
+            # Left pane: Thought Palette (30%)
+            yield ThoughtPalette(
+                self.storage_manager, 
+                self.topic, 
+                id="thought-palette"
+            )
             
             # Right pane: Visualization Canvas (70%)
             with Vertical(id="canvas"):
-                # Determine initial content based on output schema
+                # Determine initial content based on output schema - unified approach
                 if self.output_schema:
-                    initial_content = f"# 📊 {self.output_schema.get('title', 'Output Dashboard')}\n\n"
-                    initial_content += f"**Topic:** {self.topic}\n"
-                    initial_content += f"**Schema:** {self.output_schema_name}\n\n"
-                    initial_content += "## 🚀 Schema-Driven Mode\n\n"
-                    initial_content += "- Output schema detected and loaded\n"
-                    initial_content += "- Use Ctrl+D to activate dashboard mode (auto-run queries)\n"
-                    initial_content += "- Template will auto-populate with query results\n"
-                    initial_content += "- Use Ctrl+X to export using schema configurations\n\n"
-                    initial_content += "*Ready for schema-driven composition...*\n\n"
+                    # Schema-driven mode: Load template directly
+                    initial_content = self.output_schema.get('template', f"# {self.output_schema.get('title', 'Output Dashboard')}\n\n*Template loading...*")
                 else:
-                    initial_content = f"# Globule Canvas\n\n**Topic:** {self.topic or 'General'}\n\n"
-                    initial_content += "## Instructions\n\n"
+                    # Free exploration mode
+                    initial_content = f"# 📊 Globule Analytics\n\n**Topic:** {self.topic or 'General'}\n\n"
+                    initial_content += "## 🔍 Exploration Mode\n\n"
                     initial_content += "- Use the query explorer (left) to run analytics\n"
                     initial_content += "- Results will appear here as tables and charts\n"
-                    initial_content += "- Press Tab to switch between panes\n"
-                    initial_content += "- Press Ctrl+S to save as Markdown\n\n"
-                    initial_content += "## Analysis Results\n\n*Query results will appear here...*\n\n"
+                    initial_content += "- Drag query results to canvas\n"
+                    initial_content += "- Press Ctrl+S to save as Markdown\n"
+                    initial_content += "- Press Ctrl+X for export options\n\n"
+                    initial_content += "## Analysis Results\n\n*Query results will appear here as you execute them...*\n\n"
                 
                 yield VizCanvas(initial_content, self.output_schema, id="viz-canvas")
         
         yield Footer()
     
     async def on_mount(self) -> None:
-        """Initialize the dashboard on mount"""
+        """Initialize the dashboard on mount with enhanced schema support"""
         self.title = "Globule Analytics Dashboard"
         self.sub_title = f"Topic: {self.topic}" if self.topic else "Data Explorer"
         
         # Load recent globules and clusters
         try:
-            # Get recent globules
+            palette = self.query_one("#thought-palette", ThoughtPalette)
+            canvas = self.query_one("#viz-canvas", VizCanvas)
+            
+            # If output schema is detected, automatically set up dashboard mode
+            if self.output_schema:
+                canvas.dashboard_mode = True
+                canvas._update_template_content()  # Load template immediately
+                
+                # Auto-run the first few schema queries
+                schema_queries = palette._get_schema_queries()
+                if schema_queries:
+                    self.notify(f"🚀 Auto-loading {len(schema_queries)} schema queries...")
+                    
+                    # Execute key queries automatically
+                    for i, query in enumerate(schema_queries[:3]):  # Run first 3 queries
+                        try:
+                            await asyncio.sleep(0.2 * i)  # Stagger queries
+                            await palette.execute_query(query)
+                        except Exception as query_error:
+                            self.notify(f"⚠️ Query failed: {query['name']}")
+            
+            # Get recent globules for context
             recent_globules = await self.storage_manager.get_recent_globules(100)
             
-            # Filter by schema if valet topic detected
-            palette = self.query_one("#analytics-palette", AnalyticsPalette)
+            # Filter by detected schema if applicable  
             if palette.detected_schema in ['valet', 'valet_enhanced']:
                 # Filter for valet-related globules
                 valet_globules = [
@@ -1172,13 +1557,15 @@ class DashboardApp(App):
                     if g.parsed_data and ('valet' in json.dumps(g.parsed_data).lower())
                 ]
                 
-                # Auto-execute valet analytics query
-                if valet_globules:
-                    await palette.execute_query(
-                        "SELECT COUNT(*) as total_cars, AVG(julianday('now') - julianday(created_at)) as avg_days_ago FROM globules WHERE parsed_data LIKE '%valet%'"
-                    )
+                # If no output schema but input schema detected, run basic query
+                if not self.output_schema and valet_globules:
+                    await palette.execute_query({
+                        'name': 'Valet Overview',
+                        'sql': "SELECT COUNT(*) as total_entries, AVG(julianday('now') - julianday(created_at)) as avg_days_ago FROM globules WHERE parsed_data LIKE '%valet%'",
+                        'viz_type': 'metrics'
+                    })
             
-            # Try to load clusters
+            # Try to load semantic clusters
             try:
                 clustering_engine = SemanticClusteringEngine(self.storage_manager)
                 analysis = await clustering_engine.analyze_semantic_clusters(min_globules=2)
@@ -1200,22 +1587,25 @@ class DashboardApp(App):
                     
                     await palette.load_clusters(clusters)
             except Exception:
-                # Ignore clustering errors
+                # Ignore clustering errors silently
                 pass
             
-            # Focus on palette initially
-            palette.focus()
-            
+            # Initial focus setup
+            if self.output_schema:
+                canvas.focus()  # Focus on canvas if we have a schema template
+            else:
+                palette.focus()  # Focus on palette for exploration
+                
         except Exception as e:
             # Show error but don't crash
             canvas = self.query_one("#viz-canvas", VizCanvas)
             canvas.text += f"\n⚠️ **Initialization Warning:** {e}\n"
     
-    async def on_analytics_palette_query_executed(self, message: AnalyticsPalette.QueryExecuted) -> None:
+    async def on_thought_palette_query_executed(self, message: ThoughtPalette.QueryExecuted) -> None:
         """Handle query execution from palette"""
         canvas = self.query_one("#viz-canvas", VizCanvas)
         # Extract query name and viz type from palette query results
-        palette = self.query_one("#analytics-palette", AnalyticsPalette)
+        palette = self.query_one("#thought-palette", ThoughtPalette)
         query_name = "Query Result"
         viz_type = "table"
         
@@ -1227,13 +1617,13 @@ class DashboardApp(App):
         
         canvas.add_query_result(query_name, message.result, message.query_type, viz_type)
     
-    async def on_analytics_palette_globule_selected(self, message: AnalyticsPalette.GlobuleSelected) -> None:
+    async def on_thought_palette_globule_selected(self, message: ThoughtPalette.GlobuleSelected) -> None:
         """Handle globule selection from palette"""
         canvas = self.query_one("#viz-canvas", VizCanvas)
         # Add globule as text content
         canvas.text += f"\n\n## Selected Globule\n\n{message.globule.text}\n\n"
     
-    async def on_analytics_palette_query_result_dragged(self, message: AnalyticsPalette.QueryResultDragged) -> None:
+    async def on_thought_palette_query_result_dragged(self, message: ThoughtPalette.QueryResultDragged) -> None:
         """Handle query result dragged from palette to canvas"""
         canvas = self.query_one("#viz-canvas", VizCanvas)
         canvas.add_dragged_result(message.query_result)
@@ -1302,7 +1692,7 @@ class DashboardApp(App):
                 query = self.focused.value.strip()
                 if query:
                     # Get palette and execute query
-                    palette = self.query_one("#analytics-palette", AnalyticsPalette)
+                    palette = self.query_one("#thought-palette", ThoughtPalette)
                     asyncio.create_task(palette.execute_query(query))
     
     def action_save_draft(self) -> None:
@@ -1328,7 +1718,7 @@ class DashboardApp(App):
             
             with open(filepath, 'w', encoding='utf-8') as f:
                 # Add schema metadata if available
-                palette = self.query_one("#analytics-palette", AnalyticsPalette)
+                palette = self.query_one("#thought-palette", ThoughtPalette)
                 if palette.detected_schema:
                     f.write(f"---\nschema: {palette.detected_schema}\ntopic: {self.topic}\ngenerated: {datetime.now().isoformat()}\n---\n\n")
                 f.write(content)
@@ -1338,24 +1728,24 @@ class DashboardApp(App):
         except Exception as e:
             self.notify(f"❌ Save error: {e}")
     
-    async def action_toggle_dashboard(self) -> None:
-        """Toggle dashboard mode"""
+    async def action_refresh_template(self) -> None:
+        """Refresh template with current query data"""
         try:
             canvas = self.query_one("#viz-canvas", VizCanvas)
-            await canvas.toggle_dashboard_mode()
             
-            if canvas.dashboard_mode:
-                self.notify("📊 Dashboard Mode: ON - Auto-running queries...")
+            if canvas.output_schema:
+                canvas._update_template_content()
+                self.notify("✅ Template refreshed with latest data")
             else:
-                self.notify("📝 Edit Mode: ON")
+                self.notify("⚠️ No output schema template available")
                 
         except Exception as e:
-            self.notify(f"❌ Toggle error: {e}")
+            self.notify(f"❌ Refresh error: {e}")
     
     async def on_viz_canvas_dashboard_mode_activated(self, message: VizCanvas.DashboardModeActivated) -> None:
         """Handle dashboard mode activation - auto-run schema queries"""
         try:
-            palette = self.query_one("#analytics-palette", AnalyticsPalette)
+            palette = self.query_one("#thought-palette", ThoughtPalette)
             canvas = self.query_one("#viz-canvas", VizCanvas)
             
             # Get schema-specific queries to auto-run
@@ -1372,7 +1762,7 @@ class DashboardApp(App):
                             await asyncio.sleep(0.5)
                         
                         # Execute the query
-                        await palette.execute_query(query['sql'])
+                        await palette.execute_query(query)
                         
                         # Add progress update to canvas
                         canvas.text += f"🔄 Auto-executed: {query['name']}\n\n"
