@@ -136,6 +136,91 @@ class ThoughtPalette(Vertical):
         # OLD: yield Tree("Analytics", id="results-tree")
         # OLD: Clusters section with confidence bars
     
+    async def load_initial_content(self, topic: str):
+        """Load initial content into the palette tree based on topic"""
+        tree = self.query_one("#palette-tree", Tree)
+        tree.clear()
+        globules = await self._fetch_globules(topic)
+        clusters = self._cluster_globules(globules)
+        
+        if not clusters or not any(clusters.values()):
+            tree.root.add_leaf("No thoughts found - try searching above")
+            return
+        
+        for cluster_name, items in clusters.items():
+            if items:  # Only add non-empty clusters
+                cluster_node = tree.root.add(cluster_name, expand=True)
+                for item in items:
+                    cluster_node.add_leaf(item['label'], data=item['content'])
+    
+    async def _fetch_globules(self, topic: str) -> list:
+        """Fetch globules using semantic search with fallback to text search"""
+        try:
+            # Get DB path from storage manager if available
+            if hasattr(self.storage_manager, 'db_path'):
+                db_path = str(self.storage_manager.db_path)
+            else:
+                # Fallback path - use the correct filename from config
+                import os
+                db_path = os.path.expanduser("~/.globule/data/globules.db")
+            
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            # For now, use text search since semantic search requires more setup
+            # This gives immediate results while vector search can be added later
+            cursor.execute(
+                "SELECT id, text, parsed_data FROM globules WHERE text LIKE ? LIMIT 20", 
+                (f"%{topic}%",)
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            
+            return [
+                {
+                    'id': row[0], 
+                    'content': row[1] or '', 
+                    'parsed_data': json.loads(row[2]) if row[2] else {}
+                } 
+                for row in rows
+            ]
+        except Exception as e:
+            # Return empty on error; log if needed for debugging
+            return []
+
+    def _cluster_globules(self, globules: list) -> dict:
+        """Simple clustering of globules by category or content type"""
+        clusters = {}
+        
+        for g in globules:
+            # Try to get category from parsed_data
+            parsed_data = g.get('parsed_data', {})
+            if isinstance(parsed_data, dict):
+                category = parsed_data.get('category', 'Uncategorized')
+                # Also check for other common fields like 'type' or 'schema'
+                if not category or category == 'Uncategorized':
+                    category = parsed_data.get('type', parsed_data.get('schema', 'Uncategorized'))
+            else:
+                category = 'Uncategorized'
+            
+            # Create cluster if it doesn't exist
+            if category not in clusters:
+                clusters[category] = []
+            
+            # Create a clean label for the tree item
+            content = g.get('content', '')
+            label = content[:50] + '...' if len(content) > 50 else content
+            label = label.replace('\n', ' ').strip()
+            
+            clusters[category].append({
+                'label': label,
+                'content': content,
+                'id': g.get('id'),
+                'parsed_data': g.get('parsed_data', {})
+            })
+        
+        return clusters
+    
     def on_input_submitted(self, event: Input.Submitted) -> None:
         pass  # Will handle search later
 
@@ -1527,6 +1612,10 @@ class DashboardApp(App):
         try:
             palette = self.query_one("#thought-palette", ThoughtPalette)
             canvas = self.query_one("#viz-canvas", VizCanvas)
+            
+            # Load initial content into the palette based on topic
+            topic = self.topic or "valet"  # Use provided topic or default to "valet" for testing
+            await palette.load_initial_content(topic)
             
             # If output schema is detected, automatically set up dashboard mode
             if self.output_schema:
