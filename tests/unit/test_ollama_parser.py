@@ -11,7 +11,7 @@ import asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
 from typing import Dict, Any
 
-from globule.services.parsing.ollama_parser import OllamaParser, ParsedContent
+from globule.services.parsing.ollama_parser import OllamaParser
 from globule.config.settings import GlobuleConfig
 
 

@@ -211,4 +211,5 @@ __marimo__/
 # Globule specific
 .claude/
 repomix-output.xml
+repo-overview.xml
 docs/
