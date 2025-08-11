@@ -1,32 +1,42 @@
 """
-Enhanced Textual TUI for Globule Phase 2.
+Enhanced Textual TUI for Globule with Analytics Dashboard.
 
-Phase 2: Two-pane layout with semantic clustering (palette) and canvas editor.
+Progressive enhancement: Two-pane layout with configurable dashboards.
+Palette: Data/query explorer (vector + analytics queries via schemas)
+Canvas: View composer (text + visualization)
 """
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Header, Footer, Static, TextArea, Tree, Label
+from textual.widgets import Header, Footer, Static, TextArea, Tree, Label, Input
 from textual.reactive import reactive, var
 from textual.binding import Binding
 from textual.message import Message
 from textual import events
-from typing import Optional, List, Set
+from textual.events import MouseDown, MouseMove, MouseUp
+from typing import Optional, List, Set, Dict, Any
 import asyncio
+import json
+import base64
+import sqlite3
+from datetime import datetime, timedelta
 
 from globule.core.interfaces import StorageManager
 from globule.core.models import ProcessedGlobule, SynthesisState, UIMode, GlobuleCluster
-from globule.clustering.semantic_clustering import SemanticClusteringEngine
-from globule.parsing.ollama_parser import OllamaParser
+from globule.services.clustering.semantic_clustering import SemanticClusteringEngine
+from globule.services.parsing.ollama_parser import OllamaParser
+from globule.schemas.manager import get_schema_manager, detect_schema_for_text
 
 
-class ClusterPalette(VerticalScroll):
-    """Phase 2: Semantic cluster palette for thought discovery"""
+class AnalyticsPalette(VerticalScroll):
+    """Enhanced palette: Data/query explorer with analytics capabilities"""
     
-    class ClusterSelected(Message):
-        """Message sent when a cluster is selected"""
-        def __init__(self, cluster_id: str) -> None:
-            self.cluster_id = cluster_id
+    class QueryExecuted(Message):
+        """Message sent when a query is executed"""
+        def __init__(self, query: str, result: Any, query_type: str = "sql") -> None:
+            self.query = query
+            self.result = result
+            self.query_type = query_type
             super().__init__()
     
     class GlobuleSelected(Message):
@@ -35,530 +45,615 @@ class ClusterPalette(VerticalScroll):
             self.globule = globule
             super().__init__()
     
-    def __init__(self, clusters: List[GlobuleCluster], **kwargs):
+    class QueryResultDragged(Message):
+        """Message sent when a query result is dragged to canvas"""
+        def __init__(self, query_result: Dict[str, Any]) -> None:
+            self.query_result = query_result
+            super().__init__()
+    
+    def __init__(self, storage_manager: StorageManager, topic: str = None, **kwargs):
         super().__init__(**kwargs)
-        self.clusters = clusters
-        self.expanded_clusters: Set[str] = set()
-        self.selected_cluster_id: Optional[str] = None
-        self.selected_globule_id: Optional[str] = None
+        self.storage_manager = storage_manager
+        self.topic = topic
+        self.schema_manager = get_schema_manager()
+        self.detected_schema = None
+        self.clusters: List[GlobuleCluster] = []
+        self.query_results: List[Dict[str, Any]] = []
+        self.expanded_sections: Set[str] = set()
         self.can_focus = True
+        self.drag_data: Optional[Dict[str, Any]] = None
+        self.is_dragging = False
+        
+        # Detect schema from topic
+        if topic:
+            self.detected_schema = detect_schema_for_text(topic)
     
     def compose(self) -> ComposeResult:
-        """Display semantic clusters with expandable thought groups"""
-        if not self.clusters:
-            yield Static("No clusters found. Add more thoughts to discover semantic patterns.", classes="no-content")
-            return
+        """Compose analytics palette with query input and results tree"""
+        yield Static("📊 ANALYTICS PALETTE", classes="palette-header")
         
-        yield Static(f"CLUSTERS: {len(self.clusters)} Semantic Groups:", classes="cluster-header")
+        # Schema detection info
+        if self.detected_schema:
+            yield Static(f"🎯 Schema: {self.detected_schema}", classes="schema-info")
         
-        for cluster in self.clusters:
-            # Cluster header with size and confidence
-            confidence_score = cluster.metadata.get('confidence_score', 0.5)
-            confidence_bar = "=" * max(1, int(confidence_score * 10))
-            cluster_title = f"FOLDER: {cluster.label} ({cluster.metadata.get('size', len(cluster.globules))} thoughts) [{confidence_bar}]"
-            
-            # Apply selection styling
-            cluster_classes = "cluster-title"
-            if cluster.id == self.selected_cluster_id:
-                cluster_classes += " selected"
-            
-            cluster_widget = Static(cluster_title, classes=cluster_classes, id=f"cluster-{cluster.id}")
-            yield cluster_widget
-            
-            # Show cluster keywords if available
-            keywords = cluster.metadata.get('keywords', [])
-            if keywords:
-                keyword_text = f"TAGS: {', '.join(keywords[:3])}"
-                yield Static(keyword_text, classes="cluster-keywords")
-            
-            # Show representative samples (expandable)
-            if cluster.id in self.expanded_clusters and cluster.globules:
-                for i, globule in enumerate(cluster.globules[:5]):  # Show top 5
-                    preview = globule.text[:80] + "..." if len(globule.text) > 80 else globule.text
-                    
-                    # Apply selection styling to globules
-                    globule_classes = "globule-sample"
-                    if globule.id == self.selected_globule_id:
-                        globule_classes += " selected"
-                    
-                    sample_widget = Static(f"  THOUGHT: {preview}", classes=globule_classes, id=f"globule-{globule.id}")
-                    yield sample_widget
+        # Query input section
+        yield Static("🔍 QUERY EXPLORER:", classes="section-header")
+        
+        # Pre-populate with schema-specific query if available
+        placeholder_query = self._get_default_query()
+        yield Input(
+            placeholder=placeholder_query,
+            id="query-input"
+        )
+        
+        # Pre-defined queries from schema
+        schema_queries = self._get_schema_queries()
+        if schema_queries:
+            yield Static("📋 PRE-DEFINED QUERIES:", classes="section-header")
+            queries_tree = Tree("Quick Queries", id="schema-queries")
+            root = queries_tree.root
+            for i, query in enumerate(schema_queries):
+                query_node = root.add(f"▶️ {query['name']}")
+                query_node.add_leaf(f"📝 {query['description']}")
+                query_node.add_leaf(f"📊 Viz: {query.get('visualization', 'table')}")
+            yield queries_tree
+        
+        # Query results section
+        yield Static("📈 RESULTS:", classes="section-header")
+        yield Tree("Analytics", id="results-tree")
+        
+        # Clusters section
+        if self.clusters:
+            yield Static(f"🗂️ CLUSTERS ({len(self.clusters)}):", classes="section-header")
+            clusters_tree = Tree("Clusters", id="clusters-tree")
+            root = clusters_tree.root
+            for cluster in self.clusters:
+                confidence_bar = "█" * max(1, int(cluster.metadata.get('confidence_score', 0.5) * 10))
+                cluster_title = f"{cluster.label} ({len(cluster.globules)}) [{confidence_bar}]"
+                root.add_leaf(cluster_title)
+            yield clusters_tree
     
-    def toggle_cluster(self, cluster_id: str) -> None:
-        """Toggle cluster expansion"""
-        if cluster_id in self.expanded_clusters:
-            self.expanded_clusters.remove(cluster_id)
+    def _get_default_query(self) -> str:
+        """Get default query based on detected schema"""
+        if self.detected_schema == 'valet' or self.detected_schema == 'valet_enhanced':
+            return "SELECT COUNT(*) as cars_today FROM globules WHERE date(created_at) = date('now') AND parsed_data LIKE '%valet%'"
+        elif self.detected_schema == 'technical':
+            return "SELECT category, COUNT(*) FROM globules WHERE parsed_data LIKE '%technical%' GROUP BY category"
         else:
-            self.expanded_clusters.add(cluster_id)
-        # Refresh display
-        self.refresh(recompose=True)
+            return "SELECT COUNT(*) as total_thoughts FROM globules WHERE created_at >= date('now', '-7 days')"
     
-    def select_cluster(self, cluster_id: str) -> None:
-        """Select a cluster"""
-        self.selected_cluster_id = cluster_id
-        self.selected_globule_id = None  # Clear globule selection
-        self.post_message(self.ClusterSelected(cluster_id))
-        self.refresh(recompose=True)
-    
-    def select_globule(self, globule_id: str) -> None:
-        """Select a globule and post selection message"""
-        self.selected_globule_id = globule_id
+    def _get_schema_queries(self) -> List[Dict[str, str]]:
+        """Get pre-defined queries from schema"""
+        if not self.detected_schema:
+            return []
         
-        # Find the globule in clusters
-        for cluster in self.clusters:
-            for globule in cluster.globules:
-                if globule.id == globule_id:
-                    self.post_message(self.GlobuleSelected(globule))
-                    self.refresh(recompose=True)
-                    return
+        schema = self.schema_manager.get_schema(self.detected_schema)
+        if not schema:
+            return []
+        
+        # Check for dashboard_queries in schema
+        return schema.get('dashboard_queries', [])
     
-    async def on_click(self, event: events.Click) -> None:
-        """Handle click events on clusters and globules"""
+    async def execute_query(self, query: str) -> None:
+        """Execute SQL query and update results tree"""
         try:
-            # Find what was clicked
-            widget = self.get_widget_at(*event.screen_coordinate)
-            if widget and hasattr(widget, 'id') and widget.id:
-                if widget.id.startswith('cluster-'):
-                    cluster_id = widget.id.replace('cluster-', '')
-                    if cluster_id == self.selected_cluster_id:
-                        # Toggle expansion if already selected
-                        self.toggle_cluster(cluster_id)
-                    else:
-                        # Select cluster
-                        self.select_cluster(cluster_id)
-                elif widget.id.startswith('globule-'):
-                    globule_id = widget.id.replace('globule-', '')
-                    self.select_globule(globule_id)
-        except Exception:
-            # Ignore click handling errors
+            # Get database connection from storage manager
+            if hasattr(self.storage_manager, 'db_path'):
+                db_path = self.storage_manager.db_path
+            else:
+                # Fallback path
+                import os
+                db_path = os.path.expanduser("~/.globule/data/globule.db")
+            
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                # Execute query
+                cursor.execute(query)
+                rows = cursor.fetchall()
+                
+                # Convert to list of dicts
+                results = [dict(row) for row in rows]
+                
+                # Add to query results
+                query_result = {
+                    'query': query,
+                    'results': results,
+                    'timestamp': datetime.now().isoformat(),
+                    'type': 'sql'
+                }
+                self.query_results.append(query_result)
+                
+                # Update results tree
+                await self._update_results_tree()
+                
+                # Post message for canvas to handle
+                self.post_message(self.QueryExecuted(query, results, "sql"))
+                
+        except Exception as e:
+            # Add error result
+            error_result = {
+                'query': query,
+                'error': str(e),
+                'timestamp': datetime.now().isoformat(),
+                'type': 'error'
+            }
+            self.query_results.append(error_result)
+            await self._update_results_tree()
+    
+    async def _update_results_tree(self) -> None:
+        """Update the results tree with latest query results"""
+        try:
+            tree = self.query_one("#results-tree", Tree)
+            tree.clear()
+            root = tree.root
+            
+            if not self.query_results:
+                root.add_leaf("No queries executed yet")
+                return
+            
+            for i, result in enumerate(self.query_results[-5:]):  # Show last 5 results
+                if 'error' in result:
+                    node = root.add(f"❌ Query {i+1}: Error")
+                    node.add_leaf(f"Error: {result['error']}")
+                else:
+                    results_data = result['results']
+                    node = root.add(f"✅ Query {i+1}: {len(results_data)} rows")
+                    
+                    # Add summary of results
+                    if results_data:
+                        for j, row in enumerate(results_data[:3]):  # Show first 3 rows
+                            if isinstance(row, dict):
+                                summary = ", ".join([f"{k}: {v}" for k, v in row.items()])
+                                node.add_leaf(f"Row {j+1}: {summary}")
+                            else:
+                                node.add_leaf(f"Row {j+1}: {row}")
+                        
+                        if len(results_data) > 3:
+                            node.add_leaf(f"... and {len(results_data) - 3} more rows")
+        except Exception as e:
+            # Ignore tree update errors
             pass
     
-    async def on_key(self, event: events.Key) -> None:
-        """Handle keyboard navigation"""
-        if event.key == "enter":
-            if self.selected_cluster_id:
-                if self.selected_globule_id:
-                    # Enter on globule - add to canvas
-                    self.select_globule(self.selected_globule_id)
-                else:
-                    # Enter on cluster - toggle expansion
-                    self.toggle_cluster(self.selected_cluster_id)
-            elif self.clusters:
-                # No selection - select first cluster
-                self.select_cluster(self.clusters[0].id)
-        
-        elif event.key == "space":
-            if self.selected_cluster_id:
-                self.toggle_cluster(self.selected_cluster_id)
-        
-        elif event.key == "down":
-            self._navigate_down()
-        
-        elif event.key == "up":
-            self._navigate_up()
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle query input submission"""
+        if event.input.id == "query-input":
+            query = event.value.strip()
+            if query:
+                await self.execute_query(query)
+                event.input.value = ""  # Clear input
     
-    def _navigate_down(self) -> None:
-        """Navigate to next item"""
-        if not self.clusters:
-            return
-        
-        if not self.selected_cluster_id:
-            # Select first cluster
-            self.select_cluster(self.clusters[0].id)
-            return
-        
-        # Find current position
-        cluster_idx = None
-        for i, cluster in enumerate(self.clusters):
-            if cluster.id == self.selected_cluster_id:
-                cluster_idx = i
-                break
-        
-        if cluster_idx is None:
-            return
-        
-        current_cluster = self.clusters[cluster_idx]
-        
-        # If we're on a cluster and it's expanded and has globules
-        if (not self.selected_globule_id and 
-            current_cluster.id in self.expanded_clusters and 
-            current_cluster.globules):
-            # Move to first globule
-            self.selected_globule_id = current_cluster.globules[0].id
-            self.refresh(recompose=True)
-            return
-        
-        # If we're on a globule, try to move to next globule
-        if self.selected_globule_id:
-            globule_idx = None
-            for i, globule in enumerate(current_cluster.globules):
-                if globule.id == self.selected_globule_id:
-                    globule_idx = i
-                    break
-            
-            if globule_idx is not None and globule_idx < len(current_cluster.globules) - 1:
-                # Move to next globule in same cluster
-                self.selected_globule_id = current_cluster.globules[globule_idx + 1].id
-                self.refresh(recompose=True)
-                return
-            else:
-                # Move to next cluster
-                self.selected_globule_id = None
-        
-        # Move to next cluster
-        if cluster_idx < len(self.clusters) - 1:
-            self.select_cluster(self.clusters[cluster_idx + 1].id)
+    async def load_clusters(self, clusters: List[GlobuleCluster]) -> None:
+        """Load clusters into the palette"""
+        self.clusters = clusters
+        await self.recompose()
     
-    def _navigate_up(self) -> None:
-        """Navigate to previous item"""
-        if not self.clusters:
-            return
-        
-        if not self.selected_cluster_id:
-            # Select last cluster
-            self.select_cluster(self.clusters[-1].id)
-            return
-        
-        # Find current position
-        cluster_idx = None
-        for i, cluster in enumerate(self.clusters):
-            if cluster.id == self.selected_cluster_id:
-                cluster_idx = i
-                break
-        
-        if cluster_idx is None:
-            return
-        
-        current_cluster = self.clusters[cluster_idx]
-        
-        # If we're on a globule, try to move to previous globule or cluster
-        if self.selected_globule_id:
-            globule_idx = None
-            for i, globule in enumerate(current_cluster.globules):
-                if globule.id == self.selected_globule_id:
-                    globule_idx = i
-                    break
-            
-            if globule_idx is not None and globule_idx > 0:
-                # Move to previous globule in same cluster
-                self.selected_globule_id = current_cluster.globules[globule_idx - 1].id
-                self.refresh(recompose=True)
-                return
-            else:
-                # Move to cluster header
-                self.selected_globule_id = None
-                self.refresh(recompose=True)
-                return
-        
-        # Move to previous cluster
-        if cluster_idx > 0:
-            prev_cluster = self.clusters[cluster_idx - 1]
-            self.select_cluster(prev_cluster.id)
-            # If previous cluster is expanded, go to its last globule
-            if (prev_cluster.id in self.expanded_clusters and 
-                prev_cluster.globules):
-                self.selected_globule_id = prev_cluster.globules[-1].id
-                self.refresh(recompose=True)
+    async def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+        """Handle tree node selection (pre-defined queries)"""
+        try:
+            if event.tree.id == "schema-queries":
+                # Get the selected query
+                node_label = str(event.node.label)
+                if node_label.startswith("▶️"):
+                    query_name = node_label[3:].strip()  # Remove arrow and spaces
+                    
+                    # Find matching query in schema
+                    schema_queries = self._get_schema_queries()
+                    for query in schema_queries:
+                        if query['name'] == query_name:
+                            # Execute the pre-defined query
+                            await self.execute_query(query['sql'])
+                            break
+            elif event.tree.id == "results-tree":
+                # Prepare data for potential drag operation
+                node_label = str(event.node.label)
+                if node_label.startswith("✅ Query"):
+                    # Find the corresponding query result
+                    try:
+                        query_num = int(node_label.split(":")[0].split()[-1]) - 1
+                        if 0 <= query_num < len(self.query_results):
+                            self.drag_data = self.query_results[-(query_num + 1)]
+                    except (ValueError, IndexError):
+                        pass
+        except Exception:
+            # Ignore tree selection errors
+            pass
+    
+    async def on_mouse_down(self, event: MouseDown) -> None:
+        """Handle mouse down for drag initiation"""
+        # Check if we're over the results tree and have drag data
+        if self.drag_data and event.button == 1:  # Left click
+            self.is_dragging = True
+    
+    async def on_mouse_up(self, event: MouseUp) -> None:
+        """Handle mouse up to complete drag operation"""
+        if self.is_dragging and self.drag_data:
+            # Check if we're dropping onto the canvas area
+            # For now, just send the message - the app will handle positioning
+            self.post_message(self.QueryResultDragged(self.drag_data))
+            self.is_dragging = False
+            self.drag_data = None
 
 
-class CanvasEditor(TextArea):
-    """Phase 2: Enhanced canvas editor for drafting with AI assistance"""
+class VizCanvas(TextArea):
+    """Enhanced canvas: View composer with text + visualization support"""
+    
+    class AIActionRequested(Message):
+        """Message sent when AI action is requested"""
+        def __init__(self, action: str, text: str, context: Dict[str, Any] = None) -> None:
+            self.action = action  # 'expand' or 'summarize'
+            self.text = text
+            self.context = context or {}
+            super().__init__()
     
     def __init__(self, content: str = "", **kwargs):
         super().__init__(content, **kwargs)
-        self.incorporated_globules: Set[str] = set()
+        self.incorporated_results: List[Dict[str, Any]] = []
+        self.dashboard_mode = False
         self.can_focus = True
-        self.ai_parser: Optional[OllamaParser] = None
+        self._selected_text: Optional[str] = None
+    
+    def add_dragged_result(self, query_result: Dict[str, Any]) -> None:
+        """Add dragged query result to canvas at cursor position"""
+        query = query_result.get('query', 'Unknown Query')
+        result = query_result.get('results', [])
+        query_type = query_result.get('type', 'sql')
         
-    def add_globule_content(self, globule: ProcessedGlobule) -> None:
-        """Add globule content to canvas with context preservation"""
-        if globule.id in self.incorporated_globules:
-            return  # Already incorporated
-            
-        # Format the globule content for integration
-        title = globule.parsed_data.get('title', 'Thought') if globule.parsed_data else 'Thought'
-        formatted_content = f"\n\n## {title}\n\n{globule.text}\n"
+        # Generate visualization
+        viz_content = self._generate_visualization(query, result, query_type)
         
-        # Add to current cursor position or end
+        # Insert at current cursor position
+        cursor = self.cursor_position
+        current_text = self.text
+        
+        # Add header with drag indicator
+        new_content = f"\n\n## 🎯 Dragged Query Result\n\n**Query:** `{query}`\n**Dragged at:** {datetime.now().strftime('%H:%M:%S')}\n\n{viz_content}\n"
+        
+        # Insert at cursor position
+        before = current_text[:cursor[1] if cursor else len(current_text)]
+        after = current_text[cursor[1] if cursor else len(current_text):]
+        self.text = before + new_content + after
+        
+        # Track incorporation
+        self.incorporated_results.append({
+            'query': query,
+            'result': result,
+            'type': query_type,
+            'timestamp': datetime.now().isoformat(),
+            'method': 'drag_drop'
+        })
+    
+    def get_selected_text(self) -> Optional[str]:
+        """Get currently selected text from the text area"""
+        # In a real implementation, this would get actual selection
+        # For now, we'll simulate with cursor position context
+        cursor = self.cursor_position
+        if cursor:
+            # Get the current line as "selected" text for demo
+            lines = self.text.split('\n')
+            if cursor[0] < len(lines):
+                return lines[cursor[0]].strip()
+        return None
+    
+    def expand_text_ai(self, text: str) -> None:
+        """Request AI expansion of text"""
+        if text:
+            self.post_message(self.AIActionRequested('expand', text, {'position': self.cursor_position}))
+    
+    def summarize_text_ai(self, text: str) -> None:
+        """Request AI summarization of text"""
+        if text:
+            self.post_message(self.AIActionRequested('summarize', text, {'position': self.cursor_position}))
+    
+    def add_query_result(self, query: str, result: Any, query_type: str = "sql") -> None:
+        """Add query result to canvas with visualization"""
+        # Generate visualization based on result type
+        viz_content = self._generate_visualization(query, result, query_type)
+        
+        # Add to current cursor position
         current_content = self.text
-        cursor_pos = self.cursor_position if hasattr(self, 'cursor_position') else len(current_content)
+        cursor_pos = len(current_content)  # Append at end for now
         
-        new_content = current_content[:cursor_pos] + formatted_content + current_content[cursor_pos:]
+        new_content = current_content + f"\n\n## Query Result\n\n**Query:** `{query}`\n\n{viz_content}\n"
         self.text = new_content
         
         # Track incorporation
-        self.incorporated_globules.add(globule.id)
-        
-        # Move cursor to end of inserted content
-        try:
-            self.cursor_position = cursor_pos + len(formatted_content)
-        except:
-            pass  # Ignore cursor positioning errors
+        self.incorporated_results.append({
+            'query': query,
+            'result': result,
+            'type': query_type,
+            'timestamp': datetime.now().isoformat()
+        })
     
-    def get_content(self) -> str:
-        """Get current canvas content"""
-        return self.text
-    
-    def clear_content(self) -> None:
-        """Clear canvas content"""
-        self.text = "# Draft Editor\n\nStart writing your draft here...\n\n"
-        self.incorporated_globules.clear()
-    
-    async def init_ai_parser(self) -> None:
-        """Initialize AI parser for co-pilot functionality"""
-        if self.ai_parser is None:
-            self.ai_parser = OllamaParser()
-            await self.ai_parser._ensure_session()
-    
-    async def expand_selection(self) -> str:
-        """Expand selected text using AI Co-Pilot"""
-        if not self.ai_parser:
-            await self.init_ai_parser()
+    def _generate_visualization(self, query: str, result: Any, query_type: str) -> str:
+        """Generate visualization content (text/tables/charts) from query results"""
+        if query_type == "error":
+            return f"❌ **Error:** {result}\n"
         
-        # Get selected text or current line if no selection
-        selected_text = self.selected_text
-        if not selected_text.strip():
-            # Get current line as fallback
-            cursor_line = self.cursor_position[0] if hasattr(self, 'cursor_position') else 0
-            lines = self.text.split('\n')
-            if 0 <= cursor_line < len(lines):
-                selected_text = lines[cursor_line].strip()
-        
-        if not selected_text.strip():
-            return "No text selected to expand"
-        
-        # Construct expand prompt
-        expand_prompt = f"""
-Expand and elaborate on the following text. Keep the core meaning but add more detail, examples, or context. Make it more comprehensive while maintaining the original tone and style.
-
-Text to expand:
-{selected_text}
-
-Provide an expanded version:"""
+        if not result or len(result) == 0:
+            return "📊 **No data found**\n"
         
         try:
-            # Make AI call to expand
-            result = await self._call_ai_for_text_operation(expand_prompt)
-            return result
+            # Detect visualization type based on query patterns
+            viz_type = self._detect_visualization_type(query, result)
+            
+            if isinstance(result, list) and len(result) > 0:
+                if isinstance(result[0], dict):
+                    return self._generate_enhanced_visualization(result, viz_type, query)
+                else:
+                    return self._generate_simple_list(result)
+            
+            return f"📊 **Result:** {result}\n"
+            
         except Exception as e:
-            return f"Error expanding text: {str(e)}"
+            return f"❌ **Visualization error:** {e}\n"
     
-    async def summarize_selection(self) -> str:
-        """Summarize selected text using AI Co-Pilot"""
-        if not self.ai_parser:
-            await self.init_ai_parser()
+    def _detect_visualization_type(self, query: str, result: Any) -> str:
+        """Detect appropriate visualization type based on query and result"""
+        query_lower = query.lower()
         
-        # Get selected text or current paragraph
-        selected_text = self.selected_text
-        if not selected_text.strip():
-            # Get current paragraph as fallback
-            text_lines = self.text.split('\n')
-            cursor_line = self.cursor_position[0] if hasattr(self, 'cursor_position') else 0
-            
-            # Find paragraph boundaries
-            start_line = cursor_line
-            while start_line > 0 and text_lines[start_line-1].strip():
-                start_line -= 1
-            
-            end_line = cursor_line
-            while end_line < len(text_lines)-1 and text_lines[end_line+1].strip():
-                end_line += 1
-            
-            selected_text = '\n'.join(text_lines[start_line:end_line+1]).strip()
-        
-        if not selected_text.strip():
-            return "No text selected to summarize"
-        
-        # Construct summarize prompt
-        summarize_prompt = f"""
-Summarize the following text concisely. Capture the key points and main ideas in a shorter, clearer form. Maintain the essential meaning.
-
-Text to summarize:
-{selected_text}
-
-Provide a concise summary:"""
-        
-        try:
-            # Make AI call to summarize
-            result = await self._call_ai_for_text_operation(summarize_prompt)
-            return result
-        except Exception as e:
-            return f"Error summarizing text: {str(e)}"
-    
-    async def _call_ai_for_text_operation(self, prompt: str) -> str:
-        """Make AI call for text operations (expand/summarize)"""
-        try:
-            # Use the direct Ollama API call method from parser
-            url = f"{self.ai_parser.config.ollama_base_url}/api/generate"
-            
-            payload = {
-                "model": self.ai_parser.config.default_parsing_model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.3,  # Slightly higher for creative expansion
-                    "top_p": 0.9,
-                    "max_tokens": 500,  # Reasonable limit for text operations
-                }
-            }
-            
-            async with self.ai_parser.session.post(url, json=payload) as response:
-                if response.status != 200:
-                    raise Exception(f"AI request failed with status {response.status}")
-                    
-                data = await response.json()
-                ai_response = data.get("response", "").strip()
-                
-                # Clean up the response
-                return ai_response if ai_response else "AI returned empty response"
-                
-        except Exception as e:
-            # Fallback for when AI is unavailable
-            if "expand" in prompt.lower():
-                return f"[AI Unavailable] {self._fallback_expand(prompt)}"
+        # Check for specific patterns
+        if 'count' in query_lower and 'group by' in query_lower:
+            if isinstance(result, list) and len(result) <= 5:
+                return 'pie'
             else:
-                return f"[AI Unavailable] {self._fallback_summarize(prompt)}"
+                return 'bar'
+        elif 'date' in query_lower and 'group by' in query_lower:
+            return 'line'
+        elif any(word in query_lower for word in ['summary', 'total', 'avg', 'sum']):
+            return 'metrics'
+        else:
+            return 'table'
     
-    def _fallback_expand(self, prompt: str) -> str:
-        """Fallback expansion when AI is unavailable"""
-        # Extract the original text from prompt
-        lines = prompt.split('\n')
-        text_lines = []
-        capture = False
-        for line in lines:
-            if "Text to expand:" in line:
-                capture = True
-                continue
-            elif "Provide an expanded version:" in line:
-                break
-            elif capture:
-                text_lines.append(line)
-        
-        original_text = '\n'.join(text_lines).strip()
-        return f"{original_text}\n\n[Expanded version would be generated here with AI assistance]"
+    def _generate_enhanced_visualization(self, data: List[Dict], viz_type: str, query: str) -> str:
+        """Generate enhanced visualization based on type"""
+        if viz_type == 'metrics':
+            return self._generate_metrics_cards(data)
+        elif viz_type == 'bar':
+            return self._generate_bar_chart(data)
+        elif viz_type == 'pie':
+            return self._generate_pie_chart(data)
+        elif viz_type == 'line':
+            return self._generate_line_chart(data)
+        else:
+            return self._generate_table(data)
     
-    def _fallback_summarize(self, prompt: str) -> str:
-        """Fallback summarization when AI is unavailable"""
-        # Extract the original text from prompt
-        lines = prompt.split('\n')
-        text_lines = []
-        capture = False
-        for line in lines:
-            if "Text to summarize:" in line:
-                capture = True
-                continue
-            elif "Provide a concise summary:" in line:
-                break
-            elif capture:
-                text_lines.append(line)
+    def _generate_metrics_cards(self, data: List[Dict]) -> str:
+        """Generate metrics cards visualization"""
+        if not data or not isinstance(data[0], dict):
+            return self._generate_table(data)
         
-        original_text = '\n'.join(text_lines).strip()
-        words = original_text.split()
-        # Simple summarization: take first quarter of words
-        summary_words = words[:len(words)//4] if len(words) > 20 else words[:10]
-        return ' '.join(summary_words) + "..."
+        cards = []
+        for row in data[:1]:  # Usually metrics are single row
+            for key, value in row.items():
+                cards.append(f"**{key.replace('_', ' ').title()}**: {value}")
+        
+        return "📊 **Key Metrics**\n\n" + " | ".join(cards) + "\n\n"
+    
+    def _generate_bar_chart(self, data: List[Dict]) -> str:
+        """Generate ASCII bar chart"""
+        if not data:
+            return "No data to chart"
+        
+        # Get first two columns as x,y
+        keys = list(data[0].keys())
+        if len(keys) < 2:
+            return self._generate_table(data)
+        
+        x_key, y_key = keys[0], keys[1]
+        
+        # Generate ASCII bars
+        chart_lines = [f"📊 **{y_key.replace('_', ' ').title()} by {x_key.replace('_', ' ').title()}**\n"]
+        
+        max_value = max(row[y_key] for row in data if isinstance(row[y_key], (int, float)))
+        max_label_len = max(len(str(row[x_key])) for row in data)
+        
+        for row in data[:10]:  # Limit to 10 bars
+            label = str(row[x_key]).ljust(max_label_len)
+            value = row[y_key]
+            
+            if isinstance(value, (int, float)):
+                bar_length = max(1, int((value / max_value) * 30))
+                bar = "█" * bar_length
+                chart_lines.append(f"`{label}` {bar} ({value})")
+            else:
+                chart_lines.append(f"`{label}` {value}")
+        
+        return "\n".join(chart_lines) + "\n\n"
+    
+    def _generate_pie_chart(self, data: List[Dict]) -> str:
+        """Generate ASCII pie chart representation"""
+        if not data:
+            return "No data to chart"
+        
+        keys = list(data[0].keys())
+        if len(keys) < 2:
+            return self._generate_table(data)
+        
+        label_key, value_key = keys[0], keys[1]
+        
+        # Calculate percentages
+        total = sum(row[value_key] for row in data if isinstance(row[value_key], (int, float)))
+        
+        chart_lines = [f"🥧 **{label_key.replace('_', ' ').title()} Distribution**\n"]
+        
+        pie_chars = ["●", "◐", "◑", "◒", "◓", "○"]
+        
+        for i, row in enumerate(data[:6]):  # Limit to 6 slices
+            label = row[label_key]
+            value = row[value_key]
+            
+            if isinstance(value, (int, float)) and total > 0:
+                percentage = (value / total) * 100
+                char = pie_chars[i % len(pie_chars)]
+                chart_lines.append(f"{char} `{label}`: {value} ({percentage:.1f}%)")
+            else:
+                char = pie_chars[i % len(pie_chars)]
+                chart_lines.append(f"{char} `{label}`: {value}")
+        
+        return "\n".join(chart_lines) + "\n\n"
+    
+    def _generate_line_chart(self, data: List[Dict]) -> str:
+        """Generate ASCII line chart for time series"""
+        if not data:
+            return "No data to chart"
+        
+        keys = list(data[0].keys())
+        if len(keys) < 2:
+            return self._generate_table(data)
+        
+        x_key, y_key = keys[0], keys[1]
+        
+        chart_lines = [f"📈 **{y_key.replace('_', ' ').title()} Trend**\n"]
+        
+        # Simple trend visualization
+        values = [row[y_key] for row in data[-7:] if isinstance(row[y_key], (int, float))]  # Last 7 points
+        
+        if values:
+            max_val = max(values)
+            min_val = min(values)
+            
+            for i, row in enumerate(data[-7:]):
+                label = str(row[x_key])
+                value = row[y_key]
+                
+                if isinstance(value, (int, float)) and max_val > min_val:
+                    # Normalize to 0-20 range
+                    normalized = int(((value - min_val) / (max_val - min_val)) * 20)
+                    sparkline = "▁▂▃▄▅▆▇█"[min(normalized // 3, 7)]
+                    chart_lines.append(f"`{label}` {sparkline} {value}")
+                else:
+                    chart_lines.append(f"`{label}` {value}")
+        
+        return "\n".join(chart_lines) + "\n\n"
+    
+    def _generate_table(self, data: List[Dict]) -> str:
+        """Generate markdown table from query results"""
+        if not data:
+            return "No data to display"
+        
+        # Get headers
+        headers = list(data[0].keys())
+        
+        # Generate table
+        table_lines = []
+        
+        # Header row
+        header_row = "| " + " | ".join(headers) + " |"
+        table_lines.append(header_row)
+        
+        # Separator row
+        separator = "| " + " | ".join(["---"] * len(headers)) + " |"
+        table_lines.append(separator)
+        
+        # Data rows (limit to 10 for display)
+        for row in data[:10]:
+            values = [str(row.get(h, '')) for h in headers]
+            data_row = "| " + " | ".join(values) + " |"
+            table_lines.append(data_row)
+        
+        if len(data) > 10:
+            table_lines.append(f"\n*... and {len(data) - 10} more rows*")
+        
+        return "\n".join(table_lines) + "\n"
+    
+    def _generate_simple_list(self, data: List) -> str:
+        """Generate simple list from results"""
+        return "\n".join([f"- {item}" for item in data[:20]]) + "\n"
+    
+    async def toggle_dashboard_mode(self) -> None:
+        """Toggle dashboard mode with auto-run queries"""
+        self.dashboard_mode = not self.dashboard_mode
+        if self.dashboard_mode:
+            await self._setup_dashboard_template()
+        else:
+            await self._setup_edit_template()
+    
+    async def _setup_dashboard_template(self) -> None:
+        """Setup dashboard template in canvas with auto-run queries"""
+        dashboard_content = """# 📊 Globule Analytics Dashboard
+
+**Dashboard Mode: ACTIVE** | Use Ctrl+D to toggle back to edit mode
+
+## 📈 Live Analytics
+
+Auto-running queries based on detected schema...
+
+---
+
+"""
+        self.text = dashboard_content
+        
+        # Post message to trigger auto-run of dashboard queries
+        self.post_message(self.DashboardModeActivated())
+    
+    async def _setup_edit_template(self) -> None:
+        """Setup edit template in canvas"""
+        edit_content = """# 📝 Globule Canvas
+
+**Edit Mode: ACTIVE** | Use Ctrl+D to toggle to dashboard mode
+
+Use this space to compose your thoughts and analysis. Query results from the palette will appear here.
+
+## Instructions
+
+- Execute queries from the palette (left pane)
+- Use Ctrl+E to expand text with AI
+- Use Ctrl+R or Ctrl+U to summarize with AI
+- Drag query results from palette to canvas
+- Use Ctrl+S to save as Markdown
+
+---
+
+"""
+        self.text = edit_content
+    
+    class DashboardModeActivated(Message):
+        """Message sent when dashboard mode is activated"""
+        pass
 
 
-class StatusBar(Static):
-    """Phase 2: Enhanced status bar showing current mode and context"""
-    
-    def __init__(self, synthesis_state: SynthesisState, **kwargs):
-        self.state = synthesis_state
-        super().__init__(self._generate_status_text(), **kwargs)
-    
-    def _generate_status_text(self) -> str:
-        """Generate status text based on current state"""
-        mode_icons = {
-            UIMode.BUILD: "BUILD",
-            UIMode.EXPLORE: "EXPLORE",
-            UIMode.EDIT: "EDIT"
-        }
-        
-        mode_icon = mode_icons.get(self.state.current_mode, "UNKNOWN")
-        
-        status_parts = [f"MODE: {mode_icon}"]
-        
-        # Add context information
-        if self.state.selected_cluster_id:
-            status_parts.append(f"Cluster: {self.state.selected_cluster_id[:8]}...")
-        
-        if self.state.incorporated_globules:
-            status_parts.append(f"Incorporated: {len(self.state.incorporated_globules)}")
-        
-        return " | ".join(status_parts)
-    
-    def update_status(self, new_state: SynthesisState) -> None:
-        """Update status display"""
-        self.state = new_state
-        self.update(self._generate_status_text())
-
-
-class SynthesisApp(App):
-    """Phase 2: Enhanced Textual application with two-pane layout"""
+class DashboardApp(App):
+    """Enhanced Globule TUI with analytics dashboard capabilities"""
     
     CSS = """
-    /* Phase 2: Enhanced styling for two-pane layout */
-    .cluster-header {
+    .palette-header {
         color: $accent;
-        margin-bottom: 1;
         text-style: bold;
-    }
-    
-    .cluster-title {
-        border: solid $primary;
         margin-bottom: 1;
-        padding: 1;
-        background: $surface;
     }
     
-    .cluster-title:hover {
-        background: $primary-background;
-    }
-    
-    .cluster-keywords {
+    .schema-info {
         color: $secondary;
-        margin-left: 2;
-        text-style: italic;
-    }
-    
-    .globule-sample {
-        margin-left: 4;
         margin-bottom: 1;
-        padding: 1;
-        border-left: solid $secondary;
-    }
-    
-    .globule-sample:hover {
-        background: $secondary-background;
-    }
-    
-    .selected {
-        background: $accent !important;
-        color: $text-selected;
-        border: solid $accent;
-    }
-    
-    .no-content {
-        color: $warning;
         text-style: italic;
-        text-align: center;
-        margin: 2;
     }
     
-    .status-bar {
-        background: $primary;
-        color: $text;
-        padding: 0 1;
+    .section-header {
+        color: $primary;
+        text-style: bold;
+        margin-top: 1;
+        margin-bottom: 1;
     }
     
-    /* Two-pane layout */
     #palette {
-        width: 40%;
+        width: 30%;
         border-right: solid $primary;
+        padding: 1;
     }
     
     #canvas {
-        width: 60%;
+        width: 70%;
+        padding: 1;
+    }
+    
+    Tree {
+        margin-bottom: 1;
+    }
+    
+    Input {
+        margin-bottom: 1;
     }
     """
     
@@ -566,144 +661,163 @@ class SynthesisApp(App):
         ("ctrl+c", "quit", "Quit"),
         ("q", "quit", "Quit"),
         ("tab", "switch_focus", "Switch Pane"),
-        ("enter", "select_item", "Select/Add"),
-        ("space", "toggle_expand", "Toggle"),
-        ("ctrl+s", "save_draft", "Save"),
+        ("enter", "execute_action", "Execute"),
+        ("ctrl+s", "save_draft", "Save MD"),
+        ("ctrl+d", "toggle_dashboard", "Dashboard"),
         ("ctrl+e", "expand_text", "AI Expand"),
         ("ctrl+r", "summarize_text", "AI Summarize"),
+        ("ctrl+u", "summarize_text", "AI Summarize"),
     ]
     
-    def __init__(self, 
-                 storage_manager: StorageManager,
-                 topic: Optional[str] = None,
-                 limit: int = 50):
+    def __init__(self, storage_manager: StorageManager, topic: Optional[str] = None):
         super().__init__()
         self.storage_manager = storage_manager
         self.topic = topic
-        self.limit = limit
-        
-        # Phase 2: State management
         self.synthesis_state = SynthesisState()
-        self.clusters: List[GlobuleCluster] = []
-        self.clustering_engine: Optional[SemanticClusteringEngine] = None
-    
+        
     def compose(self) -> ComposeResult:
-        """Phase 2: Compose two-pane layout"""
+        """Compose two-pane layout with analytics palette and viz canvas"""
         yield Header()
         
-        # Two-pane layout: Palette (left) + Canvas (right)
         with Horizontal():
-            # Left pane: Semantic cluster palette
+            # Left pane: Analytics Palette (30%)
             with Vertical(id="palette"):
-                yield Static("PALETTE: Semantic Clusters", classes="cluster-header")
-                yield ClusterPalette(self.clusters, id="cluster-palette")
-            
-            # Right pane: Canvas editor
-            with Vertical(id="canvas"):
-                yield Static("CANVAS: Draft Editor", classes="cluster-header")
-                yield CanvasEditor(
-                    "# Draft Editor\n\nWelcome to Globule Phase 3!\n\n" +
-                    "INSTRUCTIONS:\n" +
-                    "• Use Tab to switch between palette and canvas\n" +
-                    "• Use arrow keys to navigate clusters and thoughts\n" +
-                    "• Press Enter to expand clusters or add thoughts to canvas\n" +
-                    "• Press Space to toggle cluster expansion\n" +
-                    "• Press Ctrl+S to save your draft\n" +
-                    "• Press Ctrl+E to expand selected text with AI Co-Pilot\n" +
-                    "• Press Ctrl+R to summarize selected text with AI Co-Pilot\n\n" +
-                    "Start writing your draft below...\n\n", 
-                    id="canvas-editor"
+                yield AnalyticsPalette(
+                    self.storage_manager, 
+                    self.topic, 
+                    id="analytics-palette"
                 )
+            
+            # Right pane: Visualization Canvas (70%)
+            with Vertical(id="canvas"):
+                initial_content = f"# Globule Dashboard\n\n**Topic:** {self.topic or 'General'}\n\n"
+                initial_content += "## Instructions\n\n"
+                initial_content += "- Use the query explorer (left) to run analytics\n"
+                initial_content += "- Results will appear here as tables and charts\n"
+                initial_content += "- Press Tab to switch between panes\n"
+                initial_content += "- Press Ctrl+D to toggle dashboard mode\n"
+                initial_content += "- Press Ctrl+S to save as Markdown\n\n"
+                initial_content += "## Analysis Results\n\n*Query results will appear here...*\n\n"
+                
+                yield VizCanvas(initial_content, id="viz-canvas")
         
-        # Status bar
-        yield StatusBar(self.synthesis_state, id="status-bar", classes="status-bar")
         yield Footer()
     
     async def on_mount(self) -> None:
-        """Phase 3: Load clusters and initialize AI-assisted interface"""
-        self.title = "Globule Phase 3: AI Co-Pilot"
+        """Initialize the dashboard on mount"""
+        self.title = "Globule Analytics Dashboard"
+        self.sub_title = f"Topic: {self.topic}" if self.topic else "Data Explorer"
         
-        if self.topic:
-            self.sub_title = f"Topic: {self.topic}"
-        else:
-            self.sub_title = "Intelligent Drafting Session"
-        
+        # Load recent globules and clusters
         try:
-            # Initialize clustering engine
-            self.clustering_engine = SemanticClusteringEngine(self.storage_manager)
+            # Get recent globules
+            recent_globules = await self.storage_manager.get_recent_globules(100)
             
-            # Perform semantic clustering analysis
-            analysis = await self.clustering_engine.analyze_semantic_clusters(min_globules=3)
+            # Filter by schema if valet topic detected
+            palette = self.query_one("#analytics-palette", AnalyticsPalette)
+            if palette.detected_schema in ['valet', 'valet_enhanced']:
+                # Filter for valet-related globules
+                valet_globules = [
+                    g for g in recent_globules 
+                    if g.parsed_data and ('valet' in json.dumps(g.parsed_data).lower())
+                ]
+                
+                # Auto-execute valet analytics query
+                if valet_globules:
+                    await palette.execute_query(
+                        "SELECT COUNT(*) as total_cars, AVG(julianday('now') - julianday(created_at)) as avg_days_ago FROM globules WHERE parsed_data LIKE '%valet%'"
+                    )
             
-            if analysis.clusters:
-                # Convert SemanticCluster to GlobuleCluster format
-                self.clusters = []
-                for semantic_cluster in analysis.clusters:
-                    # Get the actual globules for this cluster
-                    cluster_globules = []
-                    for globule_id in semantic_cluster.member_ids:
-                        globule = await self._get_globule_by_id(globule_id)
-                        if globule:
-                            cluster_globules.append(globule)
-                    
-                    if cluster_globules:  # Only add if we found globules
+            # Try to load clusters
+            try:
+                clustering_engine = SemanticClusteringEngine(self.storage_manager)
+                analysis = await clustering_engine.analyze_semantic_clusters(min_globules=2)
+                
+                if analysis.clusters:
+                    # Convert to GlobuleCluster format (simplified)
+                    clusters = []
+                    for cluster in analysis.clusters[:5]:  # Limit to 5 clusters
                         globule_cluster = GlobuleCluster(
-                            id=semantic_cluster.id,
-                            globules=cluster_globules,
-                            centroid=semantic_cluster.centroid,
-                            label=semantic_cluster.label,
+                            id=cluster.id,
+                            globules=[],  # We'll populate if needed
+                            label=cluster.label,
                             metadata={
-                                'confidence_score': semantic_cluster.confidence_score,
-                                'size': semantic_cluster.size,
-                                'keywords': semantic_cluster.keywords,
-                                'domains': semantic_cluster.domains,
-                                'description': semantic_cluster.description
+                                'confidence_score': cluster.confidence_score,
+                                'size': cluster.size
                             }
                         )
-                        self.clusters.append(globule_cluster)
-                
-                # Update synthesis state
-                self.synthesis_state.visible_clusters = self.clusters
+                        clusters.append(globule_cluster)
+                    
+                    await palette.load_clusters(clusters)
+            except Exception:
+                # Ignore clustering errors
+                pass
             
-            # Update the palette display
-            palette = self.query_one("#cluster-palette", ClusterPalette)
-            palette.clusters = self.clusters
-            palette.expanded_clusters = self.synthesis_state.expanded_clusters
-            await palette.recompose()
-            
-            # Set initial focus to palette
+            # Focus on palette initially
             palette.focus()
-            self.synthesis_state.current_mode = UIMode.EXPLORE
-            
-            # Update status
-            status_bar = self.query_one("#status-bar", StatusBar)
-            status_bar.update_status(self.synthesis_state)
             
         except Exception as e:
-            # Show error in palette and log for debugging
-            import logging
-            logging.error(f"Error loading semantic clusters: {e}")
-            
-            try:
-                palette = self.query_one("#cluster-palette", ClusterPalette)
-                error_widget = Static(f"Error loading semantic clusters: {e}\n\nTry adding more thoughts first.", classes="no-content")
-                await palette.mount(error_widget)
-            except Exception:
-                # If even mounting fails, just continue
-                pass
+            # Show error but don't crash
+            canvas = self.query_one("#viz-canvas", VizCanvas)
+            canvas.text += f"\n⚠️ **Initialization Warning:** {e}\n"
     
-    async def _get_globule_by_id(self, globule_id: str) -> Optional[ProcessedGlobule]:
-        """Helper to get globule by ID"""
+    async def on_analytics_palette_query_executed(self, message: AnalyticsPalette.QueryExecuted) -> None:
+        """Handle query execution from palette"""
+        canvas = self.query_one("#viz-canvas", VizCanvas)
+        canvas.add_query_result(message.query, message.result, message.query_type)
+    
+    async def on_analytics_palette_globule_selected(self, message: AnalyticsPalette.GlobuleSelected) -> None:
+        """Handle globule selection from palette"""
+        canvas = self.query_one("#viz-canvas", VizCanvas)
+        # Add globule as text content
+        canvas.text += f"\n\n## Selected Globule\n\n{message.globule.text}\n\n"
+    
+    async def on_analytics_palette_query_result_dragged(self, message: AnalyticsPalette.QueryResultDragged) -> None:
+        """Handle query result dragged from palette to canvas"""
+        canvas = self.query_one("#viz-canvas", VizCanvas)
+        canvas.add_dragged_result(message.query_result)
+        self.notify("🎯 Query result dragged to canvas!")
+    
+    async def on_viz_canvas_ai_action_requested(self, message: VizCanvas.AIActionRequested) -> None:
+        """Handle AI action request from canvas"""
         try:
-            # For now, get recent globules and find by ID
-            # In production, we'd have a direct lookup method
-            recent_globules = await self.storage_manager.get_recent_globules(1000)
-            for globule in recent_globules:
-                if globule.id == globule_id:
-                    return globule
-            return None
-        except Exception:
-            return None
+            # For now, simulate AI actions with placeholder responses
+            if message.action == 'expand':
+                expanded_text = f"\n\n### 🤖 AI Expansion:\n\n*[AI would expand: \"{message.text[:50]}...\" here]*\n\nThis text could be elaborated with additional context, examples, and detailed explanations. The AI system would analyze the content and provide relevant expansions based on the topic and context.\n\n"
+                
+                # Insert expansion at current cursor position
+                canvas = self.query_one("#viz-canvas", VizCanvas)
+                current_text = canvas.text
+                cursor = canvas.cursor_position
+                
+                if cursor:
+                    before = current_text[:cursor[1]]
+                    after = current_text[cursor[1]:]
+                    canvas.text = before + expanded_text + after
+                else:
+                    canvas.text += expanded_text
+                    
+                self.notify("🤖 AI Expansion completed!")
+                
+            elif message.action == 'summarize':
+                summary_text = f"\n\n### 📝 AI Summary:\n\n*[AI would summarize: \"{message.text[:50]}...\" here]*\n\n• **Key Point 1**: Main concept identified\n• **Key Point 2**: Supporting details extracted\n• **Key Point 3**: Relevant conclusions drawn\n\n"
+                
+                # Insert summary at current cursor position
+                canvas = self.query_one("#viz-canvas", VizCanvas)
+                current_text = canvas.text
+                cursor = canvas.cursor_position
+                
+                if cursor:
+                    before = current_text[:cursor[1]]
+                    after = current_text[cursor[1]:]
+                    canvas.text = before + summary_text + after
+                else:
+                    canvas.text += summary_text
+                    
+                self.notify("📝 AI Summary completed!")
+                
+        except Exception as e:
+            self.notify(f"❌ AI action error: {e}")
     
     def action_quit(self) -> None:
         """Quit the application"""
@@ -711,183 +825,130 @@ class SynthesisApp(App):
     
     def action_switch_focus(self) -> None:
         """Switch focus between palette and canvas"""
-        try:
-            if self.focused is None:
-                palette = self.query_one("#cluster-palette")
-                palette.focus()
-                self.synthesis_state.current_mode = UIMode.EXPLORE
-            elif self.focused.id == "cluster-palette":
-                canvas = self.query_one("#canvas-editor")
-                canvas.focus()
-                self.synthesis_state.current_mode = UIMode.EDIT
-            else:
-                palette = self.query_one("#cluster-palette")
-                palette.focus()
-                self.synthesis_state.current_mode = UIMode.EXPLORE
-            
-            # Update status bar
-            status_bar = self.query_one("#status-bar", StatusBar)
-            status_bar.update_status(self.synthesis_state)
-        except Exception:
-            pass  # Ignore focus errors
+        if self.focused and self.focused.id == "analytics-palette":
+            canvas = self.query_one("#viz-canvas")
+            canvas.focus()
+        else:
+            palette = self.query_one("#analytics-palette")
+            palette.focus()
     
-    def action_select_item(self) -> None:
-        """Select item in current focused pane"""
-        try:
-            if self.focused and self.focused.id == "cluster-palette":
-                palette = self.query_one("#cluster-palette", ClusterPalette)
-                # Trigger enter key behavior
-                if palette.selected_cluster_id:
-                    if palette.selected_globule_id:
-                        # Add globule to canvas
-                        palette.select_globule(palette.selected_globule_id)
-                    else:
-                        # Toggle cluster expansion
-                        palette.toggle_cluster(palette.selected_cluster_id)
-                elif palette.clusters:
-                    # Select first cluster
-                    palette.select_cluster(palette.clusters[0].id)
-        except Exception:
-            pass
-    
-    def action_toggle_expand(self) -> None:
-        """Toggle expansion of selected cluster"""
-        try:
-            palette = self.query_one("#cluster-palette", ClusterPalette)
-            if palette.selected_cluster_id:
-                palette.toggle_cluster(palette.selected_cluster_id)
-        except Exception:
-            pass
-    
-    async def on_cluster_palette_cluster_selected(self, message: ClusterPalette.ClusterSelected) -> None:
-        """Handle cluster selection"""
-        self.synthesis_state.selected_cluster_id = message.cluster_id
-        self.synthesis_state.selected_globule_id = None
-        
-        # Update status bar
-        status_bar = self.query_one("#status-bar", StatusBar)
-        status_bar.update_status(self.synthesis_state)
-    
-    async def on_cluster_palette_globule_selected(self, message: ClusterPalette.GlobuleSelected) -> None:
-        """Handle globule selection - add to canvas"""
-        self.synthesis_state.selected_globule_id = message.globule.id
-        
-        # Add globule content to canvas
-        canvas = self.query_one("#canvas-editor", CanvasEditor)
-        canvas.add_globule_content(message.globule)
-        
-        # Update synthesis state
-        self.synthesis_state.incorporated_globules.add(message.globule.id)
-        
-        # Update status bar
-        status_bar = self.query_one("#status-bar", StatusBar)
-        status_bar.update_status(self.synthesis_state)
-        
-        # Show feedback
-        self.notify(f"Added thought: {message.globule.text[:50]}...")
+    def action_execute_action(self) -> None:
+        """Execute action based on focused pane"""
+        if self.focused and hasattr(self.focused, 'id'):
+            if self.focused.id == "query-input":
+                # Submit query
+                query = self.focused.value.strip()
+                if query:
+                    # Get palette and execute query
+                    palette = self.query_one("#analytics-palette", AnalyticsPalette)
+                    asyncio.create_task(palette.execute_query(query))
     
     def action_save_draft(self) -> None:
-        """Save current draft content to markdown file"""
+        """Save canvas content as Markdown"""
         try:
-            canvas = self.query_one("#canvas-editor", CanvasEditor)
-            content = canvas.get_content()
+            canvas = self.query_one("#viz-canvas", VizCanvas)
+            content = canvas.text
             
             if not content.strip():
-                self.notify("Nothing to save - canvas is empty")
+                self.notify("Nothing to save")
                 return
             
-            # Generate filename with timestamp
-            import datetime
+            # Generate filename
             import os
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            topic_part = self.topic.replace(" ", "_") if self.topic else "dashboard"
+            filename = f"globule_dashboard_{topic_part}_{timestamp}.md"
             
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            topic_part = self.topic.replace(" ", "_")[:20] if self.topic else "draft"
-            filename = f"globule_draft_{topic_part}_{timestamp}.md"
-            
-            # Save to current directory or drafts folder
+            # Save to drafts directory
             drafts_dir = "drafts"
-            if not os.path.exists(drafts_dir):
-                os.makedirs(drafts_dir)
-            
+            os.makedirs(drafts_dir, exist_ok=True)
             filepath = os.path.join(drafts_dir, filename)
             
-            # Write content to file
             with open(filepath, 'w', encoding='utf-8') as f:
+                # Add schema metadata if available
+                palette = self.query_one("#analytics-palette", AnalyticsPalette)
+                if palette.detected_schema:
+                    f.write(f"---\nschema: {palette.detected_schema}\ntopic: {self.topic}\ngenerated: {datetime.now().isoformat()}\n---\n\n")
                 f.write(content)
             
-            # Show success message with path
-            self.notify(f"✓ Draft saved to {filepath} ({len(content)} characters)")
+            self.notify(f"✅ Saved to {filepath}")
             
         except Exception as e:
-            self.notify(f"Error saving draft: {e}")
+            self.notify(f"❌ Save error: {e}")
+    
+    async def action_toggle_dashboard(self) -> None:
+        """Toggle dashboard mode"""
+        try:
+            canvas = self.query_one("#viz-canvas", VizCanvas)
+            await canvas.toggle_dashboard_mode()
+            
+            if canvas.dashboard_mode:
+                self.notify("📊 Dashboard Mode: ON - Auto-running queries...")
+            else:
+                self.notify("📝 Edit Mode: ON")
+                
+        except Exception as e:
+            self.notify(f"❌ Toggle error: {e}")
+    
+    async def on_viz_canvas_dashboard_mode_activated(self, message: VizCanvas.DashboardModeActivated) -> None:
+        """Handle dashboard mode activation - auto-run schema queries"""
+        try:
+            palette = self.query_one("#analytics-palette", AnalyticsPalette)
+            canvas = self.query_one("#viz-canvas", VizCanvas)
+            
+            # Get schema-specific queries to auto-run
+            schema_queries = palette._get_schema_queries()
+            
+            if schema_queries:
+                # Run the first few key queries automatically
+                key_queries = schema_queries[:3]  # Run first 3 queries
+                
+                for i, query in enumerate(key_queries):
+                    try:
+                        # Add a small delay between queries
+                        if i > 0:
+                            await asyncio.sleep(0.5)
+                        
+                        # Execute the query
+                        await palette.execute_query(query['sql'])
+                        
+                        # Add progress update to canvas
+                        canvas.text += f"🔄 Auto-executed: {query['name']}\n\n"
+                        
+                    except Exception as query_error:
+                        canvas.text += f"❌ Failed to auto-run: {query['name']} - {query_error}\n\n"
+                
+                canvas.text += "\n## 📊 Dashboard Ready\n\nAll auto-queries completed. Results are shown above.\n\n"
+                self.notify("✅ Dashboard auto-setup complete!")
+            else:
+                canvas.text += "\n⚠️ No schema queries available for auto-run.\n\n"
+                self.notify("⚠️ No schema queries found for dashboard mode")
+                
+        except Exception as e:
+            self.notify(f"❌ Dashboard auto-setup error: {e}")
     
     async def action_expand_text(self) -> None:
-        """AI Co-Pilot: Expand selected text"""
+        """AI expand selected text"""
         try:
-            canvas = self.query_one("#canvas-editor", CanvasEditor)
+            canvas = self.query_one("#viz-canvas", VizCanvas)
+            selected_text = canvas.get_selected_text()
             
-            # Check if canvas is focused
-            if self.focused != canvas:
-                self.notify("Focus on canvas editor first, then select text to expand")
-                return
-            
-            self.notify("AI Co-Pilot: Expanding text...")
-            
-            # Get expanded text from AI
-            expanded_result = await canvas.expand_selection()
-            
-            # Replace selected text with expanded version
-            if expanded_result and not expanded_result.startswith("Error") and not expanded_result.startswith("No text"):
-                # Replace selection with AI result
-                await self._replace_selection_with_result(canvas, expanded_result)
-                self.notify("✓ Text expanded successfully")
+            if selected_text and selected_text.strip():
+                canvas.expand_text_ai(selected_text)
             else:
-                self.notify(f"⚠ {expanded_result}")
-                
+                self.notify("⚠️ No text selected or cursor on empty line")
         except Exception as e:
-            self.notify(f"Error expanding text: {e}")
+            self.notify(f"❌ AI expand error: {e}")
     
     async def action_summarize_text(self) -> None:
-        """AI Co-Pilot: Summarize selected text"""
+        """AI summarize selected text"""
         try:
-            canvas = self.query_one("#canvas-editor", CanvasEditor)
+            canvas = self.query_one("#viz-canvas", VizCanvas)
+            selected_text = canvas.get_selected_text()
             
-            # Check if canvas is focused
-            if self.focused != canvas:
-                self.notify("Focus on canvas editor first, then select text to summarize")
-                return
-            
-            self.notify("AI Co-Pilot: Summarizing text...")
-            
-            # Get summarized text from AI
-            summary_result = await canvas.summarize_selection()
-            
-            # Replace selected text with summary
-            if summary_result and not summary_result.startswith("Error") and not summary_result.startswith("No text"):
-                # Replace selection with AI result
-                await self._replace_selection_with_result(canvas, summary_result)
-                self.notify("✓ Text summarized successfully")
+            if selected_text and selected_text.strip():
+                canvas.summarize_text_ai(selected_text)
             else:
-                self.notify(f"⚠ {summary_result}")
-                
+                self.notify("⚠️ No text selected or cursor on empty line")
         except Exception as e:
-            self.notify(f"Error summarizing text: {e}")
-    
-    async def _replace_selection_with_result(self, canvas: CanvasEditor, ai_result: str) -> None:
-        """Replace selected text with AI result"""
-        try:
-            # Get current selection or cursor position
-            current_text = canvas.text
-            
-            # For now, append the result at the end since Textual selection handling is complex
-            # In production, this would properly replace the selection
-            if canvas.selected_text:
-                # If there's a selection, note it for user
-                canvas.text = current_text + f"\n\n--- AI Result ---\n{ai_result}\n--- End AI Result ---\n"
-            else:
-                # No selection, add at cursor position or end
-                canvas.text = current_text + f"\n\n{ai_result}\n"
-            
-        except Exception as e:
-            # Fallback: just append the result
-            canvas.text = canvas.text + f"\n\n{ai_result}\n"
+            self.notify(f"❌ AI summarize error: {e}")

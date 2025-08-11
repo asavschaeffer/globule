@@ -134,12 +134,25 @@ async def add(ctx: click.Context, text: str, verbose: bool) -> None:
             await context.initialize(verbose)
             
             # Create enriched input
+            from globule.schemas.manager import get_schema_manager
+            schema_manager = get_schema_manager()
+            
+            detected_schema_id = schema_manager.detect_schema_for_text(text)
+            schema_config = None
+            additional_context = {}
+
+            if detected_schema_id:
+                if click.confirm(f"Detected schema '{detected_schema_id}'. Use it?"):
+                    schema_config = schema_manager.get_schema(detected_schema_id)
+                else:
+                    detected_schema_id = None
+
             enriched_input = EnrichedInput(
                 original_text=text,
-                enriched_text=text,  # No preprocessing for MVP
-                detected_schema_id=None,
-                schema_config=None,
-                additional_context={},
+                enriched_text=text,
+                detected_schema_id=detected_schema_id,
+                schema_config=schema_config,
+                additional_context=additional_context,
                 source="cli",
                 timestamp=datetime.now(),
                 verbosity="verbose" if verbose else "concise"
@@ -191,74 +204,22 @@ async def draft(ctx: click.Context, topic: str, limit: int, output: Optional[str
     async with ctx.obj['context'] as context:
         try:
             from rich.console import Console
-            from globule.interfaces.drafting.interactive_engine import InteractiveDraftingEngine
-            from globule.services.clustering.semantic_clustering import SemanticClusteringEngine
+            from globule.tui.app import DashboardApp
             
             console = Console()
             
             # Initialize context
             await context.initialize(ctx.obj.get('verbose', False))
             
-            # Check if we have embeddings (can't draft with mock embeddings effectively)
-            if isinstance(context.embedding_provider, MockEmbeddingProvider):
-                console.print("[red]ERROR:[/red] Interactive drafting requires real embeddings.")
-                console.print("Please ensure Ollama is running and try again.")
-                return
+            # Launch new analytics dashboard TUI
+            console.print(f"[blue]DASHBOARD:[/blue] Launching analytics dashboard for '{topic}'...")
+            console.print("[green]TIP:[/green] Use Tab to switch panes, Ctrl+D for dashboard mode")
             
-            # Step 1: Vectorize topic and perform semantic search
-            console.print(f"[blue]SEARCH:[/blue] Finding thoughts related to '{topic}'...")
-            topic_embedding = await context.embedding_provider.embed(topic)
-            search_results = await context.storage.search_by_embedding(topic_embedding, limit, 0.3)
+            # Create and run the dashboard app
+            app = DashboardApp(context.storage, topic)
+            await app.run_async()
             
-            if not search_results:
-                console.print(f"[red]NO RESULTS:[/red] No thoughts found related to '{topic}'")
-                console.print("Try a different topic or add more content with 'globule add'")
-                return
-            
-            # Extract globules from search results
-            globules = [globule for globule, _ in search_results]
-            console.print(f"[green]FOUND:[/green] {len(globules)} relevant thoughts")
-            
-            # Step 2: Cluster the search results
-            console.print("[blue]CLUSTERING:[/blue] Analyzing semantic patterns...")
-            clustering_engine = SemanticClusteringEngine(context.storage)
-            
-            analysis = await clustering_engine.analyze_semantic_clusters(min_globules=2)
-            
-            if not analysis.clusters:
-                console.print("[yellow]NO CLUSTERS:[/yellow] Unable to find semantic clusters")
-                console.print("Proceeding with chronological listing...")
-            else:
-                console.print(f"[green]CLUSTERS:[/green] Found {len(analysis.clusters)} semantic themes")
-            
-            # Step 3: Build globules-by-cluster mapping for the interactive engine
-            globules_by_cluster = {}
-            for cluster in analysis.clusters:
-                cluster_globules = [g for g in globules if g.id in cluster.member_ids]
-                globules_by_cluster[cluster.id] = cluster_globules
-            
-            # Step 4: Launch interactive drafting session
-            console.print("[blue]INTERACTIVE:[/blue] Starting drafting session...")
-            console.print("Use arrow keys to navigate, Enter to select, d/q to finish")
-            
-            drafting_engine = InteractiveDraftingEngine()
-            draft_text = await drafting_engine.run_interactive_session(
-                topic=topic,
-                clusters=analysis.clusters,
-                globules_by_cluster=globules_by_cluster,
-                all_globules=globules
-            )
-            
-            # Step 5: Output the final draft
-            if output:
-                with open(output, 'w', encoding='utf-8') as f:
-                    f.write(draft_text)
-                console.print(f"[green]SUCCESS:[/green] Draft written to {output}")
-            else:
-                console.print("\n" + "="*60)
-                console.print("[green]DRAFT COMPLETE[/green]")
-                console.print("="*60)
-                print(draft_text)  # Use print for clean output
+            console.print("\n[green]Dashboard session complete[/green]")
             
         except KeyboardInterrupt:
             click.echo("\nDrafting session cancelled")
