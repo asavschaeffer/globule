@@ -60,6 +60,7 @@ from globule.core.interfaces import StorageManager
 from globule.core.models import ProcessedGlobule, SynthesisState, UIMode, GlobuleCluster
 from globule.services.clustering.semantic_clustering import SemanticClusteringEngine
 from globule.services.parsing.ollama_parser import OllamaParser
+from globule.services.embedding.ollama_provider import OllamaEmbeddingProvider
 from globule.schemas.manager import get_schema_manager, detect_schema_for_text, detect_output_schema_for_topic, get_output_schema
 
 
@@ -222,10 +223,157 @@ class ThoughtPalette(Vertical):
         return clusters
     
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        pass  # Will handle search later
+        # Debug: Use app notifications to see what's happening
+        self.app.notify(f"DEBUG: Input submitted, id={event.input.id}")
+        if event.input.id == "palette-search":
+            query = event.value.strip()
+            self.app.notify(f"DEBUG: Query='{query}'")
+            if query:
+                self.app.notify("DEBUG: Starting search...")
+                asyncio.create_task(self._orchestrate_search(query))
+                # Clear the input after submitting
+                event.input.value = ""
+            else:
+                self.app.notify("DEBUG: Empty query")
 
     async def _orchestrate_search(self, nl_query: str):
-        pass  # Will add AI logic later
+        """Orchestrate AI-powered natural language search"""
+        self.app.notify(f"DEBUG: _orchestrate_search started")
+        tree = self.query_one("#palette-tree", Tree)
+        self.app.notify("DEBUG: Got tree widget")
+        status_node = tree.root.add("🔄 Orchestrating query...")
+        self.app.notify("DEBUG: Added status node")
+        
+        try:
+            # Get SQL from AI
+            sql = await self._nl_to_sql(nl_query)
+            self.app.notify(f"Generated SQL: {sql[:100]}...")
+            
+            # Execute the SQL query
+            results, headers = await self._execute_sql(sql)
+            self.app.notify(f"Found {len(results)} results")
+            
+            # Format results as a module
+            module_content = self._format_module(results, headers, nl_query)
+            
+            # Add as a new expandable module in the tree
+            module_node = tree.root.add(f"📊 Module: {nl_query[:50]}...", expand=True)
+            
+            # Instead of storing in data, create individual result nodes
+            if results:
+                for i, row in enumerate(results[:10]):  # Show first 10 results
+                    # Create a readable summary for each result
+                    if len(row) > 0:
+                        # Use the text field (usually index 1) for the display
+                        if len(row) > 1 and row[1]:  # text field
+                            display_text = str(row[1])[:80] + "..." if len(str(row[1])) > 80 else str(row[1])
+                        else:
+                            display_text = str(row[0])  # fallback to ID
+                        module_node.add_leaf(f"• {display_text}")
+                    else:
+                        module_node.add_leaf(f"• Row {i+1}")
+                
+                # Add summary info
+                if len(results) > 10:
+                    module_node.add_leaf(f"... and {len(results) - 10} more results")
+            else:
+                module_node.add_leaf("No results found")
+            
+        except Exception as e:
+            # Add error node
+            tree.root.add(f"❌ Error: {str(e)}")
+        finally:
+            # Remove the status node
+            status_node.remove()
+
+    async def _nl_to_sql(self, nl_query: str) -> str:
+        """Convert natural language query to SQL using AI"""
+        prompt = f"""
+Translate this natural language query to SQL for the globules table.
+Columns: id TEXT, text TEXT, created_at TIMESTAMP, embedding TEXT/BLOB, parsed_data JSON.
+The parsed_data JSON contains keys like: valet_name, car_make, license_plate, parking_spot.
+
+Examples:
+- "maria" → WHERE json_extract(parsed_data, '$.valet_name') = 'maria'  
+- "valet maria" → WHERE json_extract(parsed_data, '$.valet_name') = 'maria'
+- "john" → WHERE json_extract(parsed_data, '$.valet_name') = 'john'
+- "honda" → WHERE json_extract(parsed_data, '$.car_make') = 'honda'
+- "valet:maria honda" → WHERE json_extract(parsed_data, '$.valet_name') = 'maria' AND json_extract(parsed_data, '$.car_make') = 'honda'
+
+Query: {nl_query}
+Return only the raw SQL SELECT statement, no explanations.
+        """
+        
+        # Initialize parser if not already done
+        if not hasattr(self, 'parser') or not self.parser:
+            self.parser = OllamaParser()
+        
+        response = await self.parser.parse(prompt, {'action': 'sql_translate', 'output_format': 'text'})
+        
+        # Extract SQL from response
+        if isinstance(response, dict):
+            sql = response.get('sql', response.get('title', response.get('reasoning', '')))
+        else:
+            sql = str(response)
+        
+        # Clean up the SQL (remove markdown formatting if present)
+        sql = sql.strip().replace('```sql', '').replace('```', '').strip()
+        
+        # If AI fails, provide a fallback
+        if not sql or not sql.upper().startswith('SELECT'):
+            sql = f"SELECT id, text, parsed_data FROM globules WHERE text LIKE '%{nl_query}%' LIMIT 10"
+        
+        return sql
+
+    async def _execute_sql(self, sql: str) -> tuple:
+        """Execute SQL query and return results with headers"""
+        # Get DB path - use the same logic as in _fetch_globules
+        if hasattr(self.storage_manager, 'db_path'):
+            db_path = str(self.storage_manager.db_path)
+        else:
+            # Fallback path - use the correct filename from config
+            import os
+            db_path = os.path.expanduser("~/.globule/data/globules.db")
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute(sql)
+            results = cursor.fetchall()
+            headers = [desc[0] for desc in cursor.description] if cursor.description else ['Result']
+            return results, headers
+        finally:
+            conn.close()
+
+    def _format_module(self, results: list, headers: list, query: str) -> str:
+        """Format query results as a Markdown module"""
+        if not results:
+            return f"### {query}\nNo data found."
+        
+        # Create markdown table
+        md = f"### {query}\n\n"
+        md += "| " + " | ".join(headers) + " |\n"
+        md += "|" + " --- |" * len(headers) + "\n"
+        
+        # Add rows (limit to prevent huge tables)
+        for row in results[:20]:  # Limit to 20 rows for display
+            # Handle None values and format content
+            formatted_row = []
+            for value in row:
+                if value is None:
+                    formatted_row.append("")
+                elif isinstance(value, str) and len(value) > 50:
+                    # Truncate long text fields
+                    formatted_row.append(value[:50] + "...")
+                else:
+                    formatted_row.append(str(value))
+            md += "| " + " | ".join(formatted_row) + " |\n"
+        
+        if len(results) > 20:
+            md += f"\n*... and {len(results) - 20} more rows*\n"
+        
+        return md
 
     def action_add_to_canvas(self):
         pass  # Will add to canvas later
@@ -429,19 +577,7 @@ class ThoughtPalette(Vertical):
             # Ignore tree update errors
             pass
     
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle query input submission"""
-        if event.input.id == "query-input":
-            query = event.value.strip()
-            if query:
-                # Treat manual input as SQL query
-                query_dict = {
-                    'name': 'Manual Query',
-                    'sql': query,
-                    'viz_type': 'table'
-                }
-                await self.execute_query(query_dict)
-                event.input.value = ""  # Clear input
+    # OLD: Removed duplicate on_input_submitted method that was interfering with the new one
     
     async def load_clusters(self, clusters: List[GlobuleCluster]) -> None:
         """Load clusters into the palette"""
@@ -1766,11 +1902,11 @@ class DashboardApp(App):
     
     def action_switch_focus(self) -> None:
         """Switch focus between palette and canvas"""
-        if self.focused and self.focused.id == "analytics-palette":
+        if self.focused and self.focused.id == "thought-palette":
             canvas = self.query_one("#viz-canvas")
             canvas.focus()
         else:
-            palette = self.query_one("#analytics-palette")
+            palette = self.query_one("#thought-palette")
             palette.focus()
     
     def action_execute_action(self) -> None:
