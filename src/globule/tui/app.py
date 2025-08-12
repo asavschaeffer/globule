@@ -96,6 +96,10 @@ from globule.services.parsing.ollama_parser import OllamaParser
 from globule.services.embedding.ollama_provider import OllamaEmbeddingProvider
 from globule.schemas.manager import get_schema_manager, detect_schema_for_text, detect_output_schema_for_topic, get_output_schema
 
+# Phase 1: Import orchestration engine and mock providers
+from globule.orchestration import GlobuleOrchestrator
+from globule.services.providers_mock import MockParserProvider, MockEmbeddingProvider, MockStorageManager
+
 
 class ItemSelected(Message):
     def __init__(self, content: str) -> None:
@@ -2101,6 +2105,18 @@ class DashboardApp(App):
         self.output_schema_name = None
         self.output_schema = None
         
+        # Phase 1: Initialize the orchestration engine with mock providers
+        # This delegates all business logic away from the TUI
+        parser_provider = MockParserProvider()
+        embedding_provider = MockEmbeddingProvider()
+        mock_storage_manager = MockStorageManager()
+        
+        self.orchestrator = GlobuleOrchestrator(
+            parser_provider=parser_provider,
+            embedding_provider=embedding_provider,
+            storage_manager=mock_storage_manager
+        )
+        
         # Detect output schema for topic
         if topic:
             self.output_schema_name = detect_output_schema_for_topic(topic)
@@ -2341,7 +2357,7 @@ class DashboardApp(App):
                     palette.action_add_to_canvas()
     
     def action_save_draft(self) -> None:
-        """Save canvas content as Markdown"""
+        """Save canvas content as Markdown - delegated to orchestrator"""
         try:
             canvas = self.query_one("#viz-canvas", VizCanvas)
             content = canvas.text
@@ -2350,23 +2366,20 @@ class DashboardApp(App):
                 self.notify("Nothing to save")
                 return
             
-            # Generate filename
-            import os
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            topic_part = self.topic.replace(" ", "_") if self.topic else "dashboard"
-            filename = f"globule_dashboard_{topic_part}_{timestamp}.md"
+            # Prepare metadata for orchestrator
+            palette = self.query_one("#thought-palette", ThoughtPalette)
+            metadata = {}
+            if palette.detected_schema:
+                metadata["schema"] = palette.detected_schema
+            if self.topic:
+                metadata["topic"] = self.topic
             
-            # Save to drafts directory
-            drafts_dir = "drafts"
-            os.makedirs(drafts_dir, exist_ok=True)
-            filepath = os.path.join(drafts_dir, filename)
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                # Add schema metadata if available
-                palette = self.query_one("#thought-palette", ThoughtPalette)
-                if palette.detected_schema:
-                    f.write(f"---\nschema: {palette.detected_schema}\ntopic: {self.topic}\ngenerated: {datetime.now().isoformat()}\n---\n\n")
-                f.write(content)
+            # Delegate to orchestrator
+            filepath = self.orchestrator.save_draft(
+                content=content, 
+                topic=self.topic,
+                metadata=metadata
+            )
             
             self.notify(f"✅ Saved to {filepath}")
             
