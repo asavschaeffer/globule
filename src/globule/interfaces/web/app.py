@@ -20,6 +20,7 @@ except ImportError:
     FASTAPI_AVAILABLE = False
 
 from globule.core.api import GlobuleAPI
+from globule.core.layout_engine import LayoutEngine, CanvasModule
 from globule.storage.sqlite_manager import SQLiteStorageManager
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ def create_app() -> "FastAPI":
             <style>
                 body {
                     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                    max-width: 1200px;
+                    max-width: 1400px;
                     margin: 0 auto;
                     padding: 20px;
                     background: #f5f5f5;
@@ -81,17 +82,66 @@ def create_app() -> "FastAPI":
                     border-radius: 8px;
                     margin-bottom: 20px;
                 }
-                .container {
+                
+                /* Layout Engine Grid System */
+                .canvas-grid {
                     display: grid;
-                    grid-template-columns: 1fr 1fr;
+                    grid-template: 1fr 2fr 1fr / 1fr 2fr 1fr;
                     gap: 20px;
+                    min-height: 600px;
                 }
-                .panel {
+                
+                /* Position classes matching layout engine */
+                .position-top-left { grid-area: 1 / 1; }
+                .position-top-center { grid-area: 1 / 2; }
+                .position-top-right { grid-area: 1 / 3; }
+                .position-center-left { grid-area: 2 / 1; }
+                .position-center { grid-area: 2 / 2; }
+                .position-center-right { grid-area: 2 / 3; }
+                .position-bottom-left { grid-area: 3 / 1; }
+                .position-bottom-center { grid-area: 3 / 2; }
+                .position-bottom-right { grid-area: 3 / 3; }
+                .position-full-width { grid-area: 2 / 1 / 2 / 4; }
+                
+                /* Schema-specific styling */
+                .canvas-module {
+                    background: white;
+                    padding: 15px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    border-left: 4px solid #3498db;
+                }
+                
+                .canvas-module.valet {
+                    border-left-color: #27ae60;
+                    background: #f8fff8;
+                }
+                
+                .canvas-module.academic {
+                    border-left-color: #3498db;
+                    background: #f8fbff;
+                }
+                
+                .canvas-module.technical {
+                    border-left-color: #f39c12;
+                    background: #fffbf0;
+                }
+                
+                /* Size classes */
+                .size-small { max-height: 200px; overflow-y: auto; }
+                .size-medium { max-height: 400px; overflow-y: auto; }
+                .size-large { max-height: 600px; overflow-y: auto; }
+                .size-auto { height: auto; }
+                .size-full { height: 100%; }
+                
+                /* Control panels */
+                .control-panel {
                     background: white;
                     padding: 20px;
                     border-radius: 8px;
                     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
                 }
+                
                 .search-box, .draft-box {
                     margin-bottom: 15px;
                 }
@@ -131,42 +181,67 @@ def create_app() -> "FastAPI":
                 .success { background: #d4edda; color: #155724; }
                 .error { background: #f8d7da; color: #721c24; }
                 .info { background: #d1ecf1; color: #0c5460; }
+                
+                .module-header {
+                    font-weight: bold;
+                    color: #2c3e50;
+                    margin-bottom: 10px;
+                    border-bottom: 1px solid #eee;
+                    padding-bottom: 5px;
+                }
             </style>
         </head>
         <body>
             <div class="header">
                 <h1>🌐 Globule Web Interface</h1>
-                <p>Search globules and manage drafts through your web browser</p>
+                <p>Layout-aware canvas with schema-based positioning</p>
             </div>
             
-            <div class="container">
-                <div class="panel">
-                    <h2>🔍 Search Globules</h2>
+            <div class="canvas-grid" id="canvasGrid">
+                <!-- Control panels positioned using layout engine -->
+                <div class="control-panel position-top-left">
+                    <h3>🔍 Search</h3>
                     <div class="search-box">
-                        <input type="text" id="searchQuery" placeholder="Enter natural language query (e.g., 'valet maria honda')" />
+                        <input type="text" id="searchQuery" placeholder="Search globules..." />
                         <button onclick="performSearch()">Search</button>
                     </div>
-                    <div id="searchResults" class="results">Search results will appear here...</div>
+                    <div id="searchResults" class="results size-small">Search results...</div>
                 </div>
                 
-                <div class="panel">
-                    <h2>📝 Draft Management</h2>
+                <div class="control-panel position-top-right">
+                    <h3>📝 Draft</h3>
                     <div class="draft-box">
-                        <textarea id="draftContent" rows="4" placeholder="Add content to draft..."></textarea>
+                        <textarea id="draftContent" rows="3" placeholder="Add content..."></textarea>
                         <button onclick="addToDraft()">Add to Draft</button>
-                        <button onclick="getDraftStats()">Get Draft Stats</button>
-                        <button onclick="exportDraft()">Export Draft</button>
+                        <button onclick="getDraftStats()">Stats</button>
                     </div>
-                    <div id="draftResults" class="results">Draft operations will show here...</div>
+                    <div id="draftResults" class="results size-small">Draft operations...</div>
                 </div>
+                
+                <!-- Main canvas area -->
+                <div class="control-panel position-center" id="mainCanvas">
+                    <h3>📋 Canvas</h3>
+                    <p>Schema-positioned modules will appear throughout the grid based on their configuration.</p>
+                    <button onclick="clearCanvas()">Clear Canvas</button>
+                    <button onclick="showLayoutInfo()">Show Layout Info</button>
+                </div>
+                
+                <!-- Dynamic module areas - will be populated by layout engine -->
+                <div class="position-top-center" id="topCenter"></div>
+                <div class="position-center-left" id="centerLeft"></div>
+                <div class="position-center-right" id="centerRight"></div>
+                <div class="position-bottom-left" id="bottomLeft"></div>
+                <div class="position-bottom-center" id="bottomCenter"></div>
+                <div class="position-bottom-right" id="bottomRight"></div>
             </div>
             
-            <div class="panel" style="margin-top: 20px;">
-                <h2>ℹ️ Available Operations</h2>
-                <p><strong>Search:</strong> Use natural language queries like "valet maria honda" or "car parked yesterday"</p>
-                <p><strong>Draft:</strong> Add search results or custom content to your current draft</p>
-                <p><strong>Export:</strong> Save your draft to a file for later use</p>
-                <p><strong>CLI Equivalent:</strong> All operations mirror the CLI commands (globule search, globule add-to-draft, etc.)</p>
+            <div class="control-panel" style="margin-top: 20px;">
+                <h3>ℹ️ Layout Engine Features</h3>
+                <p><strong>Schema-Based Positioning:</strong> Modules are positioned according to their schema's canvas_config</p>
+                <p><strong>Valet modules:</strong> Positioned at top-left (green styling)</p>
+                <p><strong>Academic modules:</strong> Blue styling with flexible positioning</p>
+                <p><strong>Technical modules:</strong> Orange styling for technical content</p>
+                <p><strong>Consistent with TUI:</strong> Same layout rules as terminal interface</p>
             </div>
             
             <script>
@@ -182,7 +257,7 @@ def create_app() -> "FastAPI":
                     resultsDiv.innerHTML = '<div class="info">Searching...</div>';
                     
                     try {
-                        const response = await fetch('/api/search', {
+                        const response = await fetch('/api/search_positioned', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ query: query })
@@ -191,13 +266,43 @@ def create_app() -> "FastAPI":
                         const result = await response.json();
                         
                         if (result.success) {
-                            resultsDiv.innerHTML = `<div class="success">Search completed</div><pre>${result.data}</pre>`;
+                            resultsDiv.innerHTML = '<div class="success">Search completed - results positioned on canvas</div>';
+                            
+                            // Create positioned module on canvas
+                            if (result.layout_info) {
+                                createPositionedModule(result.layout_info, result.data, query);
+                            }
                         } else {
                             resultsDiv.innerHTML = `<div class="error">Search failed: ${result.message}</div>`;
                         }
                     } catch (error) {
                         resultsDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
                     }
+                }
+                
+                function createPositionedModule(layoutInfo, content, query) {
+                    const position = layoutInfo.position || 'center-left';
+                    const schemaName = layoutInfo.schema_name || 'default';
+                    const size = layoutInfo.size || 'medium';
+                    
+                    // Find the target container
+                    const targetId = position.replace('-', '').replace('left', 'Left').replace('right', 'Right').replace('center', 'Center').replace('top', 'top').replace('bottom', 'bottom');
+                    let targetContainer = document.getElementById(targetId) || document.getElementById('centerLeft');
+                    
+                    // Create module element
+                    const moduleElement = document.createElement('div');
+                    moduleElement.className = `canvas-module ${schemaName} size-${size}`;
+                    moduleElement.innerHTML = `
+                        <div class="module-header">${query} (${schemaName})</div>
+                        <div class="module-content">
+                            <pre>${content}</pre>
+                        </div>
+                        <button onclick="this.parentElement.remove()" style="position: absolute; top: 5px; right: 5px; background: #e74c3c; color: white; border: none; border-radius: 3px; padding: 2px 6px; cursor: pointer;">×</button>
+                    `;
+                    moduleElement.style.position = 'relative';
+                    
+                    // Add to target container
+                    targetContainer.appendChild(moduleElement);
                 }
                 
                 async function addToDraft() {
@@ -282,6 +387,25 @@ Modified: ${stats.last_modified}</pre>`;
                     }
                 }
                 
+                function clearCanvas() {
+                    const positions = ['topCenter', 'centerLeft', 'centerRight', 'bottomLeft', 'bottomCenter', 'bottomRight'];
+                    positions.forEach(pos => {
+                        const container = document.getElementById(pos);
+                        if (container) container.innerHTML = '';
+                    });
+                    document.getElementById('mainCanvas').querySelector('p').textContent = 'Canvas cleared. Schema-positioned modules will appear here.';
+                }
+                
+                function showLayoutInfo() {
+                    const infoText = `Layout Engine Information:
+- Grid: 3x3 with dynamic positioning  
+- Schemas: valet (top-left), academic (flexible), technical (flexible)
+- Positions: top-left, top-center, top-right, center-left, center, center-right, bottom-left, bottom-center, bottom-right
+- Sizes: small, medium, large, auto, full
+- Styling: Schema-specific colors and borders`;
+                    alert(infoText);
+                }
+                
                 // Allow Enter key in search box
                 document.getElementById('searchQuery').addEventListener('keypress', function(e) {
                     if (e.key === 'Enter') {
@@ -315,6 +439,67 @@ Modified: ${stats.last_modified}</pre>`;
             return JSONResponse({
                 "success": False,
                 "message": f"Search failed: {str(e)}",
+                "data": None
+            }, status_code=500)
+    
+    @app.post("/api/search_positioned")
+    async def api_search_positioned(request: Request):
+        """API endpoint for search with layout engine positioning."""
+        try:
+            data = await request.json()
+            query = data.get('query', '')
+            
+            if not query:
+                raise HTTPException(status_code=400, detail="Query is required")
+            
+            if api is None:
+                raise HTTPException(status_code=500, detail="API not initialized")
+                
+            # Perform regular search
+            result = await api.search(query)
+            
+            if not result['success']:
+                return JSONResponse(result)
+            
+            # Determine schema from query content
+            schema_name = 'default'
+            query_lower = query.lower()
+            if any(keyword in query_lower for keyword in ['valet', 'parking', 'car', 'vehicle']):
+                schema_name = 'valet'
+            elif any(keyword in query_lower for keyword in ['academic', 'research', 'paper', 'study']):
+                schema_name = 'academic' 
+            elif any(keyword in query_lower for keyword in ['technical', 'code', 'programming', 'software']):
+                schema_name = 'technical'
+            
+            # Get layout configuration from schema
+            layout_engine = LayoutEngine()
+            layout_config = layout_engine.get_layout_config(schema_name)
+            
+            # Prepare layout information for frontend
+            layout_info = {
+                'schema_name': schema_name,
+                'position': 'center-left',  # default
+                'size': 'medium',  # default
+                'css_classes': []
+            }
+            
+            if layout_config:
+                layout_info.update({
+                    'position': layout_config.position.value,
+                    'size': layout_config.size.value,
+                    'css_classes': layout_config.css_classes
+                })
+            
+            # Add layout information to result
+            result['layout_info'] = layout_info
+            
+            return JSONResponse(result)
+            
+        except Exception as e:
+            logger.error(f"Positioned search API error: {e}")
+            return JSONResponse({
+                "success": False,
+                "message": f"Positioned search failed: {str(e)}",
                 "data": None
             }, status_code=500)
     

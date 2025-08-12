@@ -7,7 +7,7 @@ Canvas: View composer (text + visualization)
 """
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll, Container
 from textual.widgets import Header, Footer, Static, TextArea, Tree, Label, Input
 from textual.reactive import reactive, var
 from textual.binding import Binding
@@ -28,6 +28,8 @@ import logging
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
+from globule.core.layout_engine import LayoutEngine, CanvasModule
 
 # Configure logging - level DEBUG for details, INFO for user-visible
 # Check if we have a log file argument (launched by CLI with log redirection)
@@ -802,8 +804,8 @@ Return only the raw SQL SELECT statement, no explanations.
             self.drag_data = None
 
 
-class VizCanvas(TextArea):
-    """Enhanced canvas: View composer with text + visualization support"""
+class VizCanvas(Container):
+    """Enhanced canvas: Layout-aware composer with positioned modules and text areas"""
     
     class AIActionRequested(Message):
         """Message sent when AI action is requested"""
@@ -814,7 +816,7 @@ class VizCanvas(TextArea):
             super().__init__()
     
     def __init__(self, content: str = "", output_schema: Dict[str, Any] = None, **kwargs):
-        super().__init__(content, **kwargs)
+        super().__init__(**kwargs)
         self.incorporated_results: List[Dict[str, Any]] = []
         self.dashboard_mode = False
         self.can_focus = True
@@ -823,9 +825,154 @@ class VizCanvas(TextArea):
         self.template = output_schema.get('template', '') if output_schema else ''
         self.query_data = {}  # Store query results for template substitution
         self.parser = None  # For AI actions
+        
+        # Layout engine integration
+        self.layout_engine = LayoutEngine()
+        self.canvas_modules: List[CanvasModule] = []
+        self.main_text_area: Optional[TextArea] = None
+        
+        # Initialize with content if provided
+        if content:
+            self._initial_content = content
+        else:
+            self._initial_content = ""
+    
+    def compose(self) -> ComposeResult:
+        """Compose layout-based canvas with positioned modules"""
+        # Generate TUI layout from any existing modules
+        if self.canvas_modules:
+            layout_config = self.layout_engine.generate_tui_layout(self.canvas_modules)
+            
+            # Create positioned widgets based on layout
+            for widget_id, widget_config in layout_config["widgets"].items():
+                module = widget_config["module"]
+                style = widget_config["style"]
+                
+                # Create a Static widget for each module with its content
+                widget = Static(module.content, id=widget_id, classes=f"canvas-module {module.layout.schema_name}")
+                yield widget
+        
+        # Always include a main text area for primary content
+        self.main_text_area = TextArea(self._initial_content, id="main-canvas-text")
+        yield self.main_text_area
+    
+    def add_canvas_module(self, name: str, content: str, schema_name: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Add a new module to the canvas using layout engine positioning.
+        
+        Args:
+            name: Module display name
+            content: Module content
+            schema_name: Schema name to determine layout configuration
+            metadata: Optional metadata
+            
+        Returns:
+            True if module was added successfully, False otherwise
+        """
+        module_id = f"module_{len(self.canvas_modules)}"
+        
+        # Create canvas module using layout engine
+        canvas_module = self.layout_engine.create_canvas_module(
+            id=module_id,
+            name=name,
+            content=content,
+            schema_name=schema_name,
+            metadata=metadata
+        )
+        
+        if canvas_module:
+            self.canvas_modules.append(canvas_module)
+            
+            # Refresh the UI to show the new module
+            # For now, we'll need to trigger a recompose
+            # In a more advanced implementation, we'd dynamically add widgets
+            
+            return True
+        
+        return False
+    
+    def clear_modules(self):
+        """Clear all canvas modules."""
+        self.canvas_modules.clear()
+    
+    def get_text(self) -> str:
+        """Get the main text content (compatibility with TextArea interface)."""
+        if self.main_text_area:
+            return self.main_text_area.text
+        return self._initial_content
+    
+    def set_text(self, text: str):
+        """Set the main text content (compatibility with TextArea interface)."""
+        if self.main_text_area:
+            self.main_text_area.text = text
+        else:
+            self._initial_content = text
+    
+    # Property for compatibility with TextArea interface
+    @property
+    def text(self) -> str:
+        return self.get_text()
+    
+    @text.setter 
+    def text(self, value: str):
+        self.set_text(value)
     
     def add_dragged_result(self, query_result: Dict[str, Any]) -> None:
-        """Add dragged query result to canvas with smart placeholder matching"""
+        """Add dragged query result to canvas with schema-based layout positioning"""
+        query_name = query_result.get('name', 'Query Result')
+        
+        # Try to determine schema from query result
+        schema_name = query_result.get('schema_name', 'default')
+        
+        # If schema not explicitly provided, try to infer from query data
+        if schema_name == 'default':
+            # Look for valet-related keywords
+            query_text = str(query_result.get('query', '')).lower()
+            if any(keyword in query_text for keyword in ['valet', 'parking', 'car', 'vehicle']):
+                schema_name = 'valet'
+        
+        # Format the query result as content
+        formatted_content = self._format_query_result(query_result)
+        
+        # Try to add as a positioned module first
+        if self.add_canvas_module(query_name, formatted_content, schema_name, {'query_result': query_result}):
+            self.post_message(self.AIActionRequested("module_added", f"Added {query_name} as positioned module"))
+            return
+        
+        # Fallback to original behavior (add to main text area)
+        self._add_to_main_text(query_result)
+    
+    def _format_query_result(self, query_result: Dict[str, Any]) -> str:
+        """Format query result for display in a module."""
+        query_name = query_result.get('name', 'Query Result')
+        result = query_result.get('results', [])
+        
+        if not result:
+            return f"## {query_name}\n\nNo results found."
+        
+        # Format as table if it's structured data
+        if isinstance(result, list) and len(result) > 0:
+            if isinstance(result[0], dict):
+                # Create table from dict data
+                headers = list(result[0].keys())
+                table_lines = [f"## {query_name}\n"]
+                table_lines.append("| " + " | ".join(headers) + " |")
+                table_lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
+                
+                for row in result[:5]:  # Limit to first 5 rows for module display
+                    values = [str(row.get(h, '')) for h in headers]
+                    table_lines.append("| " + " | ".join(values) + " |")
+                
+                if len(result) > 5:
+                    table_lines.append(f"\n*... and {len(result) - 5} more results*")
+                
+                return "\n".join(table_lines)
+        
+        # Fallback to simple text representation
+        return f"## {query_name}\n\n{str(result)}"
+    
+    def _add_to_main_text(self, query_result: Dict[str, Any]) -> None:
+        """Fallback method - add to main text area (original behavior)"""
         query_name = query_result.get('name', 'Query Result')
         query = query_result.get('query', 'Unknown Query')
         result = query_result.get('results', [])
@@ -1791,6 +1938,8 @@ Use this space to compose your thoughts and analysis. Query results from the pal
 
 class DashboardApp(App):
     """Enhanced Globule TUI with analytics dashboard capabilities"""
+    
+    CSS_PATH = "styles.tcss"
     
     CSS = """
     .palette-header {
