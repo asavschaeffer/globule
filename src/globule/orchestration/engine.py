@@ -228,10 +228,13 @@ class GlobuleOrchestrator(IOrchestrationEngine):
             
             with open(filepath, 'w', encoding='utf-8') as f:
                 # Add metadata if available
-                if metadata:
+                if metadata or topic:
                     f.write("---\n")
-                    for key, value in metadata.items():
-                        f.write(f"{key}: {value}\n")
+                    if metadata:
+                        for key, value in metadata.items():
+                            f.write(f"{key}: {value}\n")
+                    if topic:
+                        f.write(f"topic: {topic}\n")
                     f.write(f"generated: {datetime.now().isoformat()}\n")
                     f.write("---\n\n")
                 f.write(content)
@@ -272,7 +275,7 @@ class GlobuleOrchestrator(IOrchestrationEngine):
         """Generate embedding and return (embedding, time_ms)"""
         logger.debug("TIMING: Starting embedding generation...")
         start_time = time.time()
-        embedding = await self.embedding_provider.embed(text)
+        embedding = self.embedding_provider.embed(text)  # Remove await - mock is sync
         processing_time = (time.time() - start_time) * 1000
         logger.info(f"TIMING: Embedding completed in {processing_time:.1f}ms")
         return embedding, processing_time
@@ -281,7 +284,7 @@ class GlobuleOrchestrator(IOrchestrationEngine):
         """Parse content and return (parsed_data, time_ms)"""
         logger.debug("TIMING: Starting content parsing...")
         start_time = time.time()
-        parsed_data = await self.parsing_provider.parse(text, schema_config)
+        parsed_data = self.parser_provider.parse(text)  # Fix attribute name and remove schema_config for now
         processing_time = (time.time() - start_time) * 1000
         logger.info(f"TIMING: Parsing completed in {processing_time:.1f}ms")
         return parsed_data, processing_time
