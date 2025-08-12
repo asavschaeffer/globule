@@ -18,7 +18,7 @@ from typing import List, Tuple
 from pathlib import Path
 
 from globule.storage.sqlite_manager import SQLiteStorageManager
-from globule.core.models import ProcessedGlobule, FileDecision
+from globule.core.models import ProcessedGlobuleV1, FileDecisionV1
 
 
 @pytest.mark.integration
@@ -96,7 +96,7 @@ class TestVectorSearchIntegration:
         query_text = "software development"
         
         # Test hybrid search
-        results = await storage.search_by_text_and_embedding(
+        results = await storage.hybrid_search(
             query_text, query_embedding, limit=5, similarity_threshold=0.1
         )
         
@@ -216,7 +216,7 @@ class TestVectorSearchIntegration:
             assert len(results) > 0
             # Verify result structure
             for globule, score in results:
-                assert isinstance(globule, ProcessedGlobule)
+                assert isinstance(globule, ProcessedGlobuleV1)
                 assert isinstance(score, float)
                 assert 0.0 <= score <= 1.0
 
@@ -240,14 +240,14 @@ class TestVectorSearchIntegration:
         
         # Store a globule with 1024-dimensional embedding
         large_embedding = np.random.rand(1024).astype(np.float32)
-        globule = ProcessedGlobule(
+        globule = ProcessedGlobuleV1(
             id="large_embedding_test",
             text="Test with large embedding dimensions",
             embedding=large_embedding,
             embedding_confidence=0.85,
             parsed_data={"domain": "test", "category": "dimension"},
             parsing_confidence=0.80,
-            file_decision=FileDecision(Path("test"), "large.md", {}, 0.8, []),
+            file_decision=FileDecisionV1(Path("test"), "large.md", {}, 0.8, []),
             orchestration_strategy="parallel",
             processing_time_ms={"total_ms": 300},
             confidence_scores={"overall": 0.80},
@@ -499,7 +499,7 @@ class TestRealWorldScenarios:
         search_embedding = learning_globule.embedding
         
         # User does a hybrid search
-        results = await storage.search_by_text_and_embedding(
+        results = await storage.hybrid_search(
             "learning techniques", search_embedding, limit=10, similarity_threshold=0.1
         )
         

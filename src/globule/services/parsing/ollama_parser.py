@@ -22,14 +22,14 @@ import aiohttp
 from pydantic import BaseModel, ValidationError as PydanticError, create_model, field_validator
 from jsonschema import validate, ValidationError
 
-from globule.core.interfaces import ParsingProvider
+from globule.core.interfaces import IParserProvider
 from globule.config.settings import get_config
 from globule.schemas.manager import get_schema_manager, format_schema_for_llm, get_schema_for_domain
 
 logger = logging.getLogger(__name__)
 
 
-class OllamaParser(ParsingProvider):
+class OllamaParser(IParserProvider):
     """
     Enhanced Ollama parser with dynamic prompting and Pydantic validation.
     

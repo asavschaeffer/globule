@@ -5,7 +5,7 @@ This test will eventually verify the end-to-end processing of a Globule
 through the decoupled engine, using dummy or mocked providers initially.
 """
 import pytest
-from uuid import uuid4
+from uuid import uuid4, UUID
 
 from globule.core.models import GlobuleV1, ProcessedGlobuleV1
 from globule.core.interfaces import IOrchestrationEngine, IParserProvider, IEmbeddingProvider, IStorageManager

@@ -10,8 +10,8 @@ import time
 import logging
 from typing import Dict, Any
 
-from globule.core.interfaces import OrchestrationEngine as OrchestrationEngineInterface, EmbeddingProvider, ParsingProvider, StorageManager
-from globule.core.models import EnrichedInput, ProcessedGlobule, FileDecision
+from globule.core.interfaces import IOrchestrationEngine as OrchestrationEngineInterface, IEmbeddingProvider, IParserProvider, IStorageManager
+from globule.core.models import ProcessedGlobuleV1, FileDecisionV1
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -21,27 +21,27 @@ class OrchestrationEngine(OrchestrationEngineInterface):
     """Main orchestration engine for processing globules through the AI pipeline"""
     
     def __init__(self, 
-                 embedding_provider: EmbeddingProvider,
-                 parsing_provider: ParsingProvider,
-                 storage_manager: StorageManager):
+                 embedding_provider: IEmbeddingProvider,
+                 parsing_provider: IParserProvider,
+                 storage_manager: IStorageManager):
         self.embedding_provider = embedding_provider
         self.parsing_provider = parsing_provider
         self.storage_manager = storage_manager
         
     
-    async def process_globule(self, enriched_input: EnrichedInput) -> ProcessedGlobule:
-        """Process an enriched input into a processed globule"""
+    async def process_globule(self, globule: "GlobuleV1") -> "ProcessedGlobuleV1":
+        """Process a raw globule into a processed globule"""
         start_time = time.time()
         processing_times = {}
         
-        logger.debug(f"Processing globule: {enriched_input.original_text[:50]}...")
+        logger.debug(f"Processing globule: {globule.raw_text[:50]}...")
         
         # Launch embedding and parsing tasks concurrently
         embedding_task = asyncio.create_task(
-            self._generate_embedding(enriched_input.enriched_text)
+            self._generate_embedding(globule.raw_text)
         )
         parsing_task = asyncio.create_task(
-            self._parse_content(enriched_input.enriched_text, enriched_input.schema_config)
+            self._parse_content(globule.raw_text)
         )
         
         # Wait for both to complete
@@ -53,28 +53,24 @@ class OrchestrationEngine(OrchestrationEngineInterface):
             # Handle embedding result
             if isinstance(embedding_result, Exception):
                 logger.error(f"Embedding failed: {embedding_result}")
-                embedding = None
-                embedding_confidence = 0.0
+                embedding = []
                 processing_times["embedding_ms"] = 0
             else:
                 embedding, embed_time = embedding_result
-                embedding_confidence = 1.0  # Assume success = high confidence for MVP
                 processing_times["embedding_ms"] = embed_time
             
             # Handle parsing result  
             if isinstance(parsing_result, Exception):
                 logger.error(f"Parsing failed: {parsing_result}")
                 parsed_data = {"error": str(parsing_result)}
-                parsing_confidence = 0.0
                 processing_times["parsing_ms"] = 0
             else:
                 parsed_data, parse_time = parsing_result
-                parsing_confidence = 1.0  # Assume success = high confidence for MVP
                 processing_times["parsing_ms"] = parse_time
             
             # Generate file decision from parsed data
             file_decision = self._generate_file_decision(
-                enriched_input.original_text, 
+                globule.raw_text, 
                 parsed_data
             )
             
@@ -84,28 +80,22 @@ class OrchestrationEngine(OrchestrationEngineInterface):
             processing_times["orchestration_ms"] = total_time - processing_times.get("embedding_ms", 0) - processing_times.get("parsing_ms", 0)
             
             # Create processed globule
-            globule = ProcessedGlobule(
-                text=enriched_input.original_text,
+            processed_globule = ProcessedGlobuleV1(
+                globule_id=globule.globule_id,
+                original_globule=globule,
                 embedding=embedding,
-                embedding_confidence=embedding_confidence,
                 parsed_data=parsed_data,
-                parsing_confidence=parsing_confidence,
                 file_decision=file_decision,
-                orchestration_strategy="parallel",
-                processing_time_ms=processing_times,
-                confidence_scores={
-                    "embedding": embedding_confidence,
-                    "parsing": parsing_confidence,
-                    "overall": (embedding_confidence + parsing_confidence) / 2
-                },
-                interpretations=[],  # MVP: no disagreement detection
-                has_nuance=False,    # MVP: no nuance detection
-                semantic_neighbors=[],  # Will be populated later
-                processing_notes=[]
+                processing_time_ms=total_time,
+                provider_metadata={
+                    "parser": self.parsing_provider.__class__.__name__,
+                    "embedder": self.embedding_provider.__class__.__name__,
+                    "storage": self.storage_manager.__class__.__name__
+                }
             )
             
             logger.debug(f"Globule processed in {total_time:.1f}ms")
-            return globule
+            return processed_globule
             
         except Exception as e:
             logger.error(f"Orchestration failed: {e}")
@@ -130,7 +120,7 @@ class OrchestrationEngine(OrchestrationEngineInterface):
         logger.info(f"TIMING: Parsing completed in {processing_time:.1f}ms")
         return parsed_data, processing_time
     
-    def _generate_file_decision(self, text: str, parsed_data: Dict[str, Any]) -> FileDecision:
+    def _generate_file_decision(self, text: str, parsed_data: Dict[str, Any]) -> FileDecisionV1:
         """Generate simple file decision for MVP"""
         # Use parsed data if available, otherwise create simple path
         domain = parsed_data.get("domain", "general")
@@ -146,20 +136,15 @@ class OrchestrationEngine(OrchestrationEngineInterface):
         semantic_path = Path(domain) / category
         filename = f"{clean_title}.md"
         
-        return FileDecision(
-            semantic_path=semantic_path,
+        return FileDecisionV1(
+            semantic_path=str(semantic_path),
             filename=filename,
-            metadata={
-                "auto_generated": True,
-                "source": "parallel_orchestration"
-            },
             confidence=0.8,  # Default confidence for MVP
-            alternative_paths=[]
         )
 
 
 # Reusable API functions for CLI mirroring
-async def search_globules_nlp(nl_query: str, storage_manager: StorageManager) -> str:
+async def search_globules_nlp(nl_query: str, storage_manager: IStorageManager) -> str:
     """
     Mirror TUI search: Convert natural language query to SQL and execute.
     Returns formatted Markdown module content.
@@ -236,7 +221,7 @@ Return only the raw SQL SELECT statement, no explanations.
         await parser.close()
 
 
-async def _execute_sql_cli(sql: str, storage_manager: StorageManager) -> tuple:
+async def _execute_sql_cli(sql: str, storage_manager: IStorageManager) -> tuple:
     """Execute SQL query and return results with headers (CLI version)"""
     import sqlite3
     import os
@@ -305,7 +290,7 @@ def _format_module_cli(results: list, headers: list, query: str) -> str:
     return md
 
 
-def fetch_globule_content(item_id: str, storage_manager: StorageManager) -> str:
+def fetch_globule_content(item_id: str, storage_manager: IStorageManager) -> str:
     """
     Fetch globule content by ID for CLI add-to-draft functionality.
     Returns formatted content ready for draft inclusion.
