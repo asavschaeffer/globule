@@ -12,6 +12,7 @@ from enum import Enum
 from dataclasses import dataclass
 
 from globule.schemas.manager import SchemaManager
+from globule.core.canvas_skeleton import CanvasSkeleton, SkeletonManager, ModulePlaceholder
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,7 @@ class LayoutEngine:
             schema_manager: Schema manager instance for loading canvas configs
         """
         self.schema_manager = schema_manager or SchemaManager()
+        self.skeleton_manager = SkeletonManager()
         self._layout_cache: Dict[str, LayoutConfig] = {}
         self._grid_assignments: Dict[Position, List[str]] = {}
         
@@ -343,3 +345,232 @@ class LayoutEngine:
                 errors.append(f"Invalid size: {layout['size']}")
         
         return len(errors) == 0, errors
+    
+    # === Skeleton Management Methods ===
+    
+    def save_canvas_as_skeleton(self, 
+                               modules: List[CanvasModule],
+                               name: str,
+                               description: str,
+                               author: str = "user",
+                               tags: Optional[List[str]] = None) -> bool:
+        """
+        Save current canvas layout as a reusable skeleton.
+        
+        Args:
+            modules: Current canvas modules to save as template
+            name: Name for the skeleton
+            description: Description of the skeleton's purpose
+            author: Creator of the skeleton
+            tags: Optional tags for categorization
+            
+        Returns:
+            True if skeleton was saved successfully
+        """
+        try:
+            skeleton = self.skeleton_manager.create_skeleton_from_canvas(
+                canvas_modules=modules,
+                name=name,
+                description=description,
+                author=author,
+                tags=tags or []
+            )
+            
+            return self.skeleton_manager.save_skeleton(skeleton)
+            
+        except Exception as e:
+            logger.error(f"Failed to save canvas as skeleton '{name}': {e}")
+            return False
+    
+    def load_skeleton(self, name: str) -> Optional[CanvasSkeleton]:
+        """
+        Load a skeleton by name.
+        
+        Args:
+            name: Name of skeleton to load
+            
+        Returns:
+            CanvasSkeleton object or None if not found
+        """
+        return self.skeleton_manager.load_skeleton(name)
+    
+    def list_skeletons(self, compatible_with_schemas: Optional[List[str]] = None) -> List[CanvasSkeleton]:
+        """
+        List available skeletons, optionally filtered by schema compatibility.
+        
+        Args:
+            compatible_with_schemas: Filter by schemas that work with these skeletons
+            
+        Returns:
+            List of CanvasSkeleton objects
+        """
+        if compatible_with_schemas:
+            return self.skeleton_manager.search_skeletons(schemas=compatible_with_schemas)
+        else:
+            return self.skeleton_manager.list_skeletons()
+    
+    def apply_skeleton_to_canvas(self, 
+                                skeleton_name: str,
+                                query_data: Dict[str, Any]) -> List[CanvasModule]:
+        """
+        Apply a skeleton template to create new canvas modules.
+        
+        Args:
+            skeleton_name: Name of skeleton to apply
+            query_data: Data to fill the skeleton template (queries, results, etc.)
+            
+        Returns:
+            List of CanvasModule objects ready for canvas, or empty list if failed
+        """
+        try:
+            skeleton = self.skeleton_manager.load_skeleton(skeleton_name)
+            if not skeleton:
+                logger.error(f"Skeleton '{skeleton_name}' not found")
+                return []
+            
+            # Apply skeleton to query data
+            module_configs = self.skeleton_manager.apply_skeleton_to_queries(skeleton, query_data)
+            
+            # Convert configurations to CanvasModule objects
+            canvas_modules = []
+            for config in module_configs:
+                # Create CanvasModule using layout config
+                layout_config = self.get_layout_config(config['schema_name'])
+                if not layout_config:
+                    # Create a basic layout config if schema doesn't have one
+                    layout_config = LayoutConfig(
+                        layout_type=LayoutType(config['layout_type']),
+                        position=Position(config['position']),
+                        size=Size(config['size']),
+                        css_classes=[],
+                        tui_style={},
+                        web_style={},
+                        schema_name=config['schema_name']
+                    )
+                
+                module = CanvasModule(
+                    id=config['id'],
+                    name=config['title'],
+                    content=config['content'],
+                    layout=layout_config,
+                    metadata=config.get('metadata', {})
+                )
+                canvas_modules.append(module)
+            
+            return canvas_modules
+            
+        except Exception as e:
+            logger.error(f"Failed to apply skeleton '{skeleton_name}': {e}")
+            return []
+    
+    def delete_skeleton(self, name: str) -> bool:
+        """
+        Delete a skeleton.
+        
+        Args:
+            name: Name of skeleton to delete
+            
+        Returns:
+            True if deleted successfully
+        """
+        return self.skeleton_manager.delete_skeleton(name)
+    
+    def search_skeletons(self, 
+                        query: Optional[str] = None,
+                        schemas: Optional[List[str]] = None,
+                        tags: Optional[List[str]] = None) -> List[CanvasSkeleton]:
+        """
+        Search for skeletons by various criteria.
+        
+        Args:
+            query: Text search in name/description
+            schemas: Filter by compatible schemas  
+            tags: Filter by tags
+            
+        Returns:
+            List of matching CanvasSkeleton objects
+        """
+        return self.skeleton_manager.search_skeletons(
+            query=query,
+            schemas=schemas,
+            tags=tags
+        )
+    
+    def get_skeleton_stats(self) -> Dict[str, Any]:
+        """Get statistics about available skeletons."""
+        return self.skeleton_manager.get_skeleton_stats()
+    
+    def create_default_skeletons(self) -> List[str]:
+        """
+        Create some default skeleton templates for common use cases.
+        
+        Returns:
+            List of created skeleton names
+        """
+        created = []
+        
+        # Valet dashboard skeleton
+        try:
+            valet_modules = [
+                self._create_sample_module("valet_summary", "center", "valet", "medium"),
+                self._create_sample_module("valet_search", "top-left", "valet", "small"),
+                self._create_sample_module("valet_stats", "top-right", "valet", "small")
+            ]
+            
+            skeleton = self.skeleton_manager.create_skeleton_from_canvas(
+                canvas_modules=valet_modules,
+                name="valet_dashboard",
+                description="Standard valet parking dashboard layout with search, stats, and main content area",
+                author="system",
+                tags=["valet", "dashboard", "default"]
+            )
+            
+            if self.skeleton_manager.save_skeleton(skeleton):
+                created.append("valet_dashboard")
+                
+        except Exception as e:
+            logger.error(f"Failed to create valet dashboard skeleton: {e}")
+        
+        # Research layout skeleton
+        try:
+            research_modules = [
+                self._create_sample_module("main_research", "center", "academic", "large"),
+                self._create_sample_module("sources", "center-right", "academic", "medium"),
+                self._create_sample_module("notes", "bottom-left", "academic", "small")
+            ]
+            
+            skeleton = self.skeleton_manager.create_skeleton_from_canvas(
+                canvas_modules=research_modules,
+                name="research_layout",
+                description="Academic research layout with main content, sources, and notes",
+                author="system", 
+                tags=["academic", "research", "default"]
+            )
+            
+            if self.skeleton_manager.save_skeleton(skeleton):
+                created.append("research_layout")
+                
+        except Exception as e:
+            logger.error(f"Failed to create research layout skeleton: {e}")
+        
+        return created
+    
+    def _create_sample_module(self, module_id: str, position: str, schema: str, size: str) -> CanvasModule:
+        """Create a sample module for default skeleton creation."""
+        layout_config = LayoutConfig(
+            layout_type=LayoutType.PANEL,
+            position=Position(position),
+            size=Size(size),
+            css_classes=[],
+            tui_style={},
+            web_style={},
+            schema_name=schema
+        )
+        
+        return CanvasModule(
+            id=module_id,
+            name=f"Sample {schema} module",
+            content=f"Template content for {schema} module",
+            layout=layout_config,
+            metadata={'template': True}
+        )

@@ -917,6 +917,105 @@ class VizCanvas(Container):
     def text(self, value: str):
         self.set_text(value)
     
+    # === Skeleton Management Methods ===
+    
+    def save_current_layout_as_skeleton(self, name: str, description: str, tags: Optional[List[str]] = None) -> bool:
+        """
+        Save the current canvas layout as a skeleton template.
+        
+        Args:
+            name: Name for the skeleton
+            description: Description of the skeleton
+            tags: Optional tags for categorization
+            
+        Returns:
+            True if skeleton was saved successfully
+        """
+        if not self.canvas_modules:
+            logger.warning("No modules on canvas to save as skeleton")
+            return False
+        
+        return self.layout_engine.save_canvas_as_skeleton(
+            modules=self.canvas_modules,
+            name=name,
+            description=description,
+            author="tui_user",
+            tags=tags or []
+        )
+    
+    def load_skeleton_to_canvas(self, skeleton_name: str, query_data: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Load a skeleton template and apply it to the canvas.
+        
+        Args:
+            skeleton_name: Name of skeleton to load
+            query_data: Data to fill skeleton templates (optional)
+            
+        Returns:
+            True if skeleton was applied successfully
+        """
+        try:
+            # Prepare query data if not provided
+            if query_data is None:
+                query_data = {
+                    'query': 'Applied skeleton',
+                    'content': 'Template content',
+                    'timestamp': datetime.now().isoformat()
+                }
+            
+            # Apply skeleton to get new modules
+            new_modules = self.layout_engine.apply_skeleton_to_canvas(skeleton_name, query_data)
+            
+            if new_modules:
+                # Replace current modules with skeleton-generated modules
+                self.canvas_modules = new_modules
+                
+                # Trigger UI refresh (in a real implementation, we'd need to recompose)
+                # For now, we just update our internal state
+                logger.info(f"Applied skeleton '{skeleton_name}' with {len(new_modules)} modules")
+                return True
+            else:
+                logger.error(f"Failed to generate modules from skeleton '{skeleton_name}'")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to load skeleton '{skeleton_name}': {e}")
+            return False
+    
+    def get_available_skeletons(self) -> List[str]:
+        """
+        Get list of available skeleton names.
+        
+        Returns:
+            List of skeleton names
+        """
+        skeletons = self.layout_engine.list_skeletons()
+        return [s.name for s in skeletons]
+    
+    def get_skeleton_info(self, skeleton_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get information about a specific skeleton.
+        
+        Args:
+            skeleton_name: Name of skeleton
+            
+        Returns:
+            Dictionary with skeleton information or None if not found
+        """
+        skeleton = self.layout_engine.load_skeleton(skeleton_name)
+        if skeleton:
+            return {
+                'name': skeleton.name,
+                'description': skeleton.description,
+                'author': skeleton.author,
+                'created_at': skeleton.created_at.isoformat(),
+                'tags': skeleton.tags,
+                'module_count': len(skeleton.module_placeholders),
+                'schemas': skeleton.primary_schemas,
+                'usage_count': skeleton.usage_count
+            }
+        return None
+    
     def add_dragged_result(self, query_result: Dict[str, Any]) -> None:
         """Add dragged query result to canvas with schema-based layout positioning"""
         query_name = query_result.get('name', 'Query Result')

@@ -31,6 +31,7 @@ from globule.services.parsing.ollama_parser import OllamaParser
 from globule.orchestration.engine import OrchestrationEngine, search_globules_nlp, fetch_globule_content
 from globule.core.draft_manager import DraftManager
 from globule.core.frontend_manager import frontend_manager, FrontendType
+from globule.core.layout_engine import LayoutEngine
 from globule.config.settings import get_config
 
 # Configure logging
@@ -808,6 +809,134 @@ async def draft_stats(ctx: click.Context, draft: str) -> None:
         raise click.Abort()
 
 
+# === Canvas Skeleton Management Commands ===
+
+@click.command()
+@click.pass_context
+async def skeleton_list(ctx: click.Context) -> None:
+    """List all available canvas skeleton templates."""
+    try:
+        layout_engine = LayoutEngine()
+        skeletons = layout_engine.list_skeletons()
+        
+        if not skeletons:
+            click.echo("No skeleton templates found.")
+            click.echo("Create some with: globule skeleton-create-defaults")
+            return
+        
+        click.echo(f"Available Canvas Templates ({len(skeletons)}):")
+        click.echo("=" * 60)
+        
+        for skeleton in skeletons:
+            click.echo(f"\n[TEMPLATE] {skeleton.name}")
+            click.echo(f"   Description: {skeleton.description}")
+            click.echo(f"   Modules: {len(skeleton.module_placeholders)}, Used: {skeleton.usage_count} times")
+            if skeleton.tags:
+                click.echo(f"   Tags: {', '.join(skeleton.tags)}")
+        
+    except Exception as e:
+        logger.error(f"Failed to list skeletons: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+@click.command()
+@click.argument('name', required=True)
+@click.option('--output', '-o', help='Output file for resulting canvas')
+@click.pass_context
+async def skeleton_apply(ctx: click.Context, name: str, output: Optional[str]) -> None:
+    """Apply a skeleton template to create a new canvas layout."""
+    try:
+        layout_engine = LayoutEngine()
+        
+        # Check if skeleton exists
+        skeleton = layout_engine.load_skeleton(name)
+        if not skeleton:
+            click.echo(f"Skeleton template '{name}' not found.")
+            raise click.Abort()
+        
+        # Prepare query data
+        query_data = {
+            'query': f'Applied template {name}',
+            'content': 'Template content',
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Apply skeleton
+        modules = layout_engine.apply_skeleton_to_canvas(name, query_data)
+        
+        if modules:
+            click.echo(f"[SUCCESS] Applied skeleton '{name}' with {len(modules)} modules")
+            
+            # If output specified, save the result
+            if output:
+                content = ""
+                for module in modules:
+                    content += f"## {module.name}\n\n{module.content}\n\n"
+                
+                with open(output, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                
+                click.echo(f"[FILE] Saved to: {output}")
+        else:
+            click.echo(f"[ERROR] Failed to apply skeleton '{name}'")
+            raise click.Abort()
+        
+    except Exception as e:
+        logger.error(f"Failed to apply skeleton: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+@click.command()
+@click.pass_context
+async def skeleton_stats(ctx: click.Context) -> None:
+    """Show statistics about skeleton templates."""
+    try:
+        layout_engine = LayoutEngine()
+        stats = layout_engine.get_skeleton_stats()
+        
+        if stats['total'] == 0:
+            click.echo("No skeleton templates found.")
+            return
+        
+        click.echo("[STATS] Skeleton Template Statistics:")
+        click.echo("=" * 40)
+        click.echo(f"Total Templates: {stats['total']}")
+        click.echo(f"Total Usage: {stats['total_usage']}")
+        
+        if stats.get('by_schema'):
+            click.echo("\nBy Schema:")
+            for schema, count in stats['by_schema'].items():
+                click.echo(f"  {schema}: {count}")
+        
+    except Exception as e:
+        logger.error(f"Failed to get skeleton stats: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+@click.command()
+@click.pass_context
+async def skeleton_create_defaults(ctx: click.Context) -> None:
+    """Create default skeleton templates for common use cases."""
+    try:
+        layout_engine = LayoutEngine()
+        created = layout_engine.create_default_skeletons()
+        
+        if created:
+            click.echo(f"[SUCCESS] Created {len(created)} default templates:")
+            for name in created:
+                click.echo(f"  - {name}")
+        else:
+            click.echo("Default skeletons already exist.")
+        
+    except Exception as e:
+        logger.error(f"Failed to create default skeletons: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
 # Register all commands with the CLI group
 cli.add_command(add)
 cli.add_command(draft)
@@ -822,6 +951,12 @@ cli.add_command(nlsearch)
 cli.add_command(add_to_draft)
 cli.add_command(export_draft)
 cli.add_command(draft_stats)
+
+# Register skeleton management commands
+cli.add_command(skeleton_list)
+cli.add_command(skeleton_apply)
+cli.add_command(skeleton_stats)
+cli.add_command(skeleton_create_defaults)
 
 
 def main():

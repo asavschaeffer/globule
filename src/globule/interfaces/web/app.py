@@ -224,6 +224,8 @@ def create_app() -> "FastAPI":
                     <p>Schema-positioned modules will appear throughout the grid based on their configuration.</p>
                     <button onclick="clearCanvas()">Clear Canvas</button>
                     <button onclick="showLayoutInfo()">Show Layout Info</button>
+                    <button onclick="saveCurrentSkeleton()">Save as Template</button>
+                    <button onclick="loadSkeletonDialog()">Load Template</button>
                 </div>
                 
                 <!-- Dynamic module areas - will be populated by layout engine -->
@@ -406,6 +408,111 @@ Modified: ${stats.last_modified}</pre>`;
                     alert(infoText);
                 }
                 
+                async function saveCurrentSkeleton() {
+                    const name = prompt('Enter template name:');
+                    if (!name) return;
+                    
+                    const description = prompt('Enter template description:') || 'User-created template';
+                    const tags = prompt('Enter tags (comma-separated):') || '';
+                    
+                    try {
+                        const response = await fetch('/api/skeleton/save', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                name: name,
+                                description: description,
+                                tags: tags.split(',').map(t => t.trim()).filter(t => t)
+                            })
+                        });
+                        
+                        const result = await response.json();
+                        
+                        if (result.success) {
+                            alert(`Template '${name}' saved successfully!`);
+                        } else {
+                            alert(`Failed to save template: ${result.message}`);
+                        }
+                    } catch (error) {
+                        alert(`Error saving template: ${error.message}`);
+                    }
+                }
+                
+                async function loadSkeletonDialog() {
+                    try {
+                        // Get list of available skeletons
+                        const response = await fetch('/api/skeleton/list');
+                        const result = await response.json();
+                        
+                        if (!result.success || !result.data.length) {
+                            alert('No templates available');
+                            return;
+                        }
+                        
+                        // Create selection dialog
+                        let options = 'Available Templates:\\n\\n';
+                        result.data.forEach((skeleton, index) => {
+                            options += `${index + 1}. ${skeleton.name}\\n   ${skeleton.description}\\n   Modules: ${skeleton.module_count}, Usage: ${skeleton.usage_count}\\n\\n`;
+                        });
+                        
+                        const selection = prompt(options + '\\nEnter template number to load:');
+                        if (!selection) return;
+                        
+                        const index = parseInt(selection) - 1;
+                        if (index >= 0 && index < result.data.length) {
+                            const skeleton = result.data[index];
+                            await loadSkeleton(skeleton.name);
+                        } else {
+                            alert('Invalid selection');
+                        }
+                        
+                    } catch (error) {
+                        alert(`Error loading templates: ${error.message}`);
+                    }
+                }
+                
+                async function loadSkeleton(skeletonName) {
+                    try {
+                        const response = await fetch('/api/skeleton/apply', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                skeleton_name: skeletonName,
+                                query_data: {
+                                    query: 'Template Applied',
+                                    content: 'Template content will appear here',
+                                    timestamp: new Date().toISOString()
+                                }
+                            })
+                        });
+                        
+                        const result = await response.json();
+                        
+                        if (result.success) {
+                            // Clear existing canvas
+                            clearCanvas();
+                            
+                            // Apply skeleton modules to canvas
+                            if (result.modules && result.modules.length > 0) {
+                                result.modules.forEach(module => {
+                                    createPositionedModule({
+                                        position: module.position,
+                                        schema_name: module.schema_name,
+                                        size: module.size
+                                    }, module.content, module.title);
+                                });
+                            }
+                            
+                            alert(`Template '${skeletonName}' applied successfully!`);
+                        } else {
+                            alert(`Failed to apply template: ${result.message}`);
+                        }
+                        
+                    } catch (error) {
+                        alert(`Error applying template: ${error.message}`);
+                    }
+                }
+                
                 // Allow Enter key in search box
                 document.getElementById('searchQuery').addEventListener('keypress', function(e) {
                     if (e.key === 'Enter') {
@@ -564,6 +671,141 @@ Modified: ${stats.last_modified}</pre>`;
                 "success": False,
                 "message": f"Export draft failed: {str(e)}",
                 "data": None
+            }, status_code=500)
+    
+    @app.post("/api/skeleton/save")
+    async def api_skeleton_save(request: Request):
+        """API endpoint for saving current canvas as skeleton."""
+        try:
+            data = await request.json()
+            name = data.get('name', '')
+            description = data.get('description', '')
+            tags = data.get('tags', [])
+            
+            if not name:
+                raise HTTPException(status_code=400, detail="Skeleton name is required")
+            
+            # For web interface, we'll create a simple placeholder skeleton
+            # In a real implementation, we'd track the current canvas state
+            layout_engine = LayoutEngine()
+            
+            # Create a basic skeleton with sample data
+            # This would be replaced with actual canvas modules in production
+            sample_modules = [
+                layout_engine._create_sample_module("web_sample", "center", "default", "medium")
+            ]
+            
+            success = layout_engine.save_canvas_as_skeleton(
+                modules=sample_modules,
+                name=name,
+                description=description,
+                author="web_user",
+                tags=tags
+            )
+            
+            if success:
+                return JSONResponse({
+                    "success": True,
+                    "message": f"Skeleton '{name}' saved successfully",
+                    "data": {"name": name}
+                })
+            else:
+                return JSONResponse({
+                    "success": False,
+                    "message": "Failed to save skeleton",
+                    "data": None
+                })
+                
+        except Exception as e:
+            logger.error(f"Save skeleton API error: {e}")
+            return JSONResponse({
+                "success": False,
+                "message": f"Save skeleton failed: {str(e)}",
+                "data": None
+            }, status_code=500)
+    
+    @app.get("/api/skeleton/list")
+    async def api_skeleton_list():
+        """API endpoint for listing available skeletons."""
+        try:
+            layout_engine = LayoutEngine()
+            skeletons = layout_engine.list_skeletons()
+            
+            skeleton_data = []
+            for skeleton in skeletons:
+                skeleton_data.append({
+                    "name": skeleton.name,
+                    "description": skeleton.description,
+                    "author": skeleton.author,
+                    "created_at": skeleton.created_at.isoformat(),
+                    "tags": skeleton.tags,
+                    "module_count": len(skeleton.module_placeholders),
+                    "usage_count": skeleton.usage_count,
+                    "schemas": skeleton.primary_schemas
+                })
+            
+            return JSONResponse({
+                "success": True,
+                "message": "Skeletons retrieved successfully",
+                "data": skeleton_data
+            })
+            
+        except Exception as e:
+            logger.error(f"List skeletons API error: {e}")
+            return JSONResponse({
+                "success": False,
+                "message": f"List skeletons failed: {str(e)}",
+                "data": []
+            }, status_code=500)
+    
+    @app.post("/api/skeleton/apply")
+    async def api_skeleton_apply(request: Request):
+        """API endpoint for applying skeleton to canvas."""
+        try:
+            data = await request.json()
+            skeleton_name = data.get('skeleton_name', '')
+            query_data = data.get('query_data', {})
+            
+            if not skeleton_name:
+                raise HTTPException(status_code=400, detail="Skeleton name is required")
+            
+            layout_engine = LayoutEngine()
+            
+            # Apply skeleton to get module configurations
+            modules = layout_engine.apply_skeleton_to_canvas(skeleton_name, query_data)
+            
+            if modules:
+                # Convert modules to JSON-serializable format
+                module_data = []
+                for module in modules:
+                    module_data.append({
+                        "id": module.id,
+                        "title": module.name,
+                        "content": module.content,
+                        "position": module.layout.position.value,
+                        "schema_name": module.layout.schema_name,
+                        "size": module.layout.size.value,
+                        "layout_type": module.layout.layout_type.value
+                    })
+                
+                return JSONResponse({
+                    "success": True,
+                    "message": f"Skeleton '{skeleton_name}' applied successfully",
+                    "modules": module_data
+                })
+            else:
+                return JSONResponse({
+                    "success": False,
+                    "message": f"Failed to apply skeleton '{skeleton_name}'",
+                    "modules": []
+                })
+                
+        except Exception as e:
+            logger.error(f"Apply skeleton API error: {e}")
+            return JSONResponse({
+                "success": False,
+                "message": f"Apply skeleton failed: {str(e)}",
+                "modules": []
             }, status_code=500)
     
     return app
