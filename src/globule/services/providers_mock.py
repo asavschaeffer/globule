@@ -86,3 +86,24 @@ class MockStorageManager(IStorageManager):
     def clear(self) -> None:
         """Clear all stored globules (for testing)."""
         self._storage.clear()
+    
+    async def search(self, query: str, limit: int = 10) -> List[ProcessedGlobuleV1]:
+        """Mock search implementation."""
+        # Simple mock search - return globules containing query text
+        results = []
+        for globule in self._storage.values():
+            if query.lower() in globule.original_globule.raw_text.lower():
+                results.append(globule)
+        
+        return results[:limit]
+    
+    async def execute_sql(self, query: str, query_name: str = "Query") -> Dict[str, Any]:
+        """Mock SQL execution."""
+        return {
+            "type": "sql_results", 
+            "query": query,
+            "query_name": query_name,
+            "results": [{"mock": "result", "count": len(self._storage)}],
+            "headers": ["mock", "count"],
+            "count": 1
+        }

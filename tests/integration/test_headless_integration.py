@@ -8,6 +8,7 @@ headless architecture works correctly.
 import pytest
 import asyncio
 from uuid import uuid4, UUID
+from typing import List, Dict, Any
 
 from globule.core.models import GlobuleV1, ProcessedGlobuleV1
 from globule.core.interfaces import IOrchestrationEngine, IParserProvider, IEmbeddingProvider, IStorageManager
@@ -36,6 +37,25 @@ class InMemoryStorage(IStorageManager):
         if globule_id not in self._store:
             raise StorageError(f"Globule {globule_id} not found in in-memory store.")
         return self._store[globule_id]
+
+    async def search(self, query: str, limit: int = 10) -> List[ProcessedGlobuleV1]:
+        """Simple in-memory search for testing."""
+        results = []
+        for globule in self._store.values():
+            if query.lower() in globule.original_globule.raw_text.lower():
+                results.append(globule)
+        return results[:limit]
+    
+    async def execute_sql(self, query: str, query_name: str = "Query") -> Dict[str, Any]:
+        """Mock SQL execution for testing."""
+        return {
+            "type": "sql_results",
+            "query": query,
+            "query_name": query_name, 
+            "results": [],
+            "headers": [],
+            "count": 0
+        }
 
 class NoOpOrchestrationEngine(IOrchestrationEngine):
     def __init__(

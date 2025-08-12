@@ -13,10 +13,12 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 import uuid
+from uuid import UUID
 import numpy as np
 
 from globule.core.interfaces import IStorageManager
 from globule.core.models import ProcessedGlobuleV1, FileDecisionV1
+from globule.core.errors import StorageError
 from globule.config.settings import get_config
 
 
@@ -670,3 +672,114 @@ class SQLiteStorageManager(IStorageManager):
         # Sort by combined score
         fused_results.sort(key=lambda x: x[1], reverse=True)
         return fused_results
+
+    # Implementation of abstract methods from IStorageManager
+    
+    def save(self, globule: ProcessedGlobuleV1) -> None:
+        """
+        Synchronous wrapper for store_globule.
+        This is required by the IStorageManager interface.
+        """
+        # Run the async store_globule in a new event loop
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're already in an event loop, we can't use run()
+                # This shouldn't happen in normal usage as the orchestrator is async
+                raise StorageError("Cannot save globule synchronously from within an async context")
+            else:
+                loop.run_until_complete(self.store_globule(globule))
+        except RuntimeError:
+            # No event loop exists, create one
+            asyncio.run(self.store_globule(globule))
+    
+    def get(self, globule_id: UUID) -> ProcessedGlobuleV1:
+        """
+        Synchronous wrapper for get_globule.
+        This is required by the IStorageManager interface.
+        """
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                raise StorageError("Cannot get globule synchronously from within an async context")
+            else:
+                result = loop.run_until_complete(self.get_globule(str(globule_id)))
+        except RuntimeError:
+            result = asyncio.run(self.get_globule(str(globule_id)))
+        
+        if result is None:
+            raise StorageError(f"Globule {globule_id} not found")
+        return result
+
+    async def search(self, query: str, limit: int = 10) -> List[ProcessedGlobuleV1]:
+        """
+        Search for globules using natural language query.
+        
+        This method implements the search functionality that was previously
+        embedded in the orchestrator, properly isolating the SQL logic.
+        """
+        try:
+            db = await self._get_connection()
+            
+            # Simple LIKE search for now - this is where we can implement
+            # more sophisticated search logic later
+            async with db.execute("""
+                SELECT id, text, embedding, embedding_confidence, parsed_data,
+                       parsing_confidence, file_path, orchestration_strategy,
+                       confidence_scores, processing_time_ms, semantic_neighbors,
+                       processing_notes, created_at, modified_at
+                FROM globules 
+                WHERE text LIKE ? 
+                ORDER BY created_at DESC 
+                LIMIT ?
+            """, (f"%{query}%", limit)) as cursor:
+                rows = await cursor.fetchall()
+                
+                results = []
+                for row in rows:
+                    globule = self._row_to_globule(row)
+                    results.append(globule)
+                
+                return results
+                
+        except Exception as e:
+            raise StorageError(f"Search failed: {e}")
+
+    async def execute_sql(self, query: str, query_name: str = "Query") -> Dict[str, Any]:
+        """
+        Execute SQL query against the database.
+        
+        This method implements the SQL execution functionality that was previously
+        embedded in the orchestrator, with proper safety checks and error handling.
+        """
+        try:
+            db = await self._get_connection()
+            
+            # Validate SQL safety (basic check)
+            dangerous_keywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'TRUNCATE', 'ALTER']
+            if any(keyword in query.upper() for keyword in dangerous_keywords):
+                raise StorageError("Potentially dangerous SQL detected")
+            
+            async with db.execute(query) as cursor:
+                results = await cursor.fetchall()
+                
+                # Convert to list of dicts
+                results_list = [dict(row) for row in results] if results else []
+                headers = [desc[0] for desc in cursor.description] if cursor.description else []
+                
+                return {
+                    "type": "sql_results",
+                    "query": query,
+                    "query_name": query_name,
+                    "results": results_list,
+                    "headers": headers,
+                    "count": len(results_list)
+                }
+                
+        except StorageError:
+            # Re-raise storage errors as-is
+            raise
+        except Exception as e:
+            raise StorageError(f"SQL query execution failed: {e}")

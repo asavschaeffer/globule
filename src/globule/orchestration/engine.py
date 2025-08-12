@@ -9,7 +9,6 @@ bridge between the UI layer and the various service providers.
 import asyncio
 import time
 import logging
-import sqlite3
 import os
 from typing import Dict, Any, List, Optional
 from uuid import UUID
@@ -135,40 +134,16 @@ class GlobuleOrchestrator(IOrchestrationEngine):
         """
         Search for globules using natural language query.
         
-        Converts the query to SQL and executes it against the database.
-        This is the actual logic from the TUI's search functionality.
+        Delegates to the storage manager's search implementation.
+        The orchestrator doesn't know HOW the search is done, only that it CAN be done.
         """
         try:
-            # Get database path from storage manager
-            db_path = self._get_db_path()
-            
-            if not os.path.exists(db_path):
-                logger.warning(f"Database not found at {db_path}")
-                return []
-            
-            # For now, implement simple text search
-            # TODO: Implement the full NL->SQL conversion from TUI
-            results = []
-            with sqlite3.connect(db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                
-                # Simple LIKE search for now
-                cursor.execute(
-                    "SELECT * FROM globules WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?",
-                    (f"%{query}%", limit)
-                )
-                
-                rows = cursor.fetchall()
-                for row in rows:
-                    # Convert row to ProcessedGlobuleV1
-                    # This is simplified - in reality we'd need to reconstruct the full object
-                    logger.info(f"Found globule: {row['id']}")
-                    
-            return results[:limit]
-            
-        except Exception as e:
+            return await self.storage_manager.search(query, limit)
+        except StorageError as e:
             logger.error(f"Search failed: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected search error: {e}")
             return []
     
     async def get_globule(self, globule_id: UUID) -> Optional[ProcessedGlobuleV1]:
@@ -223,41 +198,21 @@ class GlobuleOrchestrator(IOrchestrationEngine):
         """
         Execute SQL query against the database.
         
-        This is the actual SQL execution logic extracted from the TUI.
+        Delegates the entire execution, including safety checks, to the storage manager.
+        The orchestrator is free of infrastructure details and only deals with abstractions.
         """
         try:
-            db_path = self._get_db_path()
-            
-            if not os.path.exists(db_path):
-                raise Exception(f"Database not found at {db_path}")
-            
-            with sqlite3.connect(db_path, timeout=10.0) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                
-                # Validate SQL safety (basic check)
-                dangerous_keywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'TRUNCATE', 'ALTER']
-                if any(keyword in query.upper() for keyword in dangerous_keywords):
-                    raise Exception("Potentially dangerous SQL detected")
-                
-                cursor.execute(query)
-                results = cursor.fetchall()
-                
-                # Convert to list of dicts
-                results_list = [dict(row) for row in results]
-                headers = [desc[0] for desc in cursor.description] if cursor.description else []
-                
-                return {
-                    "type": "sql_results",
-                    "query": query,
-                    "query_name": query_name,
-                    "results": results_list,
-                    "headers": headers,
-                    "count": len(results_list)
-                }
-                
-        except Exception as e:
+            return await self.storage_manager.execute_sql(query, query_name)
+        except StorageError as e:
             logger.error(f"SQL query execution failed: {e}")
+            return {
+                "type": "error",
+                "query": query,
+                "query_name": query_name,
+                "error": str(e)
+            }
+        except Exception as e:
+            logger.error(f"Unexpected SQL execution error: {e}")
             return {
                 "type": "error",
                 "query": query,
@@ -336,10 +291,3 @@ class GlobuleOrchestrator(IOrchestrationEngine):
             confidence=0.8  # Default confidence
         )
     
-    def _get_db_path(self) -> str:
-        """Get database path from storage manager or fallback"""
-        if hasattr(self.storage_manager, 'db_path'):
-            return str(self.storage_manager.db_path)
-        else:
-            # Fallback path
-            return os.path.expanduser("~/.globule/data/globules.db")

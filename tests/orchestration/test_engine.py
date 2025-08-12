@@ -241,65 +241,51 @@ class TestGlobuleOrchestrator:
                 os.chdir(original_cwd)
     
     @pytest.mark.asyncio
-    async def test_execute_sql_query_success(self, orchestrator):
+    async def test_execute_sql_query_success(self, orchestrator, mock_storage):
         """Test successful SQL query execution."""
-        # Create a simple in-memory database
-        import tempfile
-        db_fd, db_path = tempfile.mkstemp(suffix='.db')
-        try:
-            os.close(db_fd)  # Close file descriptor to avoid Windows lock issues
-            
-            # Create a test database
-            with sqlite3.connect(db_path) as conn:
-                conn.execute("CREATE TABLE test (id INTEGER, name TEXT)")
-                conn.execute("INSERT INTO test VALUES (1, 'test1'), (2, 'test2')")
-                conn.commit()
-            
-            # Mock storage to return our test db path
-            orchestrator.storage_manager.db_path = db_path
-            
-            result = await orchestrator.execute_sql_query("SELECT * FROM test")
-            
-            assert result["type"] == "sql_results"
-            assert len(result["results"]) == 2
-            assert result["results"][0]["name"] == "test1"
-            assert result["headers"] == ["id", "name"]
-            
-        finally:
-            # Clean up
-            try:
-                os.unlink(db_path)
-            except:
-                pass
+        # Mock the storage manager's execute_sql method
+        mock_result = {
+            "type": "sql_results",
+            "query": "SELECT * FROM test",
+            "results": [{"id": 1, "name": "test1"}, {"id": 2, "name": "test2"}],
+            "headers": ["id", "name"],
+            "count": 2
+        }
+        mock_storage.execute_sql.return_value = mock_result
+        
+        result = await orchestrator.execute_sql_query("SELECT * FROM test")
+        
+        assert result["type"] == "sql_results"
+        assert len(result["results"]) == 2
+        assert result["results"][0]["name"] == "test1"
+        assert result["headers"] == ["id", "name"]
+        
+        # Verify the storage manager was called correctly
+        mock_storage.execute_sql.assert_called_once_with("SELECT * FROM test", "Query")
     
     @pytest.mark.asyncio
-    async def test_execute_sql_query_dangerous_sql(self, orchestrator):
+    async def test_execute_sql_query_dangerous_sql(self, orchestrator, mock_storage):
         """Test SQL query execution rejects dangerous SQL."""
-        # Create a dummy db path so we pass the existence check
-        db_fd, db_path = tempfile.mkstemp(suffix='.db')
-        try:
-            os.close(db_fd)
-            # Create empty database
-            with sqlite3.connect(db_path) as conn:
-                pass
-            
-            orchestrator.storage_manager.db_path = db_path
-            
-            result = await orchestrator.execute_sql_query("DROP TABLE test")
-            
-            assert result["type"] == "error"
-            assert "dangerous" in result["error"].lower()
-            
-        finally:
-            try:
-                os.unlink(db_path)
-            except:
-                pass
+        from globule.core.errors import StorageError
+        
+        # Mock storage to raise StorageError for dangerous SQL
+        mock_storage.execute_sql.side_effect = StorageError("Potentially dangerous SQL detected")
+        
+        result = await orchestrator.execute_sql_query("DROP TABLE test")
+        
+        assert result["type"] == "error"
+        assert "dangerous" in result["error"].lower()
+        
+        # Verify the storage manager was called 
+        mock_storage.execute_sql.assert_called_once_with("DROP TABLE test", "Query")
     
     @pytest.mark.asyncio
-    async def test_execute_sql_query_db_not_found(self, orchestrator):
+    async def test_execute_sql_query_db_not_found(self, orchestrator, mock_storage):
         """Test SQL query when database doesn't exist."""
-        orchestrator.storage_manager.db_path = "/nonexistent/path.db"
+        from globule.core.errors import StorageError
+        
+        # Mock storage to raise StorageError for missing database
+        mock_storage.execute_sql.side_effect = StorageError("Database not found")
         
         result = await orchestrator.execute_sql_query("SELECT * FROM test")
         
@@ -307,74 +293,66 @@ class TestGlobuleOrchestrator:
         assert "Database not found" in result["error"]
     
     @pytest.mark.asyncio
-    async def test_search_globules_db_exists(self, orchestrator):
-        """Test globule search when database exists."""
-        # Create test database with globules table
-        db_fd, db_path = tempfile.mkstemp(suffix='.db')
-        try:
-            os.close(db_fd)
-            
-            with sqlite3.connect(db_path) as conn:
-                conn.execute("""
-                    CREATE TABLE globules (
-                        id TEXT, text TEXT, created_at TIMESTAMP
-                    )
-                """)
-                conn.execute("""
-                    INSERT INTO globules VALUES 
-                    ('1', 'machine learning is fascinating', '2023-01-01'),
-                    ('2', 'deep learning models', '2023-01-02')
-                """)
-                conn.commit()
-            
-            # Mock storage to return our test db path
-            orchestrator.storage_manager.db_path = db_path
-            
-            results = await orchestrator.search_globules("machine learning")
-            
-            # Should return empty list for now (simplified implementation)
-            # but should not raise error
-            assert isinstance(results, list)
-            
-        finally:
-            try:
-                os.unlink(db_path)
-            except:
-                pass
+    async def test_search_globules_success(self, orchestrator, mock_storage):
+        """Test successful globule search."""
+        # Mock search results
+        mock_globule = Mock()
+        mock_globule.original_globule.raw_text = "machine learning is fascinating"
+        mock_storage.search.return_value = [mock_globule]
+        
+        results = await orchestrator.search_globules("machine learning")
+        
+        assert isinstance(results, list)
+        assert len(results) == 1
+        assert results[0] == mock_globule
+        
+        # Verify storage manager was called correctly
+        mock_storage.search.assert_called_once_with("machine learning", 10)
     
     @pytest.mark.asyncio
-    async def test_search_globules_db_not_found(self, orchestrator):
-        """Test globule search when database doesn't exist."""
-        orchestrator.storage_manager.db_path = "/nonexistent/path.db"
+    async def test_search_globules_storage_error(self, orchestrator, mock_storage):
+        """Test globule search when storage raises an error."""
+        from globule.core.errors import StorageError
+        
+        # Mock storage to raise StorageError
+        mock_storage.search.side_effect = StorageError("Database not found")
         
         results = await orchestrator.search_globules("test query")
         
         assert results == []
+        mock_storage.search.assert_called_once_with("test query", 10)
     
     @pytest.mark.asyncio
-    async def test_execute_query_natural_language(self, orchestrator):
+    async def test_execute_query_natural_language(self, orchestrator, mock_storage):
         """Test query execution with natural language."""
         query = "find thoughts about testing"
         
-        with patch.object(orchestrator, 'search_globules', return_value=[]) as mock_search:
-            result = await orchestrator.execute_query(query, "natural")
-            
-            assert result["type"] == "search_results"
-            assert result["query"] == query
-            assert "results" in result
-            assert "count" in result
-            mock_search.assert_called_once_with(query)
+        # Mock the storage search method
+        mock_storage.search.return_value = []
+        
+        result = await orchestrator.execute_query(query, "natural")
+        
+        assert result["type"] == "search_results"
+        assert result["query"] == query
+        assert "results" in result
+        assert "count" in result
+        assert result["count"] == 0
+        
+        # Verify storage was called correctly
+        mock_storage.search.assert_called_once_with(query, 10)
     
     @pytest.mark.asyncio
-    async def test_execute_query_sql_type(self, orchestrator):
+    async def test_execute_query_sql_type(self, orchestrator, mock_storage):
         """Test query execution with SQL type."""
         query = "SELECT * FROM test"
         
-        with patch.object(orchestrator, 'execute_sql_query', return_value={"type": "sql_results"}) as mock_sql:
-            result = await orchestrator.execute_query(query, "sql")
-            
-            assert result["type"] == "sql_results"
-            mock_sql.assert_called_once_with(query)
+        # Mock the storage execute_sql method
+        mock_storage.execute_sql.return_value = {"type": "sql_results"}
+        
+        result = await orchestrator.execute_query(query, "sql")
+        
+        assert result["type"] == "sql_results"
+        mock_storage.execute_sql.assert_called_once_with(query, "Query")
     
     @pytest.mark.asyncio
     async def test_execute_query_unknown_type(self, orchestrator):
@@ -457,23 +435,6 @@ class TestGlobuleOrchestrator:
         assert file_decision.filename.endswith(".md")
         assert file_decision.confidence == 0.8
     
-    def test_get_db_path_with_storage_manager(self, orchestrator, mock_storage):
-        """Test database path retrieval from storage manager."""
-        mock_storage.db_path = "/custom/path/globules.db"
-        
-        db_path = orchestrator._get_db_path()
-        
-        assert db_path == "/custom/path/globules.db"
-    
-    def test_get_db_path_fallback(self, orchestrator):
-        """Test database path fallback when storage manager doesn't have db_path."""
-        # Remove db_path attribute
-        delattr(orchestrator.storage_manager, 'db_path')
-        
-        db_path = orchestrator._get_db_path()
-        
-        # Should return fallback path
-        assert db_path.endswith("/.globule/data/globules.db")
 
 
 class TestOrchestrator_RealProviders:

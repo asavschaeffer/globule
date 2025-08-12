@@ -5,7 +5,7 @@ These Abstract Base Classes (ABCs) define the "verbs" of the system,
 establishing the boundaries between the orchestration engine and its providers.
 """
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Dict, Any
 from uuid import UUID
 
 from globule.core.models import GlobuleV1, ProcessedGlobuleV1
@@ -78,6 +78,40 @@ class IStorageManager(ABC):
             
         Raises:
             StorageError: If the Globule is not found or retrieval fails.
+        """
+        pass
+
+    @abstractmethod
+    async def search(self, query: str, limit: int = 10) -> List[ProcessedGlobuleV1]:
+        """
+        Search for globules using a natural language query.
+
+        Args:
+            query: The search query string.
+            limit: Maximum number of results to return.
+
+        Returns:
+            List of ProcessedGlobules matching the query.
+            
+        Raises:
+            StorageError: If search fails.
+        """
+        pass
+
+    @abstractmethod
+    async def execute_sql(self, query: str, query_name: str = "Query") -> Dict[str, Any]:
+        """
+        Execute a SQL query against the storage backend.
+
+        Args:
+            query: The SQL query to execute.
+            query_name: Optional name for the query (for logging/metadata).
+
+        Returns:
+            Dictionary containing query results and metadata.
+            
+        Raises:
+            StorageError: If query execution fails or query is invalid.
         """
         pass
 
