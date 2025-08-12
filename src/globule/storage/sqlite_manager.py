@@ -15,12 +15,12 @@ from datetime import datetime
 import uuid
 import numpy as np
 
-from globule.core.interfaces import StorageManager
-from globule.core.models import ProcessedGlobule, FileDecision
+from globule.core.interfaces import IStorageManager
+from globule.core.models import ProcessedGlobuleV1, FileDecisionV1
 from globule.config.settings import get_config
 
 
-class SQLiteStorageManager(StorageManager):
+class SQLiteStorageManager(IStorageManager):
     """SQLite implementation of StorageManager"""
     
     def __init__(self, db_path: Optional[Path] = None):
@@ -135,7 +135,7 @@ class SQLiteStorageManager(StorageManager):
             await self._connection.execute("PRAGMA synchronous = NORMAL")
         return self._connection
     
-    async def store_globule(self, globule: ProcessedGlobule) -> str:
+    async def store_globule(self, globule: ProcessedGlobuleV1) -> str:
         """
         Store a processed globule using the transactional Outbox Pattern.
         
@@ -163,7 +163,7 @@ class SQLiteStorageManager(StorageManager):
         
         # Update globule's file_decision to reflect the determined path
         relative_path = final_file_path.relative_to(self._file_manager.base_path)
-        globule.file_decision = FileDecision(
+        globule.file_decision = FileDecisionV1(
             semantic_path=relative_path.parent,
             filename=relative_path.name,
             metadata={"outbox_pattern": True, "atomic_storage": True},
@@ -247,7 +247,7 @@ class SQLiteStorageManager(StorageManager):
             self._file_manager.cleanup_temp(temp_file_path)
             raise Exception(f"Atomic storage operation failed: {e}")
     
-    async def update_globule(self, globule: ProcessedGlobule) -> bool:
+    async def update_globule(self, globule: ProcessedGlobuleV1) -> bool:
         """
         Update an existing globule atomically.
         
@@ -357,7 +357,7 @@ class SQLiteStorageManager(StorageManager):
             # Check if the deletion affected any rows
             return cursor.rowcount > 0
     
-    async def get_globule(self, globule_id: str) -> Optional[ProcessedGlobule]:
+    async def get_globule(self, globule_id: str) -> Optional[ProcessedGlobuleV1]:
         """Retrieve a globule by ID"""
         db = await self._get_connection()
         async with db.execute(
@@ -368,7 +368,7 @@ class SQLiteStorageManager(StorageManager):
                 return None
             return self._row_to_globule(row)
     
-    async def get_recent_globules(self, limit: int = 100) -> List[ProcessedGlobule]:
+    async def get_recent_globules(self, limit: int = 100) -> List[ProcessedGlobuleV1]:
         """Get recent globules ordered by creation time"""
         db = await self._get_connection()
         async with db.execute(
@@ -382,9 +382,9 @@ class SQLiteStorageManager(StorageManager):
         self, 
         query_vector: np.ndarray, 
         limit: int = 50,
-        similarity_threshold: float = 0.5,
+        similarity_threshold: float = 0.1,
         min_embedding_confidence: Optional[float] = None
-    ) -> List[Tuple[ProcessedGlobule, float]]:
+        ) -> List[Tuple[ProcessedGlobuleV1, float]]:
         """
         Finds semantically similar globules using a single, efficient query.
         This is the correct, non-looping implementation.
@@ -480,7 +480,7 @@ class SQLiteStorageManager(StorageManager):
         return vector / norm
 
     
-    def _row_to_globule(self, row: sqlite3.Row) -> ProcessedGlobule:
+    def _row_to_globule(self, row: sqlite3.Row) -> ProcessedGlobuleV1:
         """Convert database row to ProcessedGlobule"""
         # Deserialize embedding
         embedding = None
@@ -498,7 +498,7 @@ class SQLiteStorageManager(StorageManager):
         file_decision = None
         if row[6]:  # file_path
             file_path = Path(row[6])
-            file_decision = FileDecision(
+            file_decision = FileDecisionV1(
                 semantic_path=file_path.parent,
                 filename=file_path.name,
                 metadata={},
@@ -506,7 +506,7 @@ class SQLiteStorageManager(StorageManager):
                 alternative_paths=[]
             )
         
-        return ProcessedGlobule(
+        return ProcessedGlobuleV1(
             id=row[0],
             text=row[1],
             embedding=embedding,
@@ -540,13 +540,13 @@ class SQLiteStorageManager(StorageManager):
             await self._connection.close()
             self._connection = None
 
-    async def search_by_text_and_embedding(
+    async def hybrid_search(
         self,
         query_text: str,
         query_embedding: np.ndarray,
-        limit: int = 50,
-        similarity_threshold: float = 0.3
-    ) -> List[Tuple[ProcessedGlobule, float]]:
+        limit: int = 20,
+        similarity_threshold: float = 0.5
+    ) -> List[Tuple[ProcessedGlobuleV1, float]]:
         """
         Hybrid search combining text and embedding similarity.
         
@@ -573,10 +573,10 @@ class SQLiteStorageManager(StorageManager):
         return fused_results[:limit]
 
     async def _search_by_text_keywords(
-        self, 
-        query: str, 
-        limit: int = 50
-    ) -> List[Tuple[ProcessedGlobule, float]]:
+        self,
+        query: str,
+        limit: int = 20
+    ) -> List[Tuple[ProcessedGlobuleV1, float]]:
         """
         Search for globules containing specific keywords.
         
@@ -627,9 +627,9 @@ class SQLiteStorageManager(StorageManager):
 
     def _fuse_search_results(
         self,
-        semantic_results: List[Tuple[ProcessedGlobule, float]],
-        text_results: List[Tuple[ProcessedGlobule, float]]
-    ) -> List[Tuple[ProcessedGlobule, float]]:
+        semantic_results: List[Tuple[ProcessedGlobuleV1, float]],
+        text_results: List[Tuple[ProcessedGlobuleV1, float]]
+    ) -> List[Tuple[ProcessedGlobuleV1, float]]:
         """
         Fuse semantic and text search results with intelligent scoring.
         
