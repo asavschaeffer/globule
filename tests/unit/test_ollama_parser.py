@@ -11,7 +11,7 @@ import asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
 from typing import Dict, Any
 
-from globule.services.parsing.ollama_parser import OllamaParser, ParsedContent
+from globule.services.parsing.ollama_parser import OllamaParser
 from globule.config.settings import GlobuleConfig
 
 
@@ -61,6 +61,7 @@ class TestOllamaParser:
         assert parser.base_parsing_prompt is not None
         assert "schema" in parser.base_parsing_prompt.lower()
         assert parser.schema_manager is not None
+        assert parser.max_retries >= 2
 
     @pytest.mark.asyncio
     async def test_health_check_success(self, parser):

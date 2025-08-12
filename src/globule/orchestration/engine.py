@@ -156,3 +156,208 @@ class OrchestrationEngine(OrchestrationEngineInterface):
             confidence=0.8,  # Default confidence for MVP
             alternative_paths=[]
         )
+
+
+# Reusable API functions for CLI mirroring
+async def search_globules_nlp(nl_query: str, storage_manager: StorageManager) -> str:
+    """
+    Mirror TUI search: Convert natural language query to SQL and execute.
+    Returns formatted Markdown module content.
+    """
+    from globule.services.parsing.ollama_parser import OllamaParser
+    import sqlite3
+    import os
+    
+    try:
+        # Phase 1: Convert NL to SQL using AI
+        sql = await _nl_to_sql_cli(nl_query)
+        logger.info(f"Generated SQL for CLI search: {sql}")
+        
+        # Phase 2: Execute SQL
+        results, headers = await _execute_sql_cli(sql, storage_manager)
+        
+        # Phase 3: Format as Markdown
+        formatted_content = _format_module_cli(results, headers, nl_query)
+        
+        return formatted_content
+        
+    except Exception as e:
+        logger.error(f"CLI search failed: {e}")
+        return f"### {nl_query}\n\n**Error:** {str(e)}\n"
+
+
+async def _nl_to_sql_cli(nl_query: str) -> str:
+    """Convert natural language query to SQL (CLI version)"""
+    from globule.services.parsing.ollama_parser import OllamaParser
+    
+    prompt = f"""
+Translate this natural language query to SQL for the globules table.
+Columns: id TEXT, text TEXT, created_at TIMESTAMP, embedding TEXT/BLOB, parsed_data JSON.
+The parsed_data JSON contains keys like: valet_name, car_make, license_plate, parking_spot.
+
+Examples:
+- "maria" → WHERE json_extract(parsed_data, '$.valet_name') = 'maria'  
+- "valet maria" → WHERE json_extract(parsed_data, '$.valet_name') = 'maria'
+- "john" → WHERE json_extract(parsed_data, '$.valet_name') = 'john'
+- "honda" → WHERE json_extract(parsed_data, '$.car_make') = 'honda'
+- "valet:maria honda" → WHERE json_extract(parsed_data, '$.valet_name') = 'maria' AND json_extract(parsed_data, '$.car_make') = 'honda'
+
+Query: {nl_query}
+Return only the raw SQL SELECT statement, no explanations.
+    """
+    
+    parser = OllamaParser()
+    try:
+        response = await parser.parse(prompt, {'action': 'sql_translate', 'output_format': 'text'})
+        
+        # Extract SQL from response
+        if isinstance(response, dict):
+            sql = response.get('sql', response.get('title', response.get('reasoning', '')))
+        else:
+            sql = str(response)
+        
+        # Clean up the SQL
+        sql = sql.strip().replace('```sql', '').replace('```', '').strip()
+        
+        # Validate SQL format and security
+        if sql and sql.upper().startswith('SELECT'):
+            dangerous_keywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'TRUNCATE', 'ALTER']
+            if any(keyword in sql.upper() for keyword in dangerous_keywords):
+                raise ValueError("Potentially dangerous SQL detected")
+            return sql
+        else:
+            raise ValueError("Invalid SQL format generated")
+            
+    except Exception as e:
+        logger.warning(f"AI SQL generation failed: {e}, using fallback")
+        # Fallback to simple text search
+        return f"SELECT id, text, parsed_data FROM globules WHERE text LIKE '%{nl_query}%' LIMIT 10"
+    finally:
+        await parser.close()
+
+
+async def _execute_sql_cli(sql: str, storage_manager: StorageManager) -> tuple:
+    """Execute SQL query and return results with headers (CLI version)"""
+    import sqlite3
+    import os
+    
+    # Get database path
+    if hasattr(storage_manager, 'db_path'):
+        db_path = str(storage_manager.db_path)
+    else:
+        db_path = os.path.expanduser("~/.globule/data/globules.db")
+    
+    if not os.path.exists(db_path):
+        raise FileNotFoundError(f"Database not found at {db_path}")
+    
+    try:
+        conn = sqlite3.connect(db_path, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute(sql)
+        results = cursor.fetchall()
+        
+        # Convert to tuples and get headers
+        results = [tuple(row) for row in results]
+        headers = [desc[0] for desc in cursor.description] if cursor.description else ['Result']
+        
+        # Limit results for CLI display
+        if len(results) > 50:
+            logger.info(f"Large result set ({len(results)} rows), limiting to 50")
+            results = results[:50]
+        
+        return results, headers
+        
+    except Exception as e:
+        raise Exception(f"SQL execution error: {str(e)}")
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+
+def _format_module_cli(results: list, headers: list, query: str) -> str:
+    """Format query results as a Markdown module (CLI version)"""
+    if not results:
+        return f"### {query}\nNo data found."
+    
+    # Create markdown table
+    md = f"### {query}\n\n"
+    md += "| " + " | ".join(headers) + " |\n"
+    md += "|" + " --- |" * len(headers) + "\n"
+    
+    # Add rows (limit for CLI display)
+    for row in results[:20]:  # Limit to 20 rows
+        formatted_row = []
+        for value in row:
+            if value is None:
+                formatted_row.append("")
+            elif isinstance(value, str) and len(value) > 50:
+                # Truncate long text fields for CLI
+                formatted_row.append(value[:50] + "...")
+            else:
+                formatted_row.append(str(value))
+        md += "| " + " | ".join(formatted_row) + " |\n"
+    
+    if len(results) > 20:
+        md += f"\n*... and {len(results) - 20} more rows*\n"
+    
+    return md
+
+
+def fetch_globule_content(item_id: str, storage_manager: StorageManager) -> str:
+    """
+    Fetch globule content by ID for CLI add-to-draft functionality.
+    Returns formatted content ready for draft inclusion.
+    """
+    import sqlite3
+    import os
+    
+    # Get database path
+    if hasattr(storage_manager, 'db_path'):
+        db_path = str(storage_manager.db_path)
+    else:
+        db_path = os.path.expanduser("~/.globule/data/globules.db")
+    
+    if not os.path.exists(db_path):
+        raise FileNotFoundError(f"Database not found at {db_path}")
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Query for globule by ID
+        cursor.execute(
+            "SELECT id, text, created_at, parsed_data FROM globules WHERE id = ?", 
+            (item_id,)
+        )
+        result = cursor.fetchone()
+        
+        if not result:
+            return ""
+        
+        globule_id, text, created_at, parsed_data_json = result
+        
+        # Format content for draft inclusion
+        formatted_content = f"**Globule:** {globule_id}\n"
+        formatted_content += f"**Added:** {created_at}\n\n"
+        formatted_content += f"{text}\n"
+        
+        # Add parsed metadata if available
+        if parsed_data_json:
+            import json
+            try:
+                parsed_data = json.loads(parsed_data_json)
+                if parsed_data:
+                    formatted_content += f"\n**Metadata:** {json.dumps(parsed_data, indent=2)}\n"
+            except:
+                pass  # Skip if JSON parsing fails
+        
+        return formatted_content
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch globule {item_id}: {e}")
+        return f"Error fetching globule {item_id}: {str(e)}"
+    finally:
+        if 'conn' in locals():
+            conn.close()
