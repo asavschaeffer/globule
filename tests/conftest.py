@@ -15,7 +15,8 @@ from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 
-from globule.core.models import ProcessedGlobule, FileDecision
+from globule.core.models import ProcessedGlobuleV1, FileDecisionV1, GlobuleV1
+# from globule.core.models import ProcessedGlobule, FileDecision # TODO: Migrate fixtures to V1 contracts
 from globule.storage.sqlite_manager import SQLiteStorageManager
 from tests.utils.embedding_generator import (
     generate_all_test_embeddings, 
@@ -86,116 +87,116 @@ def large_test_dataset():
     return {"globules": dataset}
 
 
-@pytest.fixture
-async def populated_real_storage(real_storage_manager, real_test_data):
-    """Create a real storage manager populated with realistic test data."""
-    for globule_data in real_test_data["globules"]:
-        # Convert dict to ProcessedGlobule with relative paths
-        globule = ProcessedGlobule(
-            id=globule_data["id"],
-            text=globule_data["text"],
-            embedding=np.array(globule_data["embedding"], dtype=np.float32),
-            embedding_confidence=globule_data["embedding_confidence"],
-            parsed_data=globule_data["parsed_data"],
-            parsing_confidence=globule_data["parsing_confidence"],
-            file_decision=FileDecision(
-                semantic_path=Path(globule_data["file_decision"]["semantic_path"]),
-                filename=globule_data["file_decision"]["filename"],
-                metadata=globule_data["file_decision"]["metadata"],
-                confidence=globule_data["file_decision"]["confidence"],
-                alternative_paths=globule_data["file_decision"]["alternative_paths"]
-            ),
-            orchestration_strategy="parallel",
-            processing_time_ms={"total_ms": 400},
-            confidence_scores={"overall": globule_data["parsing_confidence"]},
-            interpretations=[],
-            has_nuance=False,
-            semantic_neighbors=[],
-            processing_notes=[],
-            created_at=datetime.fromisoformat(globule_data["created_at"])
-        )
-        await real_storage_manager.store_globule(globule)
+# @pytest.fixture
+# async def populated_real_storage(real_storage_manager, real_test_data):
+#     """Create a real storage manager populated with realistic test data."""
+#     for globule_data in real_test_data["globules"]:
+#         # Convert dict to ProcessedGlobule with relative paths
+#         globule = ProcessedGlobule(
+#             id=globule_data["id"],
+#             text=globule_data["text"],
+#             embedding=np.array(globule_data["embedding"], dtype=np.float32),
+#             embedding_confidence=globule_data["embedding_confidence"],
+#             parsed_data=globule_data["parsed_data"],
+#             parsing_confidence=globule_data["parsing_confidence"],
+#             file_decision=FileDecision(
+#                 semantic_path=Path(globule_data["file_decision"]["semantic_path"]),
+#                 filename=globule_data["file_decision"]["filename"],
+#                 metadata=globule_data["file_decision"]["metadata"],
+#                 confidence=globule_data["file_decision"]["confidence"],
+#                 alternative_paths=globule_data["file_decision"]["alternative_paths"]
+#             ),
+#             orchestration_strategy="parallel",
+#             processing_time_ms={"total_ms": 400},
+#             confidence_scores={"overall": globule_data["parsing_confidence"]},
+#             interpretations=[],
+#             has_nuance=False,
+#             semantic_neighbors=[],
+#             processing_notes=[],
+#             created_at=datetime.fromisoformat(globule_data["created_at"])
+#         )
+#         await real_storage_manager.store_globule(globule)
     
-    return real_storage_manager
+#     return real_storage_manager
 
 
-@pytest.fixture
-async def large_populated_storage(real_storage_manager, large_test_dataset):
-    """Create a storage manager populated with large dataset for performance testing (100k records)."""
-    # Store data in larger batches for better performance with 100k records
-    batch_size = 1000
-    globules_data = large_test_dataset["globules"]
+# @pytest.fixture
+# async def large_populated_storage(real_storage_manager, large_test_dataset):
+#     """Create a storage manager populated with large dataset for performance testing (100k records)."""
+#     # Store data in larger batches for better performance with 100k records
+#     batch_size = 1000
+#     globules_data = large_test_dataset["globules"]
     
-    print(f"Loading {len(globules_data)} records for performance testing...")
+#     print(f"Loading {len(globules_data)} records for performance testing...")
     
-    for i in range(0, len(globules_data), batch_size):
-        batch = globules_data[i:i + batch_size]
+#     for i in range(0, len(globules_data), batch_size):
+#         batch = globules_data[i:i + batch_size]
         
-        for globule_data in batch:
-            globule = ProcessedGlobule(
-                id=globule_data["id"],
-                text=globule_data["text"],
-                embedding=np.array(globule_data["embedding"], dtype=np.float32),
-                embedding_confidence=globule_data["embedding_confidence"],
-                parsed_data=globule_data["parsed_data"],
-                parsing_confidence=globule_data["parsing_confidence"],
-                file_decision=FileDecision(
-                    semantic_path=Path(globule_data["file_decision"]["semantic_path"]),
-                    filename=globule_data["file_decision"]["filename"],
-                    metadata=globule_data["file_decision"].get("metadata", {}),
-                    confidence=globule_data["file_decision"]["confidence"],
-                    alternative_paths=globule_data["file_decision"].get("alternative_paths", [])
-                ),
-                orchestration_strategy="parallel",
-                processing_time_ms={"total_ms": 400},
-                confidence_scores={"overall": globule_data["parsing_confidence"]},
-                interpretations=[],
-                has_nuance=False,
-                semantic_neighbors=[],
-                processing_notes=[],
-                created_at=datetime.now() - timedelta(days=globule_data["days_ago"])
-            )
-            await real_storage_manager.store_globule(globule)
+#         for globule_data in batch:
+#             globule = ProcessedGlobule(
+#                 id=globule_data["id"],
+#                 text=globule_data["text"],
+#                 embedding=np.array(globule_data["embedding"], dtype=np.float32),
+#                 embedding_confidence=globule_data["embedding_confidence"],
+#                 parsed_data=globule_data["parsed_data"],
+#                 parsing_confidence=globule_data["parsing_confidence"],
+#                 file_decision=FileDecision(
+#                     semantic_path=Path(globule_data["file_decision"]["semantic_path"]),
+#                     filename=globule_data["file_decision"]["filename"],
+#                     metadata=globule_data["file_decision"].get("metadata", {}),
+#                     confidence=globule_data["file_decision"]["confidence"],
+#                     alternative_paths=globule_data["file_decision"].get("alternative_paths", [])
+#                 ),
+#                 orchestration_strategy="parallel",
+#                 processing_time_ms={"total_ms": 400},
+#                 confidence_scores={"overall": globule_data["parsing_confidence"]},
+#                 interpretations=[],
+#                 has_nuance=False,
+#                 semantic_neighbors=[],
+#                 processing_notes=[],
+#                 created_at=datetime.now() - timedelta(days=globule_data["days_ago"])
+#             )
+#             await real_storage_manager.store_globule(globule)
         
-        # Progress indicator for large dataset
-        if (i + batch_size) % 10000 == 0:
-            print(f"Loaded {min(i + batch_size, len(globules_data))}/{len(globules_data)} records...")
+#         # Progress indicator for large dataset
+#         if (i + batch_size) % 10000 == 0:
+#             print(f"Loaded {min(i + batch_size, len(globules_data))}/{len(globules_data)} records...")
     
-    print(f"Completed loading {len(globules_data)} records for performance testing.")
-    return real_storage_manager
+#     print(f"Completed loading {len(globules_data)} records for performance testing.")
+#     return real_storage_manager
 
 
-@pytest.fixture
-def sample_globule():
-    """Create a sample ProcessedGlobule for unit testing."""
-    return ProcessedGlobule(
-        id="test-globule-123",
-        text="This is a test thought for unit testing",
-        embedding=np.random.randn(1024).astype(np.float32),
-        embedding_confidence=0.95,
-        parsed_data={
-            "title": "Test Thought",
-            "category": "testing",
-            "domain": "development",
-            "keywords": ["test", "unit", "development"],
-            "metadata": {"source": "test"}
-        },
-        parsing_confidence=0.90,
-        file_decision=FileDecision(
-            semantic_path=Path("development/testing"),
-            filename="test-thought.md",
-            metadata={"test": True},
-            confidence=0.8,
-            alternative_paths=[]
-        ),
-        orchestration_strategy="parallel",
-        confidence_scores={"embedding": 0.95, "parsing": 0.90},
-        processing_time_ms={"total": 150, "embedding": 80, "parsing": 70},
-        semantic_neighbors=["neighbor-1", "neighbor-2"],
-        processing_notes=["Test note"],
-        created_at=datetime.now(),
-        modified_at=datetime.now()
-    )
+# @pytest.fixture
+# def sample_globule():
+#     """Create a sample ProcessedGlobule for unit testing."""
+#     return ProcessedGlobule(
+#         id="test-globule-123",
+#         text="This is a test thought for unit testing",
+#         embedding=np.random.randn(1024).astype(np.float32),
+#         embedding_confidence=0.95,
+#         parsed_data={
+#             "title": "Test Thought",
+#             "category": "testing",
+#             "domain": "development",
+#             "keywords": ["test", "unit", "development"],
+#             "metadata": {"source": "test"}
+#         },
+#         parsing_confidence=0.90,
+#         file_decision=FileDecision(
+#             semantic_path=Path("development/testing"),
+#             filename="test-thought.md",
+#             metadata={"test": True},
+#             confidence=0.8,
+#             alternative_paths=[]
+#         ),
+#         orchestration_strategy="parallel",
+#         confidence_scores={"embedding": 0.95, "parsing": 0.90},
+#         processing_time_ms={"total": 150, "embedding": 80, "parsing": 70},
+#         semantic_neighbors=["neighbor-1", "neighbor-2"],
+#         processing_notes=["Test note"],
+#         created_at=datetime.now(),
+#         modified_at=datetime.now()
+#     )
 
 
 @pytest.fixture
