@@ -1,78 +1,101 @@
 """
-Abstract interfaces for Globule components.
+Abstract service contracts (interfaces) for the Globule core architecture.
 
-These interfaces define the contracts that all implementations must follow,
-enabling pluggability and testing.
+These Abstract Base Classes (ABCs) define the "verbs" of the system,
+establishing the boundaries between the orchestration engine and its providers.
 """
-
 from abc import ABC, abstractmethod
-from typing import List, Optional, Dict, Any
-import numpy as np
+from typing import List
+from uuid import UUID
 
-from .models import ProcessedGlobule, EnrichedInput, EmbeddingResult, ParsingResult
+from globule.core.models import GlobuleV1, ProcessedGlobuleV1
+from globule.core.errors import ParserError, EmbeddingError, StorageError
 
-
-class EmbeddingProvider(ABC):
-    """Abstract base for embedding providers"""
+class IParserProvider(ABC):
+    """Interface for a service that parses raw text into structured data."""
     
     @abstractmethod
-    async def embed(self, text: str) -> np.ndarray:
-        """Generate embedding for single text"""
-        pass
-    
-    @abstractmethod
-    async def embed_batch(self, texts: List[str]) -> List[np.ndarray]:
-        """Generate embeddings for multiple texts"""
-        pass
-    
-    @abstractmethod
-    def get_dimension(self) -> int:
-        """Return embedding dimensionality"""
-        pass
+    def parse(self, text: str) -> dict:
+        """
+        Parses the raw text from a Globule.
 
+        Args:
+            text: The raw input text.
 
-class ParsingProvider(ABC):
-    """Abstract base for parsing providers"""
-    
-    @abstractmethod
-    async def parse(self, text: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Parse text to extract structured data"""
+        Returns:
+            A dictionary containing the extracted structured data.
+            
+        Raises:
+            ParserError: If parsing fails.
+        """
         pass
 
+class IEmbeddingProvider(ABC):
+    """Interface for a service that generates vector embeddings."""
+    
+    @abstractmethod
+    def embed(self, text: str) -> List[float]:
+        """
+        Generates a vector embedding for the given text.
 
-class StorageManager(ABC):
-    """Abstract interface for storage operations"""
-    
-    @abstractmethod
-    async def store_globule(self, globule: ProcessedGlobule) -> str:
-        """Store a processed globule and return its ID"""
-        pass
-    
-    @abstractmethod
-    async def get_globule(self, globule_id: str) -> Optional[ProcessedGlobule]:
-        """Retrieve a globule by ID"""
-        pass
-    
-    @abstractmethod
-    async def get_recent_globules(self, limit: int = 100) -> List[ProcessedGlobule]:
-        """Get recent globules ordered by creation time"""
-        pass
-    
-    @abstractmethod
-    async def search_by_embedding(
-        self, 
-        query_vector: np.ndarray, 
-        limit: int = 50,
-        similarity_threshold: float = 0.5
-    ) -> List[tuple[ProcessedGlobule, float]]:
-        """Find semantically similar globules"""
+        Args:
+            text: The input text.
+
+        Returns:
+            A list of floats representing the vector embedding.
+            
+        Raises:
+            EmbeddingError: If embedding generation fails.
+        """
         pass
 
-
-class OrchestrationEngine(ABC):
-    """Abstract interface for orchestration engines"""
+class IStorageManager(ABC):
+    """Interface for a service that handles storage and retrieval of Globules."""
     
     @abstractmethod
-    async def process_globule(self, enriched_input: EnrichedInput) -> ProcessedGlobule:
-        """Process an enriched input into a processed globule"""
+    def save(self, globule: ProcessedGlobuleV1) -> None:
+        """
+        Saves a ProcessedGlobule to the storage backend.
+
+        Args:
+            globule: The ProcessedGlobule to save.
+            
+        Raises:
+            StorageError: If saving fails.
+        """
+        pass
+
+    @abstractmethod
+    def get(self, globule_id: UUID) -> ProcessedGlobuleV1:
+        """
+        Retrieves a ProcessedGlobule from the storage backend.
+
+        Args:
+            globule_id: The UUID of the Globule to retrieve.
+
+        Returns:
+            The retrieved ProcessedGlobule.
+            
+        Raises:
+            StorageError: If the Globule is not found or retrieval fails.
+        """
+        pass
+
+class IOrchestrationEngine(ABC):
+    """Interface for the core orchestration engine."""
+    
+    @abstractmethod
+    def process(self, globule: GlobuleV1) -> ProcessedGlobuleV1:
+        """
+        Processes a raw Globule into a ProcessedGlobule.
+
+        This method orchestrates calls to the parser, embedder, and other
+        services to enrich the raw Globule.
+
+        Args:
+            globule: The raw GlobuleV1 to process.
+
+        Returns:
+            The resulting ProcessedGlobuleV1.
+        """
         pass
