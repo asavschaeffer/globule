@@ -28,7 +28,8 @@ from globule.storage.sqlite_manager import SQLiteStorageManager
 from globule.services.embedding.ollama_provider import OllamaEmbeddingProvider
 from globule.services.embedding.mock_provider import MockEmbeddingProvider
 from globule.services.parsing.ollama_parser import OllamaParser
-from globule.orchestration.engine import OrchestrationEngine
+from globule.orchestration.engine import OrchestrationEngine, search_globules_nlp, fetch_globule_content
+from globule.core.draft_manager import DraftManager
 from globule.config.settings import get_config
 
 # Configure logging
@@ -614,13 +615,184 @@ async def reconcile(ctx: click.Context, auto: bool, verbose: bool) -> None:
             raise click.Abort()
 
 
-# Register commands with the CLI group
+# CLI Mirroring Commands - Expose TUI functionality via CLI
+@click.command()
+@click.argument('query', required=True)
+@click.option('--output', '-o', help='Save results to file instead of displaying')
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output for this command')
+@click.pass_context
+async def nlsearch(ctx: click.Context, query: str, output: Optional[str], verbose: bool) -> None:
+    """
+    Mirror TUI search: Natural language query to AI SQL to Formatted output.
+    
+    Provides scriptable access to the same AI-powered search functionality
+    available in the TUI interface. Uses natural language processing to
+    convert queries into SQL and returns formatted Markdown results.
+    """
+    verbose = verbose or ctx.obj.get('verbose', False)
+    
+    async with ctx.obj['context'] as context:
+        try:
+            await context.initialize(verbose)
+            
+            if verbose:
+                click.echo(f"[SEARCH] Processing natural language query: {query}")
+            
+            # Use the reusable search function from orchestration engine
+            result = await search_globules_nlp(query, context.storage)
+            
+            if output:
+                # Save to file
+                with open(output, 'w', encoding='utf-8') as f:
+                    f.write(result)
+                click.echo(f"Results saved to: {output}")
+                if verbose:
+                    click.echo(f"Generated {len(result)} characters of content")
+            else:
+                # Display to console
+                click.echo(result)
+            
+        except Exception as e:
+            logger.error(f"Natural language search failed: {e}")
+            click.echo(f"Error: {e}", err=True)
+            raise click.Abort()
+
+
+@click.command()
+@click.argument('item_id', required=True)
+@click.option('--draft', '-d', default='drafts/current_draft.md', help='Draft file to add to (default: drafts/current_draft.md)')
+@click.option('--section', '-s', help='Optional section title for the content')
+@click.pass_context
+async def add_to_draft(ctx: click.Context, item_id: str, draft: str, section: Optional[str]) -> None:
+    """
+    Mirror TUI Enter: Add globule/module by ID to draft file.
+    
+    Fetches a globule by its ID and appends it to a draft file, similar
+    to pressing Enter on an item in the TUI palette. Enables scriptable
+    draft composition from the command line.
+    """
+    verbose = ctx.obj.get('verbose', False)
+    
+    async with ctx.obj['context'] as context:
+        try:
+            await context.initialize(verbose)
+            
+            if verbose:
+                click.echo(f"[DRAFT] Adding globule {item_id} to draft: {draft}")
+            
+            # Fetch globule content
+            content = fetch_globule_content(item_id, context.storage)
+            
+            if not content:
+                click.echo(f"Error: Item {item_id} not found", err=True)
+                return
+            
+            # Add to draft using DraftManager
+            manager = DraftManager(draft)
+            bytes_added = manager.add_to_draft(content, section)
+            
+            click.echo(f"[SUCCESS] Added item {item_id} to {draft}")
+            if verbose:
+                click.echo(f"Added {bytes_added} bytes to draft")
+                stats = manager.get_draft_stats()
+                click.echo(f"Draft now has {stats['words']} words, {stats['lines']} lines")
+            
+        except Exception as e:
+            logger.error(f"Add to draft failed: {e}")
+            click.echo(f"Error: {e}", err=True)
+            raise click.Abort()
+
+
+@click.command()
+@click.option('--draft', '-d', default='drafts/current_draft.md', help='Draft file to export (default: drafts/current_draft.md)')
+@click.option('--output', '-o', default='exports/export.md', help='Output file path (default: exports/export.md)')
+@click.option('--format', '-f', default='md', help='Export format (default: md)')
+@click.pass_context
+async def export_draft(ctx: click.Context, draft: str, output: str, format: str) -> None:
+    """
+    Mirror TUI export: Save draft to file in specified format.
+    
+    Exports the current draft content to a file, similar to the export
+    functionality in the TUI. Supports different formats and enables
+    automation of the drafting → export workflow.
+    """
+    verbose = ctx.obj.get('verbose', False)
+    
+    try:
+        if verbose:
+            click.echo(f"[EXPORT] Exporting draft {draft} to {output} in {format} format")
+        
+        # Use DraftManager for export
+        manager = DraftManager(draft)
+        
+        # Check if draft exists
+        stats = manager.get_draft_stats()
+        if not stats['exists']:
+            click.echo(f"Error: Draft file {draft} does not exist", err=True)
+            return
+        
+        # Perform export
+        success = manager.export_draft(output, format)
+        
+        if success:
+            click.echo(f"[SUCCESS] Exported to {output}")
+            if verbose:
+                click.echo(f"Exported {stats['words']} words, {stats['lines']} lines")
+        else:
+            click.echo(f"Error: Export to {output} failed", err=True)
+            raise click.Abort()
+        
+    except Exception as e:
+        logger.error(f"Export draft failed: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+@click.command()
+@click.option('--draft', '-d', default='drafts/current_draft.md', help='Draft file to show stats for (default: drafts/current_draft.md)')
+@click.pass_context
+async def draft_stats(ctx: click.Context, draft: str) -> None:
+    """
+    Show statistics and information about a draft file.
+    
+    Provides detailed information about the current state of a draft,
+    including word count, line count, file size, and modification time.
+    """
+    try:
+        manager = DraftManager(draft)
+        stats = manager.get_draft_stats()
+        
+        if not stats['exists']:
+            click.echo(f"Draft file {draft} does not exist")
+            return
+        
+        click.echo(f"[STATS] Draft Statistics: {draft}")
+        click.echo(f"=========================================")
+        click.echo(f"Words:        {stats['words']}")
+        click.echo(f"Lines:        {stats['lines']}")
+        click.echo(f"Size:         {stats['size']} bytes")
+        click.echo(f"Modified:     {stats['modified']}")
+        click.echo(f"Path:         {stats['path']}")
+        
+    except Exception as e:
+        logger.error(f"Draft stats failed: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+# Register all commands with the CLI group
 cli.add_command(add)
 cli.add_command(draft)
 cli.add_command(search)
 cli.add_command(cluster)
 cli.add_command(tutorial)
 cli.add_command(reconcile)
+
+# Register new CLI mirroring commands
+cli.add_command(nlsearch)
+cli.add_command(add_to_draft)
+cli.add_command(export_draft)
+cli.add_command(draft_stats)
 
 
 def main():
