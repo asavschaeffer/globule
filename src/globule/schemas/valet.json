@@ -123,5 +123,23 @@
     "keywords",
     "entities"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "canvas_config": {
+    "layout": {
+      "type": "widget",
+      "position": "top-left",
+      "size": "small"
+    },
+    "tui_style": {
+      "border": "round",
+      "border_color": "$accent",
+      "background": "$panel",
+      "height": "auto",
+      "padding": "1"
+    },
+    "web_style": {
+      "className": "valet-widget bg-blue-50 border-2 border-blue-200 rounded-lg p-4 shadow-sm",
+      "gridArea": "top-left"
+    }
+  }
 }

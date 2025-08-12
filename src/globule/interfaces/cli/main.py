@@ -14,6 +14,9 @@ Refactored for performance and maintainability:
 import asyncio
 import click
 import logging
+import subprocess
+import platform
+import sys
 from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
@@ -25,7 +28,10 @@ from globule.storage.sqlite_manager import SQLiteStorageManager
 from globule.services.embedding.ollama_provider import OllamaEmbeddingProvider
 from globule.services.embedding.mock_provider import MockEmbeddingProvider
 from globule.services.parsing.ollama_parser import OllamaParser
-from globule.orchestration.engine import OrchestrationEngine
+from globule.orchestration.engine import OrchestrationEngine, search_globules_nlp, fetch_globule_content
+from globule.core.draft_manager import DraftManager
+from globule.core.frontend_manager import frontend_manager, FrontendType
+from globule.core.layout_engine import LayoutEngine
 from globule.config.settings import get_config
 
 # Configure logging
@@ -189,44 +195,176 @@ async def add(ctx: click.Context, text: str, verbose: bool) -> None:
 @click.argument('topic', required=True)
 @click.option('--limit', '-l', default=100, help='Maximum globules to search (default: 100)')
 @click.option('--output', '-o', help='Output draft to file')
+@click.option('--frontend', '-f', type=click.Choice(['tui', 'web', 'cli'], case_sensitive=False), 
+              default='tui', help='Frontend to use (tui, web, cli)')
+@click.option('--port', '-p', default=8000, help='Port for web frontend (default: 8000)')
+@click.option('--host', default='127.0.0.1', help='Host for web frontend (default: 127.0.0.1)')
 @click.pass_context
-async def draft(ctx: click.Context, topic: str, limit: int, output: Optional[str]) -> None:
+async def draft(ctx: click.Context, topic: str, limit: int, output: Optional[str], 
+                frontend: str, port: int, host: str) -> None:
     """
     Interactive drafting from clustered thoughts.
     
-    This command provides a keyboard-driven interface for building drafts:
-    1. Searches for globules related to the topic
-    2. Clusters the results using semantic analysis  
-    3. Launches an interactive TUI for navigation and selection
-    4. Lets you add thoughts to your draft and export the result
+    Supports multiple frontend options:
+    - tui: Terminal UI in new window (default)
+    - web: Web interface in browser
+    - cli: Stay in current terminal (non-interactive)
     """
     
-    async with ctx.obj['context'] as context:
+    # Set up logging in CLI (for parent logs)
+    verbose = ctx.obj.get('verbose', False)
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+    
+    # Convert frontend string to enum
+    frontend_type = FrontendType(frontend.lower())
+    
+    logger.info(f"Launching {frontend} frontend for topic '{topic}'")
+    click.echo(f"[FRONTEND] Launching {frontend.upper()} for topic '{topic}'...")
+    
+    # Handle CLI frontend (non-interactive mode)
+    if frontend_type == FrontendType.CLI:
+        click.echo("[CLI] Non-interactive mode - performing basic search and draft setup")
         try:
-            from rich.console import Console
-            from globule.tui.app import DashboardApp
-            
-            console = Console()
-            
-            # Initialize context
-            await context.initialize(ctx.obj.get('verbose', False))
-            
-            # Launch new analytics dashboard TUI
-            console.print(f"[blue]DASHBOARD:[/blue] Launching analytics dashboard for '{topic}'...")
-            console.print("[green]TIP:[/green] Use Tab to switch panes, Ctrl+D for dashboard mode")
-            
-            # Create and run the dashboard app
-            app = DashboardApp(context.storage, topic)
-            await app.run_async()
-            
-            console.print("\n[green]Dashboard session complete[/green]")
-            
-        except KeyboardInterrupt:
-            click.echo("\nDrafting session cancelled")
+            async with ctx.obj['context'] as context:
+                await context.initialize(verbose)
+                
+                # Perform search for the topic
+                from globule.core.api import GlobuleAPI
+                api = GlobuleAPI(context.storage)
+                
+                search_result = await api.search(topic)
+                if search_result['success']:
+                    click.echo("Search Results:")
+                    click.echo("=" * 50)
+                    click.echo(search_result['data'])
+                    
+                    # Optionally add to draft
+                    if output:
+                        draft_result = await api.export_draft(output)
+                        if draft_result['success']:
+                            click.echo(f"\n[SUCCESS] Draft exported to: {output}")
+                        else:
+                            click.echo(f"[ERROR] Export failed: {draft_result['message']}")
+                else:
+                    click.echo(f"[ERROR] Search failed: {search_result['message']}")
+                    
         except Exception as e:
-            logger.error(f"Failed to run interactive draft: {e}")
-            click.echo(f"Error: {e}", err=True)
+            logger.error(f"CLI mode failed: {e}")
+            click.echo(f"[ERROR] CLI mode failed: {e}", err=True)
             raise click.Abort()
+        return
+    
+    # Use frontend manager for TUI and Web frontends
+    try:
+        # Prepare launch arguments
+        launch_kwargs = {
+            'topic': topic,
+            'limit': limit,
+            'output': output
+        }
+        
+        # Add web-specific arguments
+        if frontend_type == FrontendType.WEB:
+            launch_kwargs.update({
+                'port': port,
+                'host': host
+            })
+        
+        # Launch the selected frontend
+        result = await frontend_manager.launch_frontend(frontend_type, **launch_kwargs)
+        
+        if result['success']:
+            click.echo(f"[SUCCESS] {result['message']}")
+            
+            # Handle web frontend - provide browser access info
+            if frontend_type == FrontendType.WEB and 'data' in result and 'url' in result['data']:
+                url = result['data']['url']
+                click.echo(f"[WEB] Access the interface at: {url}")
+                
+                # Try to open browser automatically
+                try:
+                    import webbrowser
+                    webbrowser.open(url)
+                    click.echo(f"[WEB] Opened {url} in your default browser")
+                except:
+                    click.echo(f"[WEB] Please open {url} manually in your browser")
+                
+                # Keep the CLI alive for web server
+                if result['data'].get('status') in ['launched', 'placeholder_launched']:
+                    click.echo("[WEB] Web server running... Press Ctrl+C to stop")
+                    try:
+                        # Keep alive until user interrupts
+                        await asyncio.sleep(float('inf'))
+                    except KeyboardInterrupt:
+                        click.echo("\n[WEB] Shutting down web server...")
+                        # Clean up server if available
+                        if 'server' in result['data']:
+                            result['data']['server'].shutdown()
+            
+            # Handle TUI frontend - monitor logs as before
+            elif frontend_type == FrontendType.TUI:
+                click.echo("[TUI] Launched in new window")
+                click.echo("[INFO] TUI is running in a separate window")
+                
+        else:
+            click.echo(f"[ERROR] {result['message']}", err=True)
+            raise click.Abort()
+            
+    except Exception as e:
+        logger.error(f"Failed to launch {frontend} frontend: {e}")
+        click.echo(f"[ERROR] Failed to launch {frontend} frontend: {e}", err=True)
+        
+        # Fallback for TUI only
+        if frontend_type == FrontendType.TUI:
+            click.echo("[FALLBACK] Attempting inline TUI launch...")
+            try:
+                async with ctx.obj['context'] as context:
+                    from globule.tui.app import DashboardApp
+                    
+                    # Initialize context
+                    await context.initialize(verbose)
+                    
+                    # Create and run the dashboard app inline as fallback
+                    app = DashboardApp(context.storage, topic)
+                    await app.run_async()
+                    
+            except Exception as fallback_error:
+                logger.error(f"Fallback also failed: {fallback_error}")
+                click.echo(f"[ERROR] Fallback failed: {fallback_error}", err=True)
+                raise click.Abort()
+        else:
+            raise click.Abort()
+
+
+@click.command()
+@click.pass_context
+async def frontends(ctx: click.Context) -> None:
+    """
+    List available frontend options and their capabilities.
+    
+    Shows which frontends are available for the draft command and what
+    features each one supports.
+    """
+    click.echo("Available Frontends:")
+    click.echo("=" * 50)
+    
+    frontends_info = frontend_manager.list_available_frontends()
+    
+    for frontend_type, info in frontends_info.items():
+        status = "[AVAILABLE]" if info['available'] else "[UNAVAILABLE]"
+        click.echo(f"\n{status} {frontend_type.upper()}")
+        click.echo(f"  Name: {info['name']}")
+        click.echo(f"  Description: {info['description']}")
+        click.echo(f"  Capabilities: {', '.join(info['capabilities'])}")
+        
+        if 'note' in info:
+            click.echo(f"  Note: {info['note']}")
+    
+    click.echo("\nUsage:")
+    click.echo("  globule draft 'topic' --frontend=tui    # Terminal interface (default)")
+    click.echo("  globule draft 'topic' --frontend=web    # Web browser interface")
+    click.echo("  globule draft 'topic' --frontend=cli    # Non-interactive CLI mode")
 
 
 @click.command()
@@ -506,13 +644,319 @@ async def reconcile(ctx: click.Context, auto: bool, verbose: bool) -> None:
             raise click.Abort()
 
 
-# Register commands with the CLI group
+# CLI Mirroring Commands - Expose TUI functionality via CLI
+@click.command()
+@click.argument('query', required=True)
+@click.option('--output', '-o', help='Save results to file instead of displaying')
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output for this command')
+@click.pass_context
+async def nlsearch(ctx: click.Context, query: str, output: Optional[str], verbose: bool) -> None:
+    """
+    Mirror TUI search: Natural language query to AI SQL to Formatted output.
+    
+    Provides scriptable access to the same AI-powered search functionality
+    available in the TUI interface. Uses natural language processing to
+    convert queries into SQL and returns formatted Markdown results.
+    """
+    verbose = verbose or ctx.obj.get('verbose', False)
+    
+    async with ctx.obj['context'] as context:
+        try:
+            await context.initialize(verbose)
+            
+            if verbose:
+                click.echo(f"[SEARCH] Processing natural language query: {query}")
+            
+            # Use the reusable search function from orchestration engine
+            result = await search_globules_nlp(query, context.storage)
+            
+            if output:
+                # Save to file
+                with open(output, 'w', encoding='utf-8') as f:
+                    f.write(result)
+                click.echo(f"Results saved to: {output}")
+                if verbose:
+                    click.echo(f"Generated {len(result)} characters of content")
+            else:
+                # Display to console
+                click.echo(result)
+            
+        except Exception as e:
+            logger.error(f"Natural language search failed: {e}")
+            click.echo(f"Error: {e}", err=True)
+            raise click.Abort()
+
+
+@click.command()
+@click.argument('item_id', required=True)
+@click.option('--draft', '-d', default='drafts/current_draft.md', help='Draft file to add to (default: drafts/current_draft.md)')
+@click.option('--section', '-s', help='Optional section title for the content')
+@click.pass_context
+async def add_to_draft(ctx: click.Context, item_id: str, draft: str, section: Optional[str]) -> None:
+    """
+    Mirror TUI Enter: Add globule/module by ID to draft file.
+    
+    Fetches a globule by its ID and appends it to a draft file, similar
+    to pressing Enter on an item in the TUI palette. Enables scriptable
+    draft composition from the command line.
+    """
+    verbose = ctx.obj.get('verbose', False)
+    
+    async with ctx.obj['context'] as context:
+        try:
+            await context.initialize(verbose)
+            
+            if verbose:
+                click.echo(f"[DRAFT] Adding globule {item_id} to draft: {draft}")
+            
+            # Fetch globule content
+            content = fetch_globule_content(item_id, context.storage)
+            
+            if not content:
+                click.echo(f"Error: Item {item_id} not found", err=True)
+                return
+            
+            # Add to draft using DraftManager
+            manager = DraftManager(draft)
+            bytes_added = manager.add_to_draft(content, section)
+            
+            click.echo(f"[SUCCESS] Added item {item_id} to {draft}")
+            if verbose:
+                click.echo(f"Added {bytes_added} bytes to draft")
+                stats = manager.get_draft_stats()
+                click.echo(f"Draft now has {stats['words']} words, {stats['lines']} lines")
+            
+        except Exception as e:
+            logger.error(f"Add to draft failed: {e}")
+            click.echo(f"Error: {e}", err=True)
+            raise click.Abort()
+
+
+@click.command()
+@click.option('--draft', '-d', default='drafts/current_draft.md', help='Draft file to export (default: drafts/current_draft.md)')
+@click.option('--output', '-o', default='exports/export.md', help='Output file path (default: exports/export.md)')
+@click.option('--format', '-f', default='md', help='Export format (default: md)')
+@click.pass_context
+async def export_draft(ctx: click.Context, draft: str, output: str, format: str) -> None:
+    """
+    Mirror TUI export: Save draft to file in specified format.
+    
+    Exports the current draft content to a file, similar to the export
+    functionality in the TUI. Supports different formats and enables
+    automation of the drafting → export workflow.
+    """
+    verbose = ctx.obj.get('verbose', False)
+    
+    try:
+        if verbose:
+            click.echo(f"[EXPORT] Exporting draft {draft} to {output} in {format} format")
+        
+        # Use DraftManager for export
+        manager = DraftManager(draft)
+        
+        # Check if draft exists
+        stats = manager.get_draft_stats()
+        if not stats['exists']:
+            click.echo(f"Error: Draft file {draft} does not exist", err=True)
+            return
+        
+        # Perform export
+        success = manager.export_draft(output, format)
+        
+        if success:
+            click.echo(f"[SUCCESS] Exported to {output}")
+            if verbose:
+                click.echo(f"Exported {stats['words']} words, {stats['lines']} lines")
+        else:
+            click.echo(f"Error: Export to {output} failed", err=True)
+            raise click.Abort()
+        
+    except Exception as e:
+        logger.error(f"Export draft failed: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+@click.command()
+@click.option('--draft', '-d', default='drafts/current_draft.md', help='Draft file to show stats for (default: drafts/current_draft.md)')
+@click.pass_context
+async def draft_stats(ctx: click.Context, draft: str) -> None:
+    """
+    Show statistics and information about a draft file.
+    
+    Provides detailed information about the current state of a draft,
+    including word count, line count, file size, and modification time.
+    """
+    try:
+        manager = DraftManager(draft)
+        stats = manager.get_draft_stats()
+        
+        if not stats['exists']:
+            click.echo(f"Draft file {draft} does not exist")
+            return
+        
+        click.echo(f"[STATS] Draft Statistics: {draft}")
+        click.echo(f"=========================================")
+        click.echo(f"Words:        {stats['words']}")
+        click.echo(f"Lines:        {stats['lines']}")
+        click.echo(f"Size:         {stats['size']} bytes")
+        click.echo(f"Modified:     {stats['modified']}")
+        click.echo(f"Path:         {stats['path']}")
+        
+    except Exception as e:
+        logger.error(f"Draft stats failed: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+# === Canvas Skeleton Management Commands ===
+
+@click.command()
+@click.pass_context
+async def skeleton_list(ctx: click.Context) -> None:
+    """List all available canvas skeleton templates."""
+    try:
+        layout_engine = LayoutEngine()
+        skeletons = layout_engine.list_skeletons()
+        
+        if not skeletons:
+            click.echo("No skeleton templates found.")
+            click.echo("Create some with: globule skeleton-create-defaults")
+            return
+        
+        click.echo(f"Available Canvas Templates ({len(skeletons)}):")
+        click.echo("=" * 60)
+        
+        for skeleton in skeletons:
+            click.echo(f"\n[TEMPLATE] {skeleton.name}")
+            click.echo(f"   Description: {skeleton.description}")
+            click.echo(f"   Modules: {len(skeleton.module_placeholders)}, Used: {skeleton.usage_count} times")
+            if skeleton.tags:
+                click.echo(f"   Tags: {', '.join(skeleton.tags)}")
+        
+    except Exception as e:
+        logger.error(f"Failed to list skeletons: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+@click.command()
+@click.argument('name', required=True)
+@click.option('--output', '-o', help='Output file for resulting canvas')
+@click.pass_context
+async def skeleton_apply(ctx: click.Context, name: str, output: Optional[str]) -> None:
+    """Apply a skeleton template to create a new canvas layout."""
+    try:
+        layout_engine = LayoutEngine()
+        
+        # Check if skeleton exists
+        skeleton = layout_engine.load_skeleton(name)
+        if not skeleton:
+            click.echo(f"Skeleton template '{name}' not found.")
+            raise click.Abort()
+        
+        # Prepare query data
+        query_data = {
+            'query': f'Applied template {name}',
+            'content': 'Template content',
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Apply skeleton
+        modules = layout_engine.apply_skeleton_to_canvas(name, query_data)
+        
+        if modules:
+            click.echo(f"[SUCCESS] Applied skeleton '{name}' with {len(modules)} modules")
+            
+            # If output specified, save the result
+            if output:
+                content = ""
+                for module in modules:
+                    content += f"## {module.name}\n\n{module.content}\n\n"
+                
+                with open(output, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                
+                click.echo(f"[FILE] Saved to: {output}")
+        else:
+            click.echo(f"[ERROR] Failed to apply skeleton '{name}'")
+            raise click.Abort()
+        
+    except Exception as e:
+        logger.error(f"Failed to apply skeleton: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+@click.command()
+@click.pass_context
+async def skeleton_stats(ctx: click.Context) -> None:
+    """Show statistics about skeleton templates."""
+    try:
+        layout_engine = LayoutEngine()
+        stats = layout_engine.get_skeleton_stats()
+        
+        if stats['total'] == 0:
+            click.echo("No skeleton templates found.")
+            return
+        
+        click.echo("[STATS] Skeleton Template Statistics:")
+        click.echo("=" * 40)
+        click.echo(f"Total Templates: {stats['total']}")
+        click.echo(f"Total Usage: {stats['total_usage']}")
+        
+        if stats.get('by_schema'):
+            click.echo("\nBy Schema:")
+            for schema, count in stats['by_schema'].items():
+                click.echo(f"  {schema}: {count}")
+        
+    except Exception as e:
+        logger.error(f"Failed to get skeleton stats: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+@click.command()
+@click.pass_context
+async def skeleton_create_defaults(ctx: click.Context) -> None:
+    """Create default skeleton templates for common use cases."""
+    try:
+        layout_engine = LayoutEngine()
+        created = layout_engine.create_default_skeletons()
+        
+        if created:
+            click.echo(f"[SUCCESS] Created {len(created)} default templates:")
+            for name in created:
+                click.echo(f"  - {name}")
+        else:
+            click.echo("Default skeletons already exist.")
+        
+    except Exception as e:
+        logger.error(f"Failed to create default skeletons: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
+
+
+# Register all commands with the CLI group
 cli.add_command(add)
 cli.add_command(draft)
+cli.add_command(frontends)
 cli.add_command(search)
 cli.add_command(cluster)
 cli.add_command(tutorial)
 cli.add_command(reconcile)
+
+# Register new CLI mirroring commands
+cli.add_command(nlsearch)
+cli.add_command(add_to_draft)
+cli.add_command(export_draft)
+cli.add_command(draft_stats)
+
+# Register skeleton management commands
+cli.add_command(skeleton_list)
+cli.add_command(skeleton_apply)
+cli.add_command(skeleton_stats)
+cli.add_command(skeleton_create_defaults)
 
 
 def main():

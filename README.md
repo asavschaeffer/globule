@@ -1,10 +1,13 @@
 # Globule
 
-> Turn your scattered thoughts into structured drafts. Effortlessly.
+> Advanced AI-powered thought management with modular frontends and schema-driven layouts
 
-![Project Status: Design](https://img.shields.io/badge/status-design-lightgrey)
+![Project Status: Active Development](https://img.shields.io/badge/status-active_development-green)
+![Features: CLI Mirroring](https://img.shields.io/badge/feature-cli_mirroring-blue)
+![Features: Frontend Modularity](https://img.shields.io/badge/feature-frontend_modularity-blue)
+![Features: Layout Templates](https://img.shields.io/badge/feature-layout_templates-blue)
 
-We jot down ideas in notebooks, send ourselves emails, and save links across a dozen apps. These fragments of inspiration are disconnected and often lost. Globule is a local-first, AI-powered system designed to automatically organize this chaos.
+Globule transforms scattered thoughts into organized knowledge through AI-powered processing, intelligent layout management, and flexible interface options. The system features a modular architecture with scriptable CLI commands, visual canvas layouts, and reusable templates.
 
 ## The Core Experience
 
@@ -56,6 +59,125 @@ globule add "Your first thought here"
 
 # Draft content from your captured thoughts
 globule draft "your topic"
+```
+
+## 🏗️ Advanced Architecture
+
+Globule now features a sophisticated modular architecture with multiple interface options and intelligent layout management:
+
+### 🎯 Frontend Modularity
+
+Choose the interface that fits your workflow - all sharing the same powerful backend:
+
+#### 🖥️ Terminal UI (Interactive)
+```bash
+globule draft "project planning"                    # Default TUI
+globule draft "project planning" --frontend=tui     # Explicit
+```
+Visual canvas with drag-and-drop, real-time AI processing, schema-aware styling.
+
+#### 🌐 Web Interface  
+```bash
+globule draft "project planning" --frontend=web --port=8000
+# Opens http://localhost:8000 with browser-based interface
+```
+Responsive grid layouts, template management, cross-platform browser access.
+
+#### ⌨️ CLI Scripting
+```bash
+globule draft "project planning" --frontend=cli --output=results.md
+```
+Non-interactive batch processing, perfect for automation and LLM chains.
+
+### ⚡ CLI Mirroring System
+
+Key interactive functionality exposed as scriptable commands:
+
+```bash
+# Natural language search with AI SQL generation
+globule nlsearch "valet maria honda parked yesterday"
+globule nlsearch "meetings about budget" --output=meetings.md
+
+# Draft management  
+globule add-to-draft "Key insight from analysis"
+globule export-draft summary.md --metadata
+globule draft-stats
+
+# Frontend discovery
+globule frontends  # Show available interfaces and capabilities
+```
+
+### 📐 Configuration-Driven Canvas Layouts
+
+Schemas control their own visual presentation across all frontends:
+
+```json
+{
+  "title": "Valet Schema",
+  "canvas_config": {
+    "layout": { "type": "widget", "position": "top-left", "size": "small" },
+    "tui_style": { "border": "round", "border_color": "$accent" },
+    "web_style": { "className": "valet-widget bg-green-50 rounded-lg p-4" }
+  }
+}
+```
+
+**Benefits:**
+- Same positioning logic across TUI and Web
+- Schema-specific styling (valet=green, academic=blue, technical=orange)
+- User customizable via JSON configuration
+- DRY architecture: define once, render everywhere
+
+### 🎨 Template System
+
+Save successful canvas layouts as reusable templates:
+
+```bash
+# Create default templates
+globule skeleton-create-defaults
+
+# List available templates  
+globule skeleton-list
+# → valet_dashboard: search top-left, stats top-right, summary center
+# → research_layout: main center, sources right, notes bottom-left
+
+# Apply template to new content
+globule skeleton-apply valet_dashboard --output=dashboard.md
+
+# Template statistics and usage tracking
+globule skeleton-stats
+```
+
+**Template Features:**
+- **Structure without content**: Positions and schemas, not specific data
+- **Placeholder substitution**: `{query}` and `{content}` filled dynamically  
+- **Cross-platform sharing**: JSON files in `~/.globule/skeletons/`
+- **Usage tracking**: Popular templates rise to the top
+
+### 🔄 Unified Workflow Example
+
+```bash
+# 1. Capture thoughts (unchanged)
+globule add "Valet Maria reported BMW parking issue"
+globule add "Need dashboard for valet operations"
+
+# 2. Interactive exploration
+globule draft "valet operations" --frontend=tui
+# → Drag search results to canvas, organize visually
+
+# 3. Save successful layout as template (via TUI interface)
+# → Creates "valet_dashboard" with positioned modules
+
+# 4. Apply template to new searches  
+globule nlsearch "valet issues this week" | \
+  globule skeleton-apply valet_dashboard --output=weekly_report.md
+
+# 5. Automate with CLI mirroring
+#!/bin/bash
+for topic in "parking" "incidents" "scheduling"; do
+  globule skeleton-apply valet_dashboard \
+    --query="$topic operations" --output="$topic_dashboard.md"
+done
 ```
 
 ## The Glass Engine: Transparent Software

@@ -92,6 +92,10 @@ class SchemaManager:
         if not isinstance(schema_data['queries'], list):
             raise ValueError("Output schema 'queries' must be a list")
         
+        # Validate canvas_config if present (optional)
+        if 'canvas_config' in schema_data:
+            self._validate_canvas_config(schema_data['canvas_config'])
+        
         for query in schema_data['queries']:
             if not isinstance(query, dict) or 'name' not in query:
                 raise ValueError("Each query must be a dict with 'name' field")
@@ -164,6 +168,54 @@ class SchemaManager:
         for field in required_fields:
             if field not in schema_data:
                 raise ValueError(f"Schema missing required field: {field}")
+        
+        # Validate canvas_config if present (optional)
+        if 'canvas_config' in schema_data:
+            self._validate_canvas_config(schema_data['canvas_config'])
+    
+    def _validate_canvas_config(self, canvas_config: Dict[str, Any]) -> None:
+        """Validate canvas configuration structure."""
+        # Layout configuration (required)
+        if 'layout' not in canvas_config:
+            raise ValueError("Canvas config missing required 'layout' section")
+        
+        layout = canvas_config['layout']
+        required_layout_fields = ['type', 'position', 'size']
+        for field in required_layout_fields:
+            if field not in layout:
+                raise ValueError(f"Canvas layout missing required field: {field}")
+        
+        # Validate layout type
+        valid_layout_types = ['widget', 'panel', 'fullscreen', 'sidebar']
+        if layout['type'] not in valid_layout_types:
+            raise ValueError(f"Invalid layout type: {layout['type']}. Must be one of {valid_layout_types}")
+        
+        # Validate position
+        valid_positions = [
+            'top-left', 'top-center', 'top-right',
+            'center-left', 'center', 'center-right', 
+            'bottom-left', 'bottom-center', 'bottom-right',
+            'sidebar-left', 'sidebar-right', 'full-width'
+        ]
+        if layout['position'] not in valid_positions:
+            raise ValueError(f"Invalid layout position: {layout['position']}. Must be one of {valid_positions}")
+        
+        # Validate size
+        valid_sizes = ['small', 'medium', 'large', 'auto', 'full']
+        if layout['size'] not in valid_sizes:
+            raise ValueError(f"Invalid layout size: {layout['size']}. Must be one of {valid_sizes}")
+        
+        # Validate optional TUI style config
+        if 'tui_style' in canvas_config:
+            tui_style = canvas_config['tui_style']
+            if not isinstance(tui_style, dict):
+                raise ValueError("TUI style must be a dictionary")
+        
+        # Validate optional web style config  
+        if 'web_style' in canvas_config:
+            web_style = canvas_config['web_style']
+            if not isinstance(web_style, dict):
+                raise ValueError("Web style must be a dictionary")
     
     def get_schema(self, schema_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -223,6 +275,34 @@ class SchemaManager:
     def get_available_schemas(self) -> List[str]:
         """Get list of available schema names."""
         return list(self._schema_cache.keys())
+    
+    def get_canvas_config(self, schema_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get canvas configuration for a schema.
+        
+        Args:
+            schema_name: Name of the schema
+            
+        Returns:
+            Canvas config dictionary or None if not found or no canvas config
+        """
+        schema = self.get_schema(schema_name)
+        if schema and 'canvas_config' in schema:
+            return schema['canvas_config']
+        return None
+    
+    def get_schemas_with_canvas_config(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all schemas that have canvas configuration.
+        
+        Returns:
+            Dictionary mapping schema names to their canvas configs
+        """
+        result = {}
+        for schema_name, schema_data in self._schema_cache.items():
+            if 'canvas_config' in schema_data:
+                result[schema_name] = schema_data['canvas_config']
+        return result
     
     def detect_schema_for_text(self, text: str) -> Optional[str]:
         """Detect the best schema for given text using triggers."""
