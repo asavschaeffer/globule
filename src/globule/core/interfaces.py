@@ -85,7 +85,7 @@ class IOrchestrationEngine(ABC):
     """Interface for the core orchestration engine."""
     
     @abstractmethod
-    def process(self, globule: GlobuleV1) -> ProcessedGlobuleV1:
+    async def process(self, globule: GlobuleV1) -> ProcessedGlobuleV1:
         """
         Processes a raw Globule into a ProcessedGlobule.
 

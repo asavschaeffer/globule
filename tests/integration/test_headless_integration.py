@@ -105,7 +105,7 @@ def test_headless_processing_flow(noop_engine: IOrchestrationEngine):
     retrieved_globule = noop_engine.storage.get(raw_globule.globule_id)
     assert retrieved_globule == processed_globule
 
-def test_globule_orchestrator_headless_processing(globule_orchestrator: GlobuleOrchestrator):
+async def test_globule_orchestrator_headless_processing(globule_orchestrator: GlobuleOrchestrator):
     """
     PHASE 1 CRITICAL TEST: Verify GlobuleOrchestrator works headlessly.
     
@@ -119,8 +119,8 @@ def test_globule_orchestrator_headless_processing(globule_orchestrator: GlobuleO
         initial_context={"test_phase": "phase_1", "importance": "critical"}
     )
     
-    # Process through the orchestrator
-    processed_globule = globule_orchestrator.process(raw_globule)
+    # Process through the orchestrator (async)
+    processed_globule = await globule_orchestrator.process(raw_globule)
     
     # Verify the processing worked
     assert isinstance(processed_globule, ProcessedGlobuleV1)
@@ -179,7 +179,7 @@ async def test_orchestrator_async_business_logic(globule_orchestrator: GlobuleOr
     assert "results" in query_result
     assert "count" in query_result
 
-def test_orchestrator_implements_interface(globule_orchestrator: GlobuleOrchestrator):
+async def test_orchestrator_implements_interface(globule_orchestrator: GlobuleOrchestrator):
     """Verify orchestrator properly implements the IOrchestrationEngine interface."""
     assert isinstance(globule_orchestrator, IOrchestrationEngine)
     
@@ -187,7 +187,11 @@ def test_orchestrator_implements_interface(globule_orchestrator: GlobuleOrchestr
     assert hasattr(globule_orchestrator, 'process')
     assert callable(globule_orchestrator.process)
     
+    # Test that process method is async
+    import inspect
+    assert inspect.iscoroutinefunction(globule_orchestrator.process)
+    
     # Test it can process a globule through the interface
     test_globule = GlobuleV1(raw_text="Interface test", source="test")
-    result = globule_orchestrator.process(test_globule)
+    result = await globule_orchestrator.process(test_globule)
     assert isinstance(result, ProcessedGlobuleV1)
