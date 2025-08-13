@@ -89,7 +89,7 @@ except ImportError:
 # WeasyPrint import moved to function level to avoid startup issues
 HAS_WEASYPRINT = True
 
-from globule.core.interfaces import StorageManager
+from globule.core.interfaces import IStorageManager
 from globule.core.models import ProcessedGlobule, SynthesisState, UIMode, GlobuleCluster
 from globule.services.clustering.semantic_clustering import SemanticClusteringEngine
 from globule.services.parsing.ollama_parser import OllamaParser
@@ -135,7 +135,7 @@ class ThoughtPalette(Vertical):
             self.query_result = query_result
             super().__init__()
     
-    def __init__(self, storage_manager: StorageManager, topic: str = None, **kwargs):
+    def __init__(self, storage_manager: IStorageManager, topic: str = None, **kwargs):
         super().__init__(**kwargs)
         self.storage_manager = storage_manager
         self.topic = topic
@@ -285,26 +285,32 @@ class ThoughtPalette(Vertical):
         status_node = tree.root.add("🔄 Orchestrating query...")
         
         try:
-            # Phase 1: Get SQL from AI
-            status_node.set_label("🧠 Generating SQL...")
-            self.app.update_status(f"🧠 Generating SQL for: {nl_query[:30]}...")
-            sql = await self._nl_to_sql(nl_query)
-            logger.info(f"Generated SQL for query '{nl_query}': {sql}")
-            self.app.notify(f"Generated SQL: {sql[:100]}...")
+            # Clean delegation: Get input → Call orchestrator → Update UI
+            status_node.set_label("🔍 Searching...")
+            self.app.update_status(f"🔍 Searching for: {nl_query[:30]}...")
             
-            # Phase 2: Execute the SQL query
-            status_node.set_label("🔍 Executing query...")
-            self.app.update_status("🔍 Executing database query...")
-            results, headers = await self._execute_sql(sql)
+            # Single clean delegation to orchestrator
+            results = await self.app.orchestrator.search_globules(nl_query)
             
-            # Phase 3: Format results
+            # Adapt the results to the UI format
             status_node.set_label("📊 Formatting results...")
             self.app.update_status("📊 Formatting results...")
             duration = (datetime.now() - start_time).total_seconds()
-            self.app.notify(f"Query completed in {duration:.2f}s - Found {len(results)} results")
+            self.app.notify(f"Search completed in {duration:.2f}s - Found {len(results)} results")
+            
+            # Convert ProcessedGlobuleV1 list to the format expected by _format_module
+            formatted_results = []
+            headers = ["id", "text", "created_at"]  # Standard headers for globules
+            
+            for globule in results:
+                formatted_results.append([
+                    str(globule.globule_id),
+                    globule.original_globule.raw_text,
+                    globule.processed_timestamp.isoformat()
+                ])
             
             # Format results as a module
-            module_content = self._format_module(results, headers, nl_query)
+            module_content = self._format_module(formatted_results, headers, nl_query)
             
             # Add as a new expandable module in the tree
             module_node = tree.root.add(f"📊 Module: {nl_query[:50]}...", expand=True)
@@ -314,21 +320,13 @@ class ThoughtPalette(Vertical):
             
             # Create individual result nodes for browsing
             if results:
-                for i, row in enumerate(results[:10]):  # Show first 10 results
-                    # Create a readable summary for each result
-                    if len(row) > 0:
-                        # Use the text field (usually index 1) for the display
-                        if len(row) > 1 and row[1]:  # text field
-                            display_text = str(row[1])[:80] + "..." if len(str(row[1])) > 80 else str(row[1])
-                            # Add individual row content as data for the leaf
-                            row_content = f"**Row {i+1}:** {display_text}\n\n"
-                            module_node.add_leaf(f"• {display_text}", data=row_content)
-                        else:
-                            display_text = str(row[0])  # fallback to ID
-                            row_content = f"**Row {i+1}:** {display_text}\n\n"
-                            module_node.add_leaf(f"• {display_text}", data=row_content)
-                    else:
-                        module_node.add_leaf(f"• Row {i+1}")
+                for i, globule in enumerate(results[:10]):  # Show first 10 results
+                    # Use the raw text from the globule for display
+                    display_text = globule.original_globule.raw_text
+                    display_text = display_text[:80] + "..." if len(display_text) > 80 else display_text
+                    # Add individual row content as data for the leaf
+                    row_content = f"**Globule {i+1}:** {display_text}\n\n"
+                    module_node.add_leaf(f"• {display_text}", data=row_content)
                 
                 # Add summary info
                 if len(results) > 10:
@@ -339,133 +337,20 @@ class ThoughtPalette(Vertical):
             # Success feedback
             final_duration = (datetime.now() - start_time).total_seconds()
             self.app.notify(f"✅ Module '{nl_query[:30]}...' created in {final_duration:.2f}s")
-            self.app.update_status(f"✅ Query complete - {len(results)} results in {final_duration:.2f}s")
+            self.app.update_status(f"✅ Search complete - {len(results)} results in {final_duration:.2f}s")
             
         except Exception as e:
             duration = (datetime.now() - start_time).total_seconds()
-            error_msg = f"❌ Query failed after {duration:.2f}s: {str(e)}"
+            error_msg = f"❌ Search failed after {duration:.2f}s: {str(e)}"
             tree.root.add(error_msg)
             self.app.notify(error_msg)
-            self.app.update_status(f"❌ Query failed after {duration:.2f}s")
+            self.app.update_status(f"❌ Search failed after {duration:.2f}s")
         finally:
             # Remove the status node
             status_node.remove()
             tree.focus()
 
-    async def _nl_to_sql(self, nl_query: str) -> str:
-        """Convert natural language query to SQL using AI with error resilience"""
-        prompt = f"""
-Translate this natural language query to SQL for the globules table.
-Columns: id TEXT, text TEXT, created_at TIMESTAMP, embedding TEXT/BLOB, parsed_data JSON.
-The parsed_data JSON contains keys like: valet_name, car_make, license_plate, parking_spot.
 
-Examples:
-- "maria" → WHERE json_extract(parsed_data, '$.valet_name') = 'maria'  
-- "valet maria" → WHERE json_extract(parsed_data, '$.valet_name') = 'maria'
-- "john" → WHERE json_extract(parsed_data, '$.valet_name') = 'john'
-- "honda" → WHERE json_extract(parsed_data, '$.car_make') = 'honda'
-- "valet:maria honda" → WHERE json_extract(parsed_data, '$.valet_name') = 'maria' AND json_extract(parsed_data, '$.car_make') = 'honda'
-
-Query: {nl_query}
-Return only the raw SQL SELECT statement, no explanations.
-        """
-        
-        sql = None
-        max_retries = 2
-        
-        for attempt in range(max_retries + 1):
-            try:
-                # Initialize parser if not already done
-                if not hasattr(self, 'parser') or not self.parser:
-                    self.parser = OllamaParser()
-                
-                response = await self.parser.parse(prompt, {'action': 'sql_translate', 'output_format': 'text'})
-                
-                # Extract SQL from response
-                if isinstance(response, dict):
-                    sql = response.get('sql', response.get('title', response.get('reasoning', '')))
-                else:
-                    sql = str(response)
-                
-                # Clean up the SQL (remove markdown formatting if present)
-                sql = sql.strip().replace('```sql', '').replace('```', '').strip()
-                
-                # Validate SQL format
-                if sql and sql.upper().startswith('SELECT'):
-                    # Basic SQL injection protection
-                    dangerous_keywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'TRUNCATE', 'ALTER']
-                    sql_upper = sql.upper()
-                    if any(keyword in sql_upper for keyword in dangerous_keywords):
-                        raise ValueError(f"Potentially dangerous SQL detected on attempt {attempt + 1}")
-                    return sql
-                elif attempt < max_retries:
-                    self.app.notify(f"Invalid SQL format on attempt {attempt + 1}, retrying...")
-                    continue
-                else:
-                    raise ValueError("AI failed to generate valid SQL after retries")
-                    
-            except Exception as e:
-                if attempt < max_retries:
-                    self.app.notify(f"SQL generation attempt {attempt + 1} failed: {str(e)}, retrying...")
-                    await asyncio.sleep(0.5)  # Brief delay before retry
-                    continue
-                else:
-                    self.app.notify(f"All SQL generation attempts failed, using fallback")
-                    break
-        
-        # Fallback query if AI fails completely
-        return f"SELECT id, text, parsed_data FROM globules WHERE text LIKE '%{nl_query}%' LIMIT 10"
-
-    async def _execute_sql(self, sql: str) -> tuple:
-        """Execute SQL query and return results with headers (with error resilience)"""
-        # Get DB path - use the same logic as in _fetch_globules
-        if hasattr(self.storage_manager, 'db_path'):
-            db_path = str(self.storage_manager.db_path)
-        else:
-            # Fallback path - use the correct filename from config
-            import os
-            db_path = os.path.expanduser("~/.globule/data/globules.db")
-        
-        # Validate database exists
-        if not os.path.exists(db_path):
-            raise FileNotFoundError(f"Database not found at {db_path}")
-        
-        conn = None
-        try:
-            # Set connection timeout
-            conn = sqlite3.connect(db_path, timeout=10.0)
-            conn.row_factory = sqlite3.Row  # Enable column access by name
-            cursor = conn.cursor()
-            
-            # Execute with timeout protection
-            cursor.execute(sql)
-            results = cursor.fetchall()
-            
-            # Convert Row objects to tuples for compatibility
-            results = [tuple(row) for row in results]
-            headers = [desc[0] for desc in cursor.description] if cursor.description else ['Result']
-            
-            # Validate results aren't too large (memory protection)
-            if len(results) > 1000:
-                self.app.notify(f"Large result set ({len(results)} rows), limiting to 1000")
-                results = results[:1000]
-            
-            return results, headers
-            
-        except sqlite3.OperationalError as e:
-            if "database is locked" in str(e).lower():
-                raise Exception("Database is currently locked. Please try again in a moment.")
-            elif "no such table" in str(e).lower():
-                raise Exception("Database table 'globules' not found. Please check database setup.")
-            else:
-                raise Exception(f"Database error: {str(e)}")
-        except sqlite3.Error as e:
-            raise Exception(f"SQL execution error: {str(e)}")
-        except Exception as e:
-            raise Exception(f"Unexpected error during SQL execution: {str(e)}")
-        finally:
-            if conn:
-                conn.close()
 
     def _format_module(self, results: list, headers: list, query: str) -> str:
         """Format query results as a Markdown module"""
@@ -589,31 +474,22 @@ Return only the raw SQL SELECT statement, no explanations.
             await self._update_results_tree()
     
     async def _execute_sql_query(self, query_dict: Dict[str, Any]) -> None:
-        """Execute SQL query"""
+        """Execute SQL query by delegating to orchestrator"""
         query = query_dict['sql']
         query_name = query_dict.get('name', 'SQL Query')
         viz_type = query_dict.get('viz_type', 'table')
         
-        # Get database connection from storage manager
-        if hasattr(self.storage_manager, 'db_path'):
-            db_path = self.storage_manager.db_path
-        else:
-            # Fallback path
-            import os
-            db_path = os.path.expanduser("~/.globule/data/globule.db")
+        # Clean delegation: Get input → Call orchestrator → Update UI
+        query_result_dict = await self.app.orchestrator.execute_sql_query(
+            query=query,
+            query_name=query_name
+        )
         
-        with sqlite3.connect(db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+        # Adapt orchestrator result to UI format
+        if query_result_dict["type"] == "sql_results":
+            results = query_result_dict["results"]
             
-            # Execute query
-            cursor.execute(query)
-            rows = cursor.fetchall()
-            
-            # Convert to list of dicts
-            results = [dict(row) for row in rows]
-            
-            # Add to query results
+            # Add to query results with UI-specific metadata
             query_result = {
                 'name': query_name,
                 'query': query,
@@ -629,6 +505,17 @@ Return only the raw SQL SELECT statement, no explanations.
             
             # Post message for canvas to handle
             self.post_message(self.QueryExecuted(query, results, "sql"))
+        else:
+            # Handle error case
+            error_result = {
+                'name': query_name,
+                'query': query,
+                'error': query_result_dict.get("error", "Unknown error"),
+                'timestamp': datetime.now().isoformat(),
+                'type': 'error'
+            }
+            self.query_results.append(error_result)
+            await self._update_results_tree()
     
     async def _execute_llm_query(self, query_dict: Dict[str, Any]) -> None:
         """Execute LLM-based query"""
@@ -2097,7 +1984,7 @@ class DashboardApp(App):
         ("ctrl+t", "refresh_template", "Refresh"),
     ]
     
-    def __init__(self, storage_manager: StorageManager, topic: Optional[str] = None):
+    def __init__(self, storage_manager: IStorageManager, topic: Optional[str] = None):
         super().__init__()
         self.storage_manager = storage_manager
         self.topic = topic
@@ -2105,16 +1992,16 @@ class DashboardApp(App):
         self.output_schema_name = None
         self.output_schema = None
         
-        # Phase 1: Initialize the orchestration engine with mock providers
-        # This delegates all business logic away from the TUI
+        # Phase 1: Initialize the orchestration engine with dummy providers
+        # This delegates all business logic away from the TUI  
+        # Use real storage_manager that was passed in, not a mock
         parser_provider = MockParserProvider()
         embedding_provider = MockEmbeddingProvider()
-        mock_storage_manager = MockStorageManager()
         
         self.orchestrator = GlobuleOrchestrator(
             parser_provider=parser_provider,
             embedding_provider=embedding_provider,
-            storage_manager=mock_storage_manager
+            storage_manager=self.storage_manager  # Use the real storage manager
         )
         
         # Detect output schema for topic
