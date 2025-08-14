@@ -18,10 +18,10 @@ from globule.core.errors import ParserError, EmbeddingError, StorageError
 class MockParserProvider(IParserProvider):
     """Mock parser provider for Phase 1 testing."""
     
-    def parse(self, text: str) -> dict:
+    async def parse(self, text: str) -> dict:
         """Return mock parsed data."""
         # Simulate processing time
-        time.sleep(0.01)
+        await asyncio.sleep(0.01)
         
         return {
             "title": text[:50] + "..." if len(text) > 50 else text,
@@ -42,8 +42,11 @@ class MockEmbeddingProvider(IEmbeddingProvider):
     def __init__(self, dimension: int = 1024):
         self.dimension = dimension
     
-    def embed(self, text: str) -> List[float]:
+    async def embed(self, text: str) -> List[float]:
         """Return mock embedding vector."""
+        # Simulate processing time
+        await asyncio.sleep(0.01)
+        
         # Generate consistent embeddings based on text hash for reproducibility
         import hashlib
         hash_obj = hashlib.md5(text.encode())
