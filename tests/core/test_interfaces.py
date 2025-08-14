@@ -9,7 +9,7 @@ from typing import List, Dict, Any
 
 from globule.core.interfaces import (
     IParserProvider,
-    IEmbeddingProvider,
+    IEmbeddingAdapter,
     IStorageManager,
     IOrchestrationEngine,
     ISchemaManager
@@ -25,7 +25,7 @@ class DummyParser(IParserProvider):
             raise ParserError("Input text cannot be empty")
         return {"parsed": True, "text_length": len(text)}
 
-class DummyEmbedder(IEmbeddingProvider):
+class DummyEmbedder(IEmbeddingAdapter):
     async def embed(self, text: str) -> list[float]:
         if not text:
             raise EmbeddingError("Input text cannot be empty")
@@ -93,8 +93,8 @@ async def test_dummy_parser_compliance():
 
 @pytest.mark.asyncio
 async def test_dummy_embedder_compliance():
-    """Tests that DummyEmbedder correctly implements IEmbeddingProvider."""
-    embedder: IEmbeddingProvider = DummyEmbedder()
+    """Tests that DummyEmbedder correctly implements IEmbeddingAdapter."""
+    embedder: IEmbeddingAdapter = DummyEmbedder()
     result = await embedder.embed("test")
     assert result == [0.04]
     with pytest.raises(EmbeddingError):

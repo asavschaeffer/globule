@@ -1,7 +1,7 @@
 """
 Mock providers implementing the core interfaces for testing and Phase 1.
 
-These providers implement the IParserProvider, IEmbeddingProvider, and IStorageManager
+These providers implement the IParserProvider, IEmbeddingAdapter, and IStorageManager
 interfaces with dummy implementations for use during Phase 1 testing.
 """
 
@@ -10,9 +10,14 @@ import time
 from typing import Dict, Any, List
 from uuid import UUID
 
-from globule.core.interfaces import IParserProvider, IEmbeddingProvider, IStorageManager
+from globule.core.interfaces import IParserProvider, IStorageManager
 from globule.core.models import ProcessedGlobuleV1
-from globule.core.errors import ParserError, EmbeddingError, StorageError
+from globule.core.errors import ParserError, StorageError
+
+# Import the proper mock embedding adapter
+from globule.services.embedding.mock_adapter import MockEmbeddingAdapter
+# Provide backward compatibility alias
+MockEmbeddingProvider = MockEmbeddingAdapter
 
 
 class MockParserProvider(IParserProvider):
@@ -36,34 +41,8 @@ class MockParserProvider(IParserProvider):
         }
 
 
-class MockEmbeddingProvider(IEmbeddingProvider):
-    """Mock embedding provider for Phase 1 testing."""
-    
-    def __init__(self, dimension: int = 1024):
-        self.dimension = dimension
-    
-    async def embed(self, text: str) -> List[float]:
-        """Return mock embedding vector."""
-        # Simulate processing time
-        await asyncio.sleep(0.01)
-        
-        # Generate consistent embeddings based on text hash for reproducibility
-        import hashlib
-        hash_obj = hashlib.md5(text.encode())
-        seed = int(hash_obj.hexdigest()[:8], 16)
-        
-        # Simple deterministic generation
-        embedding = []
-        for i in range(self.dimension):
-            val = ((seed + i) % 10000) / 10000.0 - 0.5
-            embedding.append(val)
-        
-        # Normalize to unit vector
-        norm = sum(x*x for x in embedding) ** 0.5
-        if norm > 0:
-            embedding = [x/norm for x in embedding]
-        
-        return embedding
+# MockEmbeddingProvider is now imported from mock_adapter.py
+# This maintains backward compatibility while using the proper BaseEmbeddingAdapter implementation
 
 
 class MockStorageManager(IStorageManager):
