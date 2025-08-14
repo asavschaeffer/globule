@@ -10,13 +10,13 @@ import numpy as np
 from typing import List, Optional
 import logging
 
-from globule.core.interfaces import EmbeddingProvider
+from globule.core.interfaces import IEmbeddingProvider
 from globule.config.settings import get_config
 
 logger = logging.getLogger(__name__)
 
 
-class OllamaEmbeddingProvider(EmbeddingProvider):
+class OllamaEmbeddingProvider(IEmbeddingProvider):
     """Ollama implementation of EmbeddingProvider"""
     
     def __init__(self, 
