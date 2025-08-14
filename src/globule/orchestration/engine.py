@@ -251,7 +251,7 @@ class GlobuleOrchestrator(IOrchestrationEngine):
         """Generate embedding and return (embedding, time_ms)"""
         start_time = time.time()
         try:
-            embedding = self.embedding_provider.embed(text)
+            embedding = await self.embedding_provider.embed(text)
             processing_time = (time.time() - start_time) * 1000
             return embedding, processing_time
         except Exception as e:
@@ -262,7 +262,7 @@ class GlobuleOrchestrator(IOrchestrationEngine):
         """Parse content and return (parsed_data, time_ms)"""
         start_time = time.time()
         try:
-            parsed_data = self.parser_provider.parse(text)
+            parsed_data = await self.parser_provider.parse(text)
             processing_time = (time.time() - start_time) * 1000
             return parsed_data, processing_time
         except Exception as e:

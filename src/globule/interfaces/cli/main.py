@@ -27,12 +27,15 @@ from globule.core.models import EnrichedInput
 from globule.storage.sqlite_manager import SQLiteStorageManager
 from globule.services.embedding.ollama_provider import OllamaEmbeddingProvider
 from globule.services.embedding.mock_provider import MockEmbeddingProvider
+from globule.services.embedding.ollama_adapter import OllamaEmbeddingAdapter
 from globule.services.parsing.ollama_parser import OllamaParser
+from globule.services.parsing.ollama_adapter import OllamaParsingAdapter
 from globule.orchestration.engine import OrchestrationEngine, search_globules_nlp, fetch_globule_content
 from globule.core.draft_manager import DraftManager
 from globule.core.frontend_manager import frontend_manager, FrontendType
 from globule.core.layout_engine import LayoutEngine
 from globule.config.settings import get_config
+from globule.schemas.manager import SchemaManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -48,6 +51,7 @@ class GlobuleContext:
         self.embedding_provider = None
         self.parsing_provider = None
         self.orchestrator = None
+        self.schema_manager = None
         self._initialized = False
     
     async def __aenter__(self):
@@ -72,24 +76,32 @@ class GlobuleContext:
         # Initialize storage
         self.storage = SQLiteStorageManager()
         await self.storage.initialize()
+
+        # Initialize schema manager
+        self.schema_manager = SchemaManager()
         
         # Initialize embedding provider with fallback to mock
-        self.embedding_provider = OllamaEmbeddingProvider()
-        health_ok = await self.embedding_provider.health_check()
+        embedding_provider = OllamaEmbeddingProvider()
+        health_ok = await embedding_provider.health_check()
         
         if not health_ok:
             click.echo("Warning: Ollama not accessible. Using mock embeddings.", err=True)
-            await self.embedding_provider.close()
-            self.embedding_provider = MockEmbeddingProvider()
+            await embedding_provider.close()
+            embedding_provider = MockEmbeddingProvider()
         
+        self.embedding_provider = embedding_provider # Keep a reference for cleanup
+        embedding_adapter = OllamaEmbeddingAdapter(embedding_provider)
+
         # Initialize parsing provider
-        self.parsing_provider = OllamaParser()
+        parsing_provider = OllamaParser()
+        self.parsing_provider = parsing_provider # Keep a reference for cleanup
+        parsing_adapter = OllamaParsingAdapter(parsing_provider)
         
-        # Initialize orchestrator
+        # Initialize orchestrator with adapters
         self.orchestrator = OrchestrationEngine(
-            self.embedding_provider, 
-            self.parsing_provider, 
-            self.storage
+            embedding_provider=embedding_adapter, 
+            parser_provider=parsing_adapter, 
+            storage_manager=self.storage
         )
         
         self._initialized = True
@@ -140,8 +152,7 @@ async def add(ctx: click.Context, text: str, verbose: bool) -> None:
             await context.initialize(verbose)
             
             # Create enriched input
-            from globule.schemas.manager import get_schema_manager
-            schema_manager = get_schema_manager()
+            schema_manager = context.schema_manager
             
             detected_schema_id = schema_manager.detect_schema_for_text(text)
             schema_config = None
