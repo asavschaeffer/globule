@@ -5,12 +5,14 @@ These tests ensure that the interfaces are well-defined and can be implemented.
 """
 import pytest
 from uuid import uuid4
+from typing import List, Dict, Any
 
 from globule.core.interfaces import (
     IParserProvider,
     IEmbeddingProvider,
     IStorageManager,
-    IOrchestrationEngine
+    IOrchestrationEngine,
+    ISchemaManager
 )
 from globule.core.models import GlobuleV1, ProcessedGlobuleV1
 from globule.core.errors import ParserError, EmbeddingError, StorageError
@@ -18,13 +20,13 @@ from globule.core.errors import ParserError, EmbeddingError, StorageError
 # Dummy implementations for testing contract compliance
 
 class DummyParser(IParserProvider):
-    def parse(self, text: str) -> dict:
+    async def parse(self, text: str) -> dict:
         if not text:
             raise ParserError("Input text cannot be empty")
         return {"parsed": True, "text_length": len(text)}
 
 class DummyEmbedder(IEmbeddingProvider):
-    def embed(self, text: str) -> list[float]:
+    async def embed(self, text: str) -> list[float]:
         if not text:
             raise EmbeddingError("Input text cannot be empty")
         return [len(text) / 100.0]
@@ -42,15 +44,31 @@ class DummyStorage(IStorageManager):
             raise StorageError(f"Globule {globule_id} not found")
         return self._storage[globule_id]
 
+    async def search(self, query: str, limit: int = 10) -> List[ProcessedGlobuleV1]:
+        return list(self._storage.values())[:limit]
+
+    async def execute_sql(self, query: str, query_name: str = "Query") -> Dict[str, Any]:
+        return {"results": []}
+
+class DummySchemaManager(ISchemaManager):
+    def get_schema(self, schema_name: str) -> Dict[str, Any]:
+        return {"name": schema_name}
+
+    def detect_schema_for_text(self, text: str) -> str | None:
+        return "default"
+
+    def get_available_schemas(self) -> List[str]:
+        return ["default", "test"]
+
 class DummyOrchestrator(IOrchestrationEngine):
     def __init__(self, parser, embedder, storage):
         self.parser = parser
         self.embedder = embedder
         self.storage = storage
 
-    def process(self, globule: GlobuleV1) -> ProcessedGlobuleV1:
-        parsed_data = self.parser.parse(globule.raw_text)
-        embedding = self.embedder.embed(globule.raw_text)
+    async def process(self, globule: GlobuleV1) -> ProcessedGlobuleV1:
+        parsed_data = await self.parser.parse(globule.raw_text)
+        embedding = await self.embedder.embed(globule.raw_text)
         
         processed_globule = ProcessedGlobuleV1(
             globule_id=globule.globule_id,
@@ -64,23 +82,26 @@ class DummyOrchestrator(IOrchestrationEngine):
 
 # Tests
 
-def test_dummy_parser_compliance():
+@pytest.mark.asyncio
+async def test_dummy_parser_compliance():
     """Tests that DummyParser correctly implements IParserProvider."""
     parser: IParserProvider = DummyParser()
-    result = parser.parse("test")
+    result = await parser.parse("test")
     assert result == {"parsed": True, "text_length": 4}
     with pytest.raises(ParserError):
-        parser.parse("")
+        await parser.parse("")
 
-def test_dummy_embedder_compliance():
+@pytest.mark.asyncio
+async def test_dummy_embedder_compliance():
     """Tests that DummyEmbedder correctly implements IEmbeddingProvider."""
     embedder: IEmbeddingProvider = DummyEmbedder()
-    result = embedder.embed("test")
+    result = await embedder.embed("test")
     assert result == [0.04]
     with pytest.raises(EmbeddingError):
-        embedder.embed("")
+        await embedder.embed("")
 
-def test_dummy_storage_compliance():
+@pytest.mark.asyncio
+async def test_dummy_storage_compliance():
     """Tests that DummyStorage correctly implements IStorageManager."""
     storage: IStorageManager = DummyStorage()
     raw_globule = GlobuleV1(raw_text="test", source="test")
@@ -88,6 +109,7 @@ def test_dummy_storage_compliance():
         globule_id=raw_globule.globule_id,
         original_globule=raw_globule,
         embedding=[0.1],
+        parsed_data={},
         processing_time_ms=10.0
     )
     
@@ -98,14 +120,18 @@ def test_dummy_storage_compliance():
     with pytest.raises(StorageError):
         storage.get(uuid4())
 
-def test_dummy_orchestrator_compliance():
+@pytest.mark.asyncio
+async def test_dummy_orchestrator_compliance():
     """Tests that the dummy components work together via their interfaces."""
-    orchestrator: IOrchestrationEngine = DummyOrchestrator(DummyParser(), DummyEmbedder(), DummyStorage())
+    storage = DummyStorage()
+    orchestrator: IOrchestrationEngine = DummyOrchestrator(DummyParser(), DummyEmbedder(), storage)
     raw_globule = GlobuleV1(raw_text="orchestration test", source="test")
     
-    result = orchestrator.process(raw_globule)
+    result = await orchestrator.process(raw_globule)
     
     assert isinstance(result, ProcessedGlobuleV1)
     assert result.original_globule == raw_globule
     assert result.parsed_data == {"parsed": True, "text_length": 18}
     assert result.embedding == [0.18]
+    # Verify it was saved
+    assert storage.get(raw_globule.globule_id) is not None

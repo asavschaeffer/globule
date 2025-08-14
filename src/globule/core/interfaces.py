@@ -15,7 +15,7 @@ class IParserProvider(ABC):
     """Interface for a service that parses raw text into structured data."""
     
     @abstractmethod
-    def parse(self, text: str) -> dict:
+    async def parse(self, text: str) -> dict:
         """
         Parses the raw text from a Globule.
 
@@ -34,7 +34,7 @@ class IEmbeddingProvider(ABC):
     """Interface for a service that generates vector embeddings."""
     
     @abstractmethod
-    def embed(self, text: str) -> List[float]:
+    async def embed(self, text: str) -> List[float]:
         """
         Generates a vector embedding for the given text.
 
@@ -113,6 +113,24 @@ class IStorageManager(ABC):
         Raises:
             StorageError: If query execution fails or query is invalid.
         """
+        pass
+
+class ISchemaManager(ABC):
+    """Interface for a service that manages loading and accessing schemas."""
+
+    @abstractmethod
+    def get_schema(self, schema_name: str) -> Dict[str, Any]:
+        """Retrieves a schema by its name."""
+        pass
+
+    @abstractmethod
+    def detect_schema_for_text(self, text: str) -> str | None:
+        """Detects the most appropriate schema for a given text."""
+        pass
+
+    @abstractmethod
+    def get_available_schemas(self) -> List[str]:
+        """Returns a list of all available schema names."""
         pass
 
 class IOrchestrationEngine(ABC):

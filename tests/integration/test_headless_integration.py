@@ -15,16 +15,18 @@ from globule.core.interfaces import IOrchestrationEngine, IParserProvider, IEmbe
 from globule.core.errors import ParserError, EmbeddingError, StorageError
 
 # Import the actual orchestrator and mock providers
-from globule.orchestration import GlobuleOrchestrator
+from globule.orchestration.engine import GlobuleOrchestrator
 from globule.services.providers_mock import MockParserProvider, MockEmbeddingProvider, MockStorageManager
+from globule.services.parsing.ollama_adapter import OllamaParsingAdapter
+from globule.services.embedding.ollama_adapter import OllamaEmbeddingAdapter
 
 # Keep the old NoOp implementations for backward compatibility tests
 class NoOpParser(IParserProvider):
-    def parse(self, text: str) -> dict:
+    async def parse(self, text: str) -> dict:
         return {"status": "parsed_by_noop", "original_length": len(text)}
 
 class NoOpEmbedder(IEmbeddingProvider):
-    def embed(self, text: str) -> list[float]:
+    async def embed(self, text: str) -> list[float]:
         return [0.0] * 10  # Return a dummy embedding
 
 class InMemoryStorage(IStorageManager):
@@ -68,10 +70,10 @@ class NoOpOrchestrationEngine(IOrchestrationEngine):
         self.embedder = embedder
         self.storage = storage
 
-    def process(self, globule: GlobuleV1) -> ProcessedGlobuleV1:
+    async def process(self, globule: GlobuleV1) -> ProcessedGlobuleV1:
         # Simulate processing steps
-        parsed_data = self.parser.parse(globule.raw_text)
-        embedding = self.embedder.embed(globule.raw_text)
+        parsed_data = await self.parser.parse(globule.raw_text)
+        embedding = await self.embedder.embed(globule.raw_text)
 
         processed_globule = ProcessedGlobuleV1(
             globule_id=globule.globule_id,
@@ -98,21 +100,28 @@ def noop_engine():
 
 @pytest.fixture
 def globule_orchestrator():
-    """Real GlobuleOrchestrator with mock providers for Phase 1 testing."""
-    parser = MockParserProvider()
-    embedder = MockEmbeddingProvider()
-    storage = MockStorageManager()
+    """Real GlobuleOrchestrator with mock providers wrapped in real adapters."""
+    # 1. Create mock providers
+    parser_provider = MockParserProvider()
+    embedding_provider = MockEmbeddingProvider()
+    storage_manager = MockStorageManager()
+
+    # 2. Wrap mock providers in real adapters
+    parsing_adapter = OllamaParsingAdapter(parser_provider)
+    embedding_adapter = OllamaEmbeddingAdapter(embedding_provider)
+
+    # 3. Inject adapters into the orchestrator
     return GlobuleOrchestrator(
-        parser_provider=parser,
-        embedding_provider=embedder,
-        storage_manager=storage
+        parser_provider=parsing_adapter,
+        embedding_provider=embedding_adapter,
+        storage_manager=storage_manager
     )
 
-def test_headless_processing_flow(noop_engine: IOrchestrationEngine):
+async def test_headless_processing_flow(noop_engine: IOrchestrationEngine):
     """Tests the basic end-to-end processing flow of a Globule through the headless engine."""
     raw_globule = GlobuleV1(raw_text="This is a test sentence.", source="cli")
     
-    processed_globule = noop_engine.process(raw_globule)
+    processed_globule = await noop_engine.process(raw_globule)
     
     assert isinstance(processed_globule, ProcessedGlobuleV1)
     assert processed_globule.globule_id == raw_globule.globule_id
@@ -147,9 +156,9 @@ async def test_globule_orchestrator_headless_processing(globule_orchestrator: Gl
     assert processed_globule.globule_id == raw_globule.globule_id
     assert processed_globule.original_globule == raw_globule
     
-    # Verify mock providers were used
-    assert "MockParserProvider" in processed_globule.provider_metadata["parser"]
-    assert "MockEmbeddingProvider" in processed_globule.provider_metadata["embedder"]
+    # Verify mock providers were used via adapters
+    assert "OllamaParsingAdapter" in processed_globule.provider_metadata["parser"]
+    assert "OllamaEmbeddingAdapter" in processed_globule.provider_metadata["embedder"]
     assert "MockStorageManager" in processed_globule.provider_metadata["storage"]
     
     # Verify parsed data structure (from MockParserProvider)

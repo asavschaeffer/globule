@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
-from globule.core.models import ProcessedGlobule, FileDecision
+from globule.core.models import ProcessedGlobuleV1, FileDecisionV1
 from globule.config.settings import get_config
 
 
@@ -29,7 +29,7 @@ class FileManager:
         self.base_path = self.config.get_storage_dir() / "files"
         self.base_path.mkdir(parents=True, exist_ok=True)
     
-    def save_globule_to_file(self, globule: ProcessedGlobule) -> Path:
+    def save_globule_to_file(self, globule: ProcessedGlobuleV1) -> Path:
         """
         Save a globule as a markdown file with YAML frontmatter.
         
@@ -68,7 +68,7 @@ class FileManager:
         
         return file_path
     
-    def determine_path(self, globule: ProcessedGlobule) -> Path:
+    def determine_path(self, globule: ProcessedGlobuleV1) -> Path:
         """
         Determine the final file path BEFORE any transaction begins.
         
@@ -95,7 +95,7 @@ class FileManager:
         
         return file_dir / filename
     
-    def save_to_temp(self, globule: ProcessedGlobule) -> Path:
+    def save_to_temp(self, globule: ProcessedGlobuleV1) -> Path:
         """
         Save globule to a temporary file location.
         
@@ -184,7 +184,7 @@ class FileManager:
             # Log the error but don't fail - cleanup is best effort
             print(f"Warning: Failed to clean up temporary file {temp_path}: {e}")
     
-    def load_globule_from_file(self, file_path: Path) -> Optional[ProcessedGlobule]:
+    def load_globule_from_file(self, file_path: Path) -> Optional[ProcessedGlobuleV1]:
         """
         Load a globule from a markdown file using the UUID from frontmatter.
         
@@ -192,7 +192,7 @@ class FileManager:
             file_path: Path to the markdown file
             
         Returns:
-            ProcessedGlobule if successful, None if file is invalid
+            ProcessedGlobuleV1 if successful, None if file is invalid
         """
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -204,8 +204,8 @@ class FileManager:
             if not frontmatter or 'uuid' not in frontmatter:
                 return None
             
-            # Create ProcessedGlobule from frontmatter and content
-            globule = ProcessedGlobule(
+            # Create ProcessedGlobuleV1 from frontmatter and content
+            globule = ProcessedGlobuleV1(
                 id=frontmatter['uuid'],
                 text=text.strip(),
                 parsed_data=frontmatter.get('parsed_data', {}),
@@ -223,7 +223,7 @@ class FileManager:
             # Create file decision if path info exists
             if frontmatter.get('file_decision'):
                 fd_data = frontmatter['file_decision']
-                globule.file_decision = FileDecision(
+                globule.file_decision = FileDecisionV1(
                     semantic_path=Path(fd_data.get('semantic_path', '')),
                     filename=fd_data.get('filename', file_path.name),
                     metadata=fd_data.get('metadata', {}),
@@ -262,7 +262,7 @@ class FileManager:
         
         return None
     
-    def update_file_from_globule(self, globule: ProcessedGlobule) -> Optional[Path]:
+    def update_file_from_globule(self, globule: ProcessedGlobuleV1) -> Optional[Path]:
         """
         Update an existing file or create a new one based on the globule's UUID.
         
@@ -287,7 +287,7 @@ class FileManager:
             # Create new file
             return self.save_globule_to_file(globule)
     
-    def _generate_filename(self, globule: ProcessedGlobule) -> str:
+    def _generate_filename(self, globule: ProcessedGlobuleV1) -> str:
         """Generate a human-readable filename for the globule."""
         # Use title from parsed data or create from text
         if globule.parsed_data and 'title' in globule.parsed_data:
@@ -305,7 +305,7 @@ class FileManager:
         
         return filename
     
-    def _generate_frontmatter(self, globule: ProcessedGlobule) -> Dict[str, Any]:
+    def _generate_frontmatter(self, globule: ProcessedGlobuleV1) -> Dict[str, Any]:
         """Generate YAML frontmatter with UUID and metadata."""
         frontmatter = {
             'uuid': globule.id,
@@ -361,7 +361,7 @@ class FileManager:
         except Exception:
             return None, content
     
-    def _update_existing_file(self, file_path: Path, globule: ProcessedGlobule) -> Path:
+    def _update_existing_file(self, file_path: Path, globule: ProcessedGlobuleV1) -> Path:
         """Update an existing file with new globule data."""
         # Update the modified_at timestamp
         globule.modified_at = datetime.now()
@@ -472,7 +472,7 @@ class FileManager:
         
         return stats
     
-    async def _update_globule_file_path(self, storage_manager, globule: ProcessedGlobule, actual_file_path: Path):
+    async def _update_globule_file_path(self, storage_manager, globule: ProcessedGlobuleV1, actual_file_path: Path):
         """
         Update a globule's file_decision to reflect its actual location on disk.
         
@@ -481,13 +481,13 @@ class FileManager:
             globule: The globule to update
             actual_file_path: The actual path where the file exists
         """
-        from globule.core.models import FileDecision
+        from globule.core.models import FileDecisionV1
         
         # Calculate relative path from base_path
         relative_path = actual_file_path.relative_to(self.base_path)
         
-        # Create new FileDecision reflecting actual location
-        globule.file_decision = FileDecision(
+        # Create new FileDecisionV1 reflecting actual location
+        globule.file_decision = FileDecisionV1(
             semantic_path=relative_path.parent,
             filename=relative_path.name,
             metadata={"reconciled": True, "original_path": str(globule.file_decision.semantic_path / globule.file_decision.filename) if globule.file_decision else None},
