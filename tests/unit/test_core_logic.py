@@ -13,8 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, AsyncMock
 
-from globule.core.models import ProcessedGlobuleV1, FileDecisionV1
-from globule.orchestration.engine import OrchestrationEngine
+from globule.core.models import GlobuleV1, ProcessedGlobuleV1, FileDecisionV1
+from globule.orchestration.engine import GlobuleOrchestrator
 
 
 class TestCoreModels:
@@ -22,34 +22,30 @@ class TestCoreModels:
     
     def test_processed_globule_creation(self):
         """Test ProcessedGlobuleV1 can be created with minimal data."""
-        globule = ProcessedGlobuleV1(
-            text="Test thought",
-            parsed_data={"title": "Test"},
-            created_at=datetime.now(),
-            modified_at=datetime.now()
+        raw_globule = GlobuleV1(raw_text="Test thought", source="test")
+        processed = ProcessedGlobuleV1(
+            globule_id=raw_globule.globule_id,
+            original_globule=raw_globule,
+            embedding=[0.1, 0.2],
+            processing_time_ms=50.0,
+            parsed_data={"title": "Test"}
         )
         
-        assert globule.text == "Test thought"
-        assert globule.parsed_data["title"] == "Test"
-        assert globule.id is None  # Should be auto-generated when needed
-        assert globule.embedding is None
-        assert globule.confidence_scores == {}
+        assert processed.original_globule.raw_text == "Test thought"
+        assert processed.parsed_data["title"] == "Test"
+        assert processed.globule_id == raw_globule.globule_id
     
     def test_file_decision_creation(self):
         """Test FileDecision creation."""
         decision = FileDecisionV1(
-            semantic_path=Path("notes/personal"),
+            semantic_path="notes/personal",
             filename="test.md",
-            metadata={},
-            confidence=0.9,
-            alternative_paths=[]
+            confidence=0.9
         )
         
-        assert decision.semantic_path == Path("notes/personal")
+        assert decision.semantic_path == "notes/personal"
         assert decision.filename == "test.md"
         assert decision.confidence == 0.9
-        assert decision.metadata == {}
-        assert decision.alternative_paths == []
 
 
 class TestFilePath:
@@ -58,18 +54,18 @@ class TestFilePath:
     def test_file_decision_path_construction(self):
         """Test that file paths are constructed correctly."""
         decision = FileDecisionV1(
-            semantic_path=Path("projects/ai"),
+            semantic_path="projects/ai",
             filename="neural-networks.md",
-            metadata={},
-            confidence=0.85,
-            alternative_paths=[]
+            confidence=0.85
         )
         
-        full_path = decision.semantic_path / decision.filename
+        # Reconstruct path for verification
+        full_path = Path(decision.semantic_path) / decision.filename
         # Use forward slashes for cross-platform compatibility
         assert str(full_path).replace("\\", "/") == "projects/ai/neural-networks.md"
         assert full_path.suffix == ".md"
         assert full_path.stem == "neural-networks"
+
 
 
 class TestVectorOperations:
