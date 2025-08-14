@@ -11,7 +11,11 @@ class OllamaEmbeddingAdapter(IEmbeddingProvider):
     
     async def embed(self, text: str) -> List[float]:
         try:
-            embedding_array = await self._provider.embed(text)
-            return embedding_array.tolist()
+            embedding_result = await self._provider.embed(text)
+            # Handle both numpy arrays and lists
+            if hasattr(embedding_result, 'tolist'):
+                return embedding_result.tolist()
+            else:
+                return embedding_result
         except Exception as e:
             raise EmbeddingError(f"Ollama embedding provider failed: {e}") from e
