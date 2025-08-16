@@ -181,6 +181,47 @@ class ISchemaManager(ABC):
         """Returns a list of all available schema names."""
         pass
 
+class IConfigManager(ABC):
+    """Interface for configuration management with three-tier cascade support."""
+    
+    @abstractmethod
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Retrieve configuration value with cascade resolution.
+        
+        Uses dot notation for nested keys (e.g., 'embedding.model').
+        Resolves in order: init args → env vars → user YAML → system YAML → defaults.
+        
+        Args:
+            key: Configuration key in dot notation.
+            default: Default value if key not found.
+            
+        Returns:
+            Configuration value or default.
+        """
+        pass
+    
+    @abstractmethod
+    def get_section(self, section: str) -> Dict[str, Any]:
+        """
+        Get entire configuration section.
+        
+        Args:
+            section: Section name (e.g., 'embedding', 'storage').
+            
+        Returns:
+            Dictionary containing all keys in the section.
+        """
+        pass
+    
+    @abstractmethod
+    def reload(self) -> None:
+        """
+        Reload configuration from all sources.
+        
+        Primarily for development; production should use immutable configs.
+        """
+        pass
 
 class IOrchestrationEngine(ABC):
     """Interface for the core orchestration engine."""
