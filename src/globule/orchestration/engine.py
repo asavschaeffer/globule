@@ -14,7 +14,7 @@ from typing import Dict, Any, List, Optional
 from uuid import UUID
 from datetime import datetime
 
-from globule.core.interfaces import IOrchestrationEngine, IEmbeddingProvider, IParserProvider, IStorageManager
+from globule.core.interfaces import IOrchestrationEngine, IEmbeddingAdapter, IParserProvider, IStorageManager
 from globule.core.models import GlobuleV1, ProcessedGlobuleV1, FileDecisionV1, NuanceMetaDataV1
 from globule.core.errors import ParserError, EmbeddingError, StorageError
 from pathlib import Path
@@ -32,7 +32,7 @@ class GlobuleOrchestrator(IOrchestrationEngine):
     
     def __init__(self, 
                  parser_provider: IParserProvider,
-                 embedding_provider: IEmbeddingProvider,
+                 embedding_provider: IEmbeddingAdapter,
                  storage_manager: IStorageManager):
         self.parser_provider = parser_provider
         self.embedding_provider = embedding_provider  
@@ -249,11 +249,9 @@ class GlobuleOrchestrator(IOrchestrationEngine):
     
     async def _generate_embedding(self, text: str) -> tuple:
         """Generate embedding and return (embedding, time_ms)"""
-        start_time = time.time()
         try:
-            embedding = await self.embedding_provider.embed(text)
-            processing_time = (time.time() - start_time) * 1000
-            return embedding, processing_time
+            embedding_result = await self.embedding_provider.embed_single(text)
+            return embedding_result.embedding, embedding_result.processing_time_ms
         except Exception as e:
             logger.error(f"Embedding generation failed: {e}")
             raise EmbeddingError(f"Failed to generate embedding: {e}")
