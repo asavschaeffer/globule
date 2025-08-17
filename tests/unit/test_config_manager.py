@@ -202,10 +202,10 @@ class TestDeepMerge:
 
 
 class TestPydanticConfigManager:
-    """Test PydanticConfigManager system layer functionality."""
+    """Test PydanticConfigManager three-tier cascade functionality."""
     
     def test_defaults_only(self):
-        """Test manager with defaults only (no system file)."""
+        """Test manager with defaults only (no system or user files)."""
         with patch('globule.config.manager.load_yaml_file', return_value={}):
             manager = PydanticConfigManager()
             
@@ -233,16 +233,106 @@ class TestPydanticConfigManager:
             # Default values preserved
             assert manager.get('storage.backend') == 'sqlite'
     
-    def test_explicit_overrides(self):
-        """Test explicit overrides taking highest precedence."""
-        system_config = {'embedding': {'provider': 'huggingface'}}
-        explicit_overrides = {'embedding': {'provider': 'openai'}}
+    def test_user_override_system(self):
+        """Test user file overriding system file."""
+        def mock_load_yaml(path):
+            path_str = str(path)
+            if '/etc/' in path_str or 'ProgramData' in path_str:
+                return {'embedding': {'provider': 'huggingface', 'model': 'system-model'}}
+            elif '.config' in path_str or 'AppData' in path_str:
+                return {'embedding': {'provider': 'openai', 'endpoint': 'https://api.openai.com'}}
+            return {}
         
-        with patch('globule.config.manager.load_yaml_file', return_value=system_config):
+        with patch('globule.config.manager.load_yaml_file', side_effect=mock_load_yaml):
+            manager = PydanticConfigManager()
+            
+            # User overrides system
+            assert manager.get('embedding.provider') == 'openai'
+            # System value preserved where no user override
+            assert manager.get('embedding.model') == 'system-model'
+            # User addition  
+            assert str(manager.get('embedding.endpoint')) == 'https://api.openai.com/'
+    
+    def test_three_tier_cascade(self):
+        """Test complete three-tier cascade: defaults → system → user → explicit."""
+        def mock_load_yaml(path):
+            path_str = str(path)
+            if '/etc/' in path_str or 'ProgramData' in path_str:
+                return {
+                    'embedding': {'provider': 'huggingface', 'model': 'system-model'},
+                    'storage': {'backend': 'postgres'}
+                }
+            elif '.config' in path_str or 'AppData' in path_str:
+                return {
+                    'embedding': {'model': 'user-model'},
+                    'storage': {'path': '/user/data.db'}
+                }
+            return {}
+        
+        explicit_overrides = {'embedding': {'endpoint': 'https://explicit.com'}}
+        
+        with patch('globule.config.manager.load_yaml_file', side_effect=mock_load_yaml):
             manager = PydanticConfigManager(overrides=explicit_overrides)
             
-            # Explicit override wins
+            # System overrides defaults
+            assert manager.get('embedding.provider') == 'huggingface'
+            assert manager.get('storage.backend') == 'postgres'
+            
+            # User overrides system
+            assert manager.get('embedding.model') == 'user-model'
+            assert manager.get('storage.path') == '/user/data.db'
+            
+            # Explicit overrides all
+            assert str(manager.get('embedding.endpoint')) == 'https://explicit.com/'
+    
+    def test_missing_config_files(self):
+        """Test behavior with various combinations of missing config files."""
+        # Test: no system, yes user
+        def mock_load_yaml_no_system(path):
+            path_str = str(path)
+            if '/etc/' in path_str or 'ProgramData' in path_str:
+                return {}  # No system file
+            elif '.config' in path_str or 'AppData' in path_str:
+                return {'embedding': {'provider': 'openai'}}
+            return {}
+        
+        with patch('globule.config.manager.load_yaml_file', side_effect=mock_load_yaml_no_system):
+            manager = PydanticConfigManager()
             assert manager.get('embedding.provider') == 'openai'
+            assert manager.get('storage.backend') == 'sqlite'  # default
+        
+        # Test: yes system, no user
+        def mock_load_yaml_no_user(path):
+            path_str = str(path)
+            if '/etc/' in path_str or 'ProgramData' in path_str:
+                return {'embedding': {'provider': 'huggingface'}}
+            elif '.config' in path_str or 'AppData' in path_str:
+                return {}  # No user file
+            return {}
+        
+        with patch('globule.config.manager.load_yaml_file', side_effect=mock_load_yaml_no_user):
+            manager = PydanticConfigManager()
+            assert manager.get('embedding.provider') == 'huggingface'
+            assert manager.get('storage.backend') == 'sqlite'  # default
+    
+    def test_explicit_overrides(self):
+        """Test explicit overrides taking highest precedence."""
+        def mock_load_yaml(path):
+            path_str = str(path)
+            if '/etc/' in path_str or 'ProgramData' in path_str:
+                return {'embedding': {'provider': 'huggingface'}}
+            elif '.config' in path_str or 'AppData' in path_str:
+                return {'embedding': {'provider': 'openai'}}
+            return {}
+        
+        explicit_overrides = {'embedding': {'provider': 'ollama', 'model': 'explicit-model'}}
+        
+        with patch('globule.config.manager.load_yaml_file', side_effect=mock_load_yaml):
+            manager = PydanticConfigManager(overrides=explicit_overrides)
+            
+            # Explicit override wins over all
+            assert manager.get('embedding.provider') == 'ollama'  # explicit value
+            assert manager.get('embedding.model') == 'explicit-model'  # explicit value
     
     def test_validation_error(self):
         """Test that invalid configuration raises ConfigValidationError."""

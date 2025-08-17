@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from globule.core.interfaces import IConfigManager
 from .models import GlobuleConfig
 from .errors import ConfigError, ConfigValidationError
-from .paths import system_config_path
+from .paths import system_config_path, user_config_path
 from .sources import load_yaml_file, deep_merge
 
 
@@ -18,8 +18,7 @@ class PydanticConfigManager(IConfigManager):
     """
     Configuration manager using Pydantic models with cascade resolution.
     
-    Currently implements: defaults + system file cascade.
-    Future versions will add user files and environment overrides.
+    Implements three-tier cascade: defaults → system file → user file → overrides.
     """
     
     def __init__(self, overrides: Optional[Dict[str, Any]] = None):
@@ -40,6 +39,10 @@ class PydanticConfigManager(IConfigManager):
             # Load and merge system configuration
             system_data = load_yaml_file(system_config_path())
             merged_data = deep_merge(defaults, system_data)
+            
+            # Load and merge user configuration
+            user_data = load_yaml_file(user_config_path())
+            merged_data = deep_merge(merged_data, user_data)
             
             # Apply explicit overrides if provided
             if overrides:
