@@ -1,10 +1,9 @@
 """
-Configuration management for Globule MVP.
+Legacy configuration compatibility layer for Phase 3 migration.
 
-Follows the simplified approach outlined in the MVP kickoff memo:
-- Single config.yaml in user's config directory
-- 3-4 simple, essential keys
-- No complex cascading or hot-reloading for MVP
+Provides backward compatibility for existing code that uses the old
+GlobuleConfig and get_config() patterns while transitioning to the
+new PydanticConfigManager system.
 """
 
 import os
@@ -13,81 +12,93 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, field
 
+from globule.config.manager import PydanticConfigManager
+
 
 @dataclass
 class GlobuleConfig:
-    """Main configuration for Globule"""
+    """
+    Legacy configuration class for backward compatibility.
     
-    # Storage settings
-    storage_path: str = field(default_factory=lambda: str(Path.home() / ".globule" / "data"))
+    This class provides the same interface as the old configuration system
+    but is backed by the new PydanticConfigManager.
+    """
     
-    # AI model settings  
-    default_embedding_model: str = "mxbai-embed-large"
-    default_parsing_model: str = "llama3.2:3b"
+    def __init__(self, config_manager: Optional[PydanticConfigManager] = None):
+        """Initialize with optional config manager."""
+        self._config_manager = config_manager or PydanticConfigManager()
     
-    # Ollama connection
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_timeout: int = 30
+    @property
+    def storage_path(self) -> str:
+        """Storage path from new config system."""
+        return self._config_manager.get('storage.path', ':memory:')
     
-    # Performance settings
-    embedding_cache_size: int = 1000
-    max_concurrent_requests: int = 5
+    @property 
+    def default_embedding_model(self) -> str:
+        """Default embedding model from new config system."""
+        return self._config_manager.get('embedding.model', 'mxbai-embed-large')
     
-    # Schema settings
-    default_schema: str = "default"
-    auto_schema_detection: bool = True
+    @property
+    def default_parsing_model(self) -> str:
+        """Default parsing model (legacy fallback)."""
+        return "llama3.2:3b"  # Not yet in Phase 3 config
+    
+    @property
+    def ollama_base_url(self) -> str:
+        """Ollama base URL from new config system."""
+        endpoint = self._config_manager.get('embedding.endpoint')
+        if endpoint:
+            return str(endpoint).rstrip('/')
+        return "http://localhost:11434"
+    
+    @property
+    def ollama_timeout(self) -> int:
+        """Ollama timeout (legacy fallback)."""
+        return 30  # Not yet in Phase 3 config
+    
+    @property
+    def embedding_cache_size(self) -> int:
+        """Embedding cache size (legacy fallback)."""
+        return 1000  # Not yet in Phase 3 config
+    
+    @property
+    def max_concurrent_requests(self) -> int:
+        """Max concurrent requests (legacy fallback)."""
+        return 5  # Not yet in Phase 3 config
+    
+    @property
+    def default_schema(self) -> str:
+        """Default schema (legacy fallback)."""
+        return "default"  # Not yet in Phase 3 config
+    
+    @property
+    def auto_schema_detection(self) -> bool:
+        """Auto schema detection (legacy fallback)."""
+        return True  # Not yet in Phase 3 config
     
     @classmethod
     def get_config_path(cls) -> Path:
         """Get the path to the configuration file"""
-        config_dir = Path.home() / ".globule"
-        config_dir.mkdir(exist_ok=True)
-        return config_dir / "config.yaml"
+        from globule.config.paths import user_config_path
+        return user_config_path()
     
     @classmethod
     def load(cls) -> "GlobuleConfig":
-        """Load configuration from file or create default"""
-        config_path = cls.get_config_path()
-        
-        if config_path.exists():
-            try:
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    data = yaml.safe_load(f) or {}
-                return cls(**data)
-            except Exception as e:
-                print(f"Warning: Could not load config from {config_path}: {e}")
-                print("Using default configuration.")
-        
-        # Create default config if none exists
-        config = cls()
-        config.save()
-        return config
+        """Load configuration using new config system"""
+        config_manager = PydanticConfigManager()
+        return cls(config_manager)
     
     def save(self) -> None:
-        """Save configuration to file"""
-        config_path = self.get_config_path()
-        config_path.parent.mkdir(exist_ok=True, parents=True)
-        
-        # Convert to dict for YAML serialization
-        data = {
-            'storage_path': self.storage_path,
-            'default_embedding_model': self.default_embedding_model,
-            'default_parsing_model': self.default_parsing_model,
-            'ollama_base_url': self.ollama_base_url,
-            'ollama_timeout': self.ollama_timeout,
-            'embedding_cache_size': self.embedding_cache_size,
-            'max_concurrent_requests': self.max_concurrent_requests,
-            'default_schema': self.default_schema,
-            'auto_schema_detection': self.auto_schema_detection,
-        }
-        
-        with open(config_path, 'w', encoding='utf-8') as f:
-            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+        """Save configuration (no-op for Phase 3)"""
+        # In Phase 3, configuration is managed by the PydanticConfigManager
+        # and saved through YAML files or environment variables
+        pass
     
     def get_storage_dir(self) -> Path:
         """Get the storage directory as a Path object"""
         path = Path(self.storage_path)
-        path.mkdir(exist_ok=True, parents=True)
+        if path != Path(':memory:'):
+            path.mkdir(exist_ok=True, parents=True)
         return path
 
 
@@ -96,7 +107,12 @@ _config: Optional[GlobuleConfig] = None
 
 
 def get_config() -> GlobuleConfig:
-    """Get the global configuration instance"""
+    """
+    Get the global configuration instance using Phase 3 config system.
+    
+    This function provides backward compatibility while using the new
+    PydanticConfigManager under the hood.
+    """
     global _config
     if _config is None:
         _config = GlobuleConfig.load()
