@@ -50,6 +50,32 @@ class EmbeddingResult(BaseModel):
     processing_time_ms: float = Field(..., ge=0.0, description="Time taken to generate embedding")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional provider-specific metadata")
 
+class ProcessedContent(BaseModel):
+    """
+    Contract for processor outputs - structured data from content analysis.
+    
+    This model ensures consistency across different processor types (text, image, audio, etc.)
+    while allowing flexible structured data extraction.
+    """
+    structured_data: Dict[str, Any] = Field(default_factory=dict, description="Extracted structured information")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Content-specific metadata (e.g., EXIF for images)")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Processing confidence score")
+    processor_type: str = Field(..., description="Type of processor that generated this content")
+    processing_time_ms: float = Field(..., ge=0.0, description="Time taken to process content")
+
+class StructuredQuery(BaseModel):
+    """
+    Contract for structured queries against storage manager.
+    
+    Enables high-performance queries for specific domains (e.g., valet workflow)
+    by querying indexed fields directly rather than full-text or vector search.
+    """
+    domain: str = Field(..., description="Query domain (e.g., 'valet', 'image', 'task')")
+    filters: Dict[str, Any] = Field(default_factory=dict, description="Field-specific filters")
+    limit: int = Field(default=10, ge=1, le=100, description="Maximum results to return")
+    sort_by: Optional[str] = Field(None, description="Field to sort results by")
+    sort_desc: bool = Field(True, description="Sort in descending order")
+
 class ProcessedGlobuleV1(BaseModel):
     """
     Represents a Globule after it has been processed by the orchestration engine.
