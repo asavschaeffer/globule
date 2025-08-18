@@ -13,7 +13,7 @@ import os
 import tempfile
 import sqlite3
 import time
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, AsyncMock
 from uuid import uuid4
 from datetime import datetime
 
@@ -43,8 +43,8 @@ class TestGlobuleOrchestrator:
     @pytest.fixture
     def mock_embedder(self):
         """Create a mock embedding provider."""
-        mock = Mock(spec=IEmbeddingAdapter)
-        mock.embed.return_value = [0.1, 0.2, 0.3, 0.4, 0.5]  # Mock embedding
+        mock = AsyncMock(spec=IEmbeddingAdapter)
+        mock.embed_single.return_value = Mock(embedding=[0.1, 0.2, 0.3, 0.4, 0.5], processing_time_ms=10.0)
         return mock
     
     @pytest.fixture
@@ -92,7 +92,7 @@ class TestGlobuleOrchestrator:
         
         # Verify providers were called
         mock_parser.parse.assert_called_once_with("This is a test thought about machine learning")
-        mock_embedder.embed.assert_called_once_with("This is a test thought about machine learning")
+        mock_embedder.embed_single.assert_called_once_with("This is a test thought about machine learning")
         
         # Verify result structure
         assert isinstance(result, ProcessedGlobuleV1)
@@ -116,14 +116,14 @@ class TestGlobuleOrchestrator:
         assert "Parser failed" in result.parsed_data["error"]
         
         # Embedder should still have been called
-        mock_embedder.embed.assert_called_once()
+        mock_embedder.embed_single.assert_called_once()
     
     @pytest.mark.asyncio
     async def test_process_handles_embedder_error(self, orchestrator, sample_globule, 
                                                 mock_parser, mock_embedder):
         """Test that process handles embedder errors gracefully."""
         # Make embedder raise an error
-        mock_embedder.embed.side_effect = Exception("Embedder failed")
+        mock_embedder.embed_single.side_effect = Exception("Embedder failed")
         
         result = await orchestrator.process(sample_globule)
         
@@ -390,10 +390,10 @@ class TestGlobuleOrchestrator:
             return {"title": "slow", "category": "test", "domain": "test"}
         
         def slow_embed_sync(text):
-            return [0.1, 0.2, 0.3]
+            return Mock(embedding=[0.1, 0.2, 0.3], processing_time_ms=10.0)
         
         mock_parser.parse.side_effect = slow_parse_sync
-        mock_embedder.embed.side_effect = slow_embed_sync
+        mock_embedder.embed_single.side_effect = slow_embed_sync
         
         start_time = time.time()
         await orchestrator.process(sample_globule)

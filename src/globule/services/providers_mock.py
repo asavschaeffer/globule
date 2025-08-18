@@ -11,7 +11,7 @@ from typing import Dict, Any, List
 from uuid import UUID
 
 from globule.core.interfaces import IParserProvider, IStorageManager
-from globule.core.models import ProcessedGlobuleV1
+from globule.core.models import ProcessedGlobuleV1, StructuredQuery
 from globule.core.errors import ParserError, StorageError
 
 # Import the proper mock embedding adapter
@@ -89,3 +89,33 @@ class MockStorageManager(IStorageManager):
             "headers": ["mock", "count"],
             "count": 1
         }
+    
+    async def query_structured(self, query: StructuredQuery) -> List[ProcessedGlobuleV1]:
+        """Mock structured query implementation."""
+        # Simple mock implementation - filter by domain and category
+        results = []
+        for globule in self._storage.values():
+            parsed_data = globule.parsed_data
+            
+            # Filter by domain if specified
+            if query.domain and parsed_data.get("domain") != query.domain:
+                continue
+            
+            # Filter by category if specified in filters
+            if query.filters and "category" in query.filters:
+                if parsed_data.get("category") != query.filters["category"]:
+                    continue
+            
+            # Filter by processor type if specified in filters
+            if query.filters and "processor_type" in query.filters:
+                provider_metadata = globule.provider_metadata or {}
+                if provider_metadata.get("processor_type") != query.filters["processor_type"]:
+                    continue
+            
+            results.append(globule)
+            
+            # Apply limit
+            if len(results) >= query.limit:
+                break
+        
+        return results

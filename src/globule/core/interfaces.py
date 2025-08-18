@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any
 from uuid import UUID
 
-from globule.core.models import GlobuleV1, ProcessedGlobuleV1, EmbeddingResult
+from globule.core.models import GlobuleV1, ProcessedGlobuleV1, EmbeddingResult, ProcessedContent, StructuredQuery
 from globule.core.errors import ParserError, EmbeddingError, StorageError
 
 class IParserProvider(ABC):
@@ -27,6 +27,63 @@ class IParserProvider(ABC):
             
         Raises:
             ParserError: If parsing fails.
+        """
+        pass
+
+class IProcessor(ABC):
+    """
+    Interface for content-specific processors that can handle different input types.
+    
+    Processors extend the parsing pipeline to handle multi-modal content (text, images, etc.)
+    Each processor declares its capability via can_process() and provides specialized processing.
+    """
+    
+    @abstractmethod
+    def can_process(self, globule: GlobuleV1) -> float:
+        """
+        Determine processing capability for given content.
+        
+        Uses content analysis similar to AdaptiveInputModule's content profiling
+        to determine if this processor can handle the input type.
+        
+        Args:
+            globule: The raw globule to evaluate.
+            
+        Returns:
+            Confidence score 0.0-1.0 indicating processing capability.
+            - 0.0: Cannot process this content
+            - >0.5: Can process with some confidence
+            - >0.9: High confidence for this content type
+        """
+        pass
+    
+    @abstractmethod
+    async def process(self, globule: GlobuleV1) -> ProcessedContent:
+        """
+        Process globule content and return structured data.
+        
+        Implementations should handle errors gracefully and include appropriate
+        metadata for the content type (e.g., EXIF for images, duration for audio).
+        
+        Args:
+            globule: The globule to process.
+            
+        Returns:
+            ProcessedContent with extracted structured data and metadata.
+            
+        Raises:
+            ParserError: If processing fails in a recoverable way.
+            RuntimeError: If processing fails due to system issues.
+        """
+        pass
+    
+    @abstractmethod
+    def get_processor_type(self) -> str:
+        """
+        Return the type identifier for this processor.
+        
+        Returns:
+            String identifier (e.g., 'text', 'image', 'audio').
         """
         pass
 
@@ -157,6 +214,25 @@ class IStorageManager(ABC):
 
         Returns:
             Dictionary containing query results and metadata.
+            
+        Raises:
+            StorageError: If query execution fails or query is invalid.
+        """
+        pass
+
+    @abstractmethod
+    async def query_structured(self, query: StructuredQuery) -> List[ProcessedGlobuleV1]:
+        """
+        Execute structured query for high-performance domain-specific searches.
+        
+        This method provides fast queries for specific domains (e.g., valet workflow)
+        by querying indexed fields directly, bypassing vector/full-text search.
+        
+        Args:
+            query: The structured query with domain, filters, and options.
+            
+        Returns:
+            List of ProcessedGlobules matching the query criteria.
             
         Raises:
             StorageError: If query execution fails or query is invalid.

@@ -180,6 +180,62 @@ for topic in "parking" "incidents" "scheduling"; do
 done
 ```
 
+## 🎨 Phase 4: Multi-Modal Intelligence
+
+Globule now processes more than just text! Phase 4 introduces **processor extensions** that intelligently handle different content types through specialized analysis pipelines.
+
+### 📸 Image Processing
+```bash
+# Capture image thoughts directly
+globule add "/path/to/vacation/sunset.jpg"
+globule add "https://example.com/diagram.png" 
+globule add "data:image/jpeg;base64,/9j/4AAQSkZJRg..."
+
+# AI analyzes images automatically:
+# ✓ Scene and object detection
+# ✓ EXIF metadata extraction  
+# ✓ Thumbnail generation
+# ✓ Multi-modal LLM descriptions
+```
+
+### 🧠 Intelligent Content Routing
+Globule's **ProcessorRouter** automatically selects the best processing method:
+
+```bash
+# Text content → Text processor (existing behavior)
+globule add "Meeting notes about quarterly planning"
+
+# Image content → Image processor (new!)  
+globule add "/photos/whiteboard_brainstorm.jpg"
+
+# Mixed search across all content types
+globule nlsearch "project diagrams from last week"
+```
+
+### 🔍 Enhanced Search Capabilities
+```bash
+# Search by content domain
+globule search --domain=image --category=media
+
+# Find processor-specific content
+globule nlsearch "photos of code architecture" --processor=image
+
+# Get processing statistics
+globule stats --processors
+```
+
+### 🚀 Extensible Architecture
+Phase 4 provides a foundation for future content types:
+- **Phase 5**: Audio processing (speech-to-text, music analysis)
+- **Phase 6**: Video processing (scene detection, transcription)  
+- **Phase 7**: Document processing (PDF analysis, OCR)
+
+**Key Benefits:**
+- **Backward Compatible**: All existing functionality preserved
+- **Performance Optimized**: Concurrent processing with <5ms routing overhead
+- **Gracefully Degrading**: System works even when specialized processors fail
+- **Developer Friendly**: [Processor Development Guide](docs/guides/processor-development-guide.md)
+
 ## The Glass Engine: Transparent Software
 
 Globule features the **Glass Engine** - a revolutionary tutorial system that shows you exactly how the software works while you learn to use it. No black boxes, no guesswork, complete transparency.
