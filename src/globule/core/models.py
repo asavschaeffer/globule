@@ -39,6 +39,17 @@ class GlobuleV1(BaseModel):
     # Optional context provided at capture time
     initial_context: Dict[str, Any] = Field(default_factory=dict)
 
+class EmbeddingResult(BaseModel):
+    """
+    Contract for embedding service results.
+    Ensures consistency and type safety for all embedding operations.
+    """
+    embedding: List[float] = Field(..., description="The vector embedding")
+    dimensions: int = Field(..., gt=0, description="Number of dimensions in the embedding")
+    model_name: str = Field(..., description="Name of the model used for embedding")
+    processing_time_ms: float = Field(..., ge=0.0, description="Time taken to generate embedding")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional provider-specific metadata")
+
 class ProcessedGlobuleV1(BaseModel):
     """
     Represents a Globule after it has been processed by the orchestration engine.

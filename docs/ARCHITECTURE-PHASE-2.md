@@ -1,8 +1,10 @@
 # Globule Architecture - Phase 2 Implementation
 
 **Date**: August 14, 2025  
-**Status**: Current Implementation  
+**Status**: Superseded by Phase 3  
 **Phase**: Phase 2 - The Adapter Layer Complete
+
+> **Note**: This document describes the Phase 2 implementation. For the current architecture, see [ARCHITECTURE-PHASE-3.md](ARCHITECTURE-PHASE-3.md) which includes the enhanced configuration system.
 
 ## Overview
 

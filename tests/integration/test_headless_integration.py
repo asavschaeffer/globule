@@ -11,7 +11,7 @@ from uuid import uuid4, UUID
 from typing import List, Dict, Any
 
 from globule.core.models import GlobuleV1, ProcessedGlobuleV1
-from globule.core.interfaces import IOrchestrationEngine, IParserProvider, IEmbeddingProvider, IStorageManager
+from globule.core.interfaces import IOrchestrationEngine, IParserProvider, IEmbeddingAdapter, IStorageManager
 from globule.core.errors import ParserError, EmbeddingError, StorageError
 
 # Import the actual orchestrator and mock providers
@@ -25,7 +25,7 @@ class NoOpParser(IParserProvider):
     async def parse(self, text: str) -> dict:
         return {"status": "parsed_by_noop", "original_length": len(text)}
 
-class NoOpEmbedder(IEmbeddingProvider):
+class NoOpEmbedder(IEmbeddingAdapter):
     async def embed(self, text: str) -> list[float]:
         return [0.0] * 10  # Return a dummy embedding
 
@@ -63,7 +63,7 @@ class NoOpOrchestrationEngine(IOrchestrationEngine):
     def __init__(
         self,
         parser: IParserProvider,
-        embedder: IEmbeddingProvider,
+        embedder: IEmbeddingAdapter,
         storage: IStorageManager
     ):
         self.parser = parser

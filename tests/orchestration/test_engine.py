@@ -20,7 +20,7 @@ from datetime import datetime
 from globule.orchestration.engine import GlobuleOrchestrator
 from globule.services.providers_mock import MockParserProvider, MockEmbeddingProvider, MockStorageManager
 from globule.core.models import GlobuleV1, ProcessedGlobuleV1
-from globule.core.interfaces import IOrchestrationEngine, IParserProvider, IEmbeddingProvider, IStorageManager
+from globule.core.interfaces import IOrchestrationEngine, IParserProvider, IEmbeddingAdapter, IStorageManager
 from globule.core.errors import ParserError, EmbeddingError, StorageError
 
 
@@ -43,7 +43,7 @@ class TestGlobuleOrchestrator:
     @pytest.fixture
     def mock_embedder(self):
         """Create a mock embedding provider."""
-        mock = Mock(spec=IEmbeddingProvider)
+        mock = Mock(spec=IEmbeddingAdapter)
         mock.embed.return_value = [0.1, 0.2, 0.3, 0.4, 0.5]  # Mock embedding
         return mock
     
