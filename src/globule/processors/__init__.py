@@ -11,5 +11,7 @@ Version: 4.0.0 (Multi-Modal Extensions)
 
 from .processor_adapter import ProcessorAdapter
 from .image_processor import ImageProcessor
+from .processor_router import ProcessorRouter
+from .processor_factory import ProcessorFactory
 
-__all__ = ['ProcessorAdapter', 'ImageProcessor']
+__all__ = ['ProcessorAdapter', 'ImageProcessor', 'ProcessorRouter', 'ProcessorFactory']

@@ -15,7 +15,7 @@ from uuid import UUID
 from datetime import datetime
 
 from globule.core.interfaces import IOrchestrationEngine, IEmbeddingAdapter, IParserProvider, IStorageManager
-from globule.core.models import GlobuleV1, ProcessedGlobuleV1, FileDecisionV1, NuanceMetaDataV1
+from globule.core.models import GlobuleV1, ProcessedGlobuleV1, FileDecisionV1, NuanceMetaDataV1, ProcessedContent, StructuredQuery
 from globule.core.errors import ParserError, EmbeddingError, StorageError
 from pathlib import Path
 
@@ -33,10 +33,13 @@ class GlobuleOrchestrator(IOrchestrationEngine):
     def __init__(self, 
                  parser_provider: IParserProvider,
                  embedding_provider: IEmbeddingAdapter,
-                 storage_manager: IStorageManager):
+                 storage_manager: IStorageManager,
+                 processor_router=None):
         self.parser_provider = parser_provider
         self.embedding_provider = embedding_provider  
         self.storage_manager = storage_manager
+        # Processor router for Phase 4 multi-modal support (optional for backward compatibility)
+        self.processor_router = processor_router
         
     async def process(self, globule: GlobuleV1) -> ProcessedGlobuleV1:
         """
@@ -50,16 +53,21 @@ class GlobuleOrchestrator(IOrchestrationEngine):
         logger.debug(f"Processing globule: {globule.raw_text[:50]}...")
         
         try:
-            # Launch embedding and parsing tasks concurrently
+            # Launch embedding, parsing, and processor tasks concurrently
             embedding_task = asyncio.create_task(self._generate_embedding(globule.raw_text))
             parsing_task = asyncio.create_task(self._parse_content(globule.raw_text))
             
-            # Wait for both to complete
-            embedding_result, parsing_result = await asyncio.gather(
-                embedding_task, parsing_task, return_exceptions=True
-            )
+            # Phase 4: Add processor routing if available
+            tasks = [embedding_task, parsing_task]
+            if self.processor_router:
+                processor_task = asyncio.create_task(self._process_with_router(globule))
+                tasks.append(processor_task)
+            
+            # Wait for all tasks to complete
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             
             # Handle embedding result
+            embedding_result = results[0]
             if isinstance(embedding_result, Exception):
                 logger.error(f"Embedding failed: {embedding_result}")
                 embedding = []
@@ -67,31 +75,55 @@ class GlobuleOrchestrator(IOrchestrationEngine):
                 embedding, _ = embedding_result
             
             # Handle parsing result  
+            parsing_result = results[1]
             if isinstance(parsing_result, Exception):
                 logger.error(f"Parsing failed: {parsing_result}")
                 parsed_data = {"error": str(parsing_result)}
             else:
                 parsed_data, _ = parsing_result
+                
+            # Handle processor result (Phase 4)
+            processor_result = None
+            if self.processor_router and len(results) > 2:
+                if isinstance(results[2], Exception):
+                    logger.warning(f"Processor routing failed: {results[2]}")
+                else:
+                    processor_result = results[2]
             
-            # Generate file decision from parsed data
-            file_decision = self._generate_file_decision(globule.raw_text, parsed_data)
+            # Generate file decision from parsed data or processor result
+            primary_data = parsed_data
+            if processor_result and processor_result.confidence > 0.5:
+                # Use processor result if it has high confidence
+                primary_data = processor_result.structured_data
+            
+            file_decision = self._generate_file_decision(globule.raw_text, primary_data)
             
             # Calculate total processing time
             total_time = (time.time() - start_time) * 1000
+            
+            # Build provider metadata with processor info
+            provider_metadata = {
+                "parser": self.parser_provider.__class__.__name__,
+                "embedder": self.embedding_provider.__class__.__name__,
+                "storage": self.storage_manager.__class__.__name__
+            }
+            
+            if processor_result:
+                provider_metadata.update({
+                    "processor_type": processor_result.processor_type,
+                    "processor_confidence": processor_result.confidence,
+                    "processor_time_ms": processor_result.processing_time_ms
+                })
             
             # Create processed globule
             processed_globule = ProcessedGlobuleV1(
                 globule_id=globule.globule_id,
                 original_globule=globule,
                 embedding=embedding,
-                parsed_data=parsed_data,
+                parsed_data=primary_data,
                 file_decision=file_decision,
                 processing_time_ms=total_time,
-                provider_metadata={
-                    "parser": self.parser_provider.__class__.__name__,
-                    "embedder": self.embedding_provider.__class__.__name__,
-                    "storage": self.storage_manager.__class__.__name__
-                }
+                provider_metadata=provider_metadata
             )
             
             logger.debug(f"Globule processed in {total_time:.1f}ms")
@@ -245,7 +277,57 @@ class GlobuleOrchestrator(IOrchestrationEngine):
             logger.error(f"Query execution failed: {e}")
             return {"type": "error", "query": query, "error": str(e)}
     
+    async def query_structured(self, query: StructuredQuery) -> List[ProcessedGlobuleV1]:
+        """
+        Execute structured query for high-performance domain-specific searches.
+        
+        This method provides Phase 4 support for querying processed content
+        by domain, processor type, and other structured fields.
+        
+        Args:
+            query: The structured query with domain, filters, and options.
+            
+        Returns:
+            List of ProcessedGlobules matching the query criteria.
+        """
+        try:
+            return await self.storage_manager.query_structured(query)
+        except StorageError as e:
+            logger.error(f"Structured query failed: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected structured query error: {e}")
+            return []
+    
+    async def get_processor_stats(self) -> Dict[str, Any]:
+        """
+        Get processor routing statistics and capabilities.
+        
+        Returns:
+            Dictionary with processor statistics and routing information.
+        """
+        if not self.processor_router:
+            return {"processors_enabled": False}
+        
+        return {
+            "processors_enabled": True,
+            "routing_stats": self.processor_router.get_routing_stats(),
+            "capabilities": self.processor_router.get_processor_capabilities()
+        }
+    
     # Internal helper methods
+    
+    async def _process_with_router(self, globule: GlobuleV1) -> ProcessedContent:
+        """
+        Process globule using processor router.
+        
+        Args:
+            globule: The globule to process.
+            
+        Returns:
+            ProcessedContent from the appropriate processor.
+        """
+        return await self.processor_router.route_and_process(globule)
     
     async def _generate_embedding(self, text: str) -> tuple:
         """Generate embedding and return (embedding, time_ms)"""
