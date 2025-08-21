@@ -1,25 +1,73 @@
 # Contributing to Globule
 
-Thank you for your interest in contributing to Globule! This document outlines the development process, commit conventions, and branching strategy to ensure a smooth and collaborative workflow.
+Thank you for your interest in contributing to Globule! We welcome contributions of all kinds, from bug fixes to new features and documentation improvements.
 
-## Branching Strategy
+## Project Philosophy
 
-We follow a phased development model centered around a main integration branch.
+Our goal is to build a powerful, flexible, and transparent tool for thought. We adhere to a few core principles:
 
-- **`main`**: This branch is always stable and represents the latest production-ready release. Direct pushes are prohibited.
-- **`headless-core`**: This is the primary integration branch for the ongoing refactoring effort. All feature branches are merged into this branch.
-- **Feature Branches**: All new work is done on feature branches, named according to the phase or feature being developed.
-  - Format: `feature/phase-X-short-description` (e.g., `feature/phase-0-foundations`)
-  - Branches are created from the latest `headless-core`.
+- **API-Driven Architecture:** The application is built around a clean, stable `GlobuleAPI`. All features are implemented at this layer first, and all UIs are simple clients of the API.
+- **Clarity and Simplicity:** We prefer clear, simple code over complex abstractions.
+- **Robustness:** We value comprehensive testing and robust error handling.
 
-## Development Workflow
+Before starting any major work, please review the [Architecture Guide](docs/architecture.md).
 
-1.  Create a feature branch from `headless-core`.
-2.  Make your changes, adhering to the coding standards and testing requirements.
-3.  Ensure all tests and CI checks pass.
-4.  Rebase your feature branch on the latest `headless-core` before creating a pull request.
-5.  Create a pull request from your feature branch to `headless-core`.
-6.  Once the PR is reviewed and approved, it will be merged using a non-fast-forward merge (`--no-ff`).
+## Setting Up the Development Environment
+
+1.  **Clone the Repository:**
+    ```bash
+    git clone https://github.com/asavschaeffer/globule.git
+    cd globule
+    ```
+
+2.  **Create a Virtual Environment:**
+    We strongly recommend using a virtual environment to manage dependencies.
+    ```bash
+    python -m venv .venv
+    source .venv/bin/activate  # On Windows, use `.venv\Scripts\activate`
+    ```
+
+3.  **Install Dependencies:**
+    Install the base package in editable mode, along with all development and optional dependencies.
+    ```bash
+    pip install -e .[dev,clustering]
+    ```
+
+4.  **Set Up Ollama:**
+    Globule depends on a running Ollama instance for its AI capabilities. Please [download and install Ollama](https://ollama.com/) for your platform.
+
+    Once installed, you must pull the models required by the application:
+    ```bash
+    ollama pull <embedding_model_name>  # See pyproject.toml for model names
+    ollama pull <parsing_model_name>   # See pyproject.toml for model names
+    ```
+    Ensure the Ollama application is running before you start Globule.
+
+## Running Tests
+
+We use `pytest` for testing. To run the full test suite:
+
+```bash
+pytest
+```
+
+## Code Style and Quality
+
+We use a few tools to maintain code quality. Please run them before submitting a pull request.
+
+-   **Formatting (`black` and `isort`):**
+    ```bash
+    black .
+    isort .
+    ```
+-   **Linting (`ruff`):**
+    ```bash
+    ruff check .
+    ```
+-   **Type Checking (`mypy`):**
+    ```bash
+    mypy src
+    ```
 
 ## Commit Message Convention
 
@@ -27,18 +75,18 @@ We adhere to the [Conventional Commits](https://www.conventionalcommits.org/en/v
 
 The format is `type(scope): message`.
 
-- **Types**: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `style`, `ci`, `perf`
-- **Scope**: The part of the codebase affected (e.g., `core`, `models`, `tui`, `ci`).
+-   **Types**: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `style`, `ci`, `perf`
+-   **Scope**: The part of the codebase affected (e.g., `core`, `api`, `tui`, `ci`).
 
 **Examples:**
-- `feat(models): add Pydantic models for Globule and ProcessedGlobule`
-- `test(interfaces): add compliance tests for dummy provider implementations`
-- `docs(adr): create ADR-0001 for contracts-first architecture`
+-   `feat(api): add method for natural language search`
+-   `fix(tui): correct off-by-one error in palette display`
+-   `docs(schemas): create new schema authoring guide`
 
-## Coding Standards
+## Submitting Changes
 
-- **Formatting**: We use `black` for code formatting.
-- **Linting**: We use `ruff` for linting.
-- **Type Checking**: We use `mypy` for static type analysis.
-
-Please ensure your contributions are formatted and pass all linter and type checks before submitting.
+1.  Create a new feature branch from the `main` branch.
+2.  Make your changes on the feature branch.
+3.  Ensure all tests and quality checks pass.
+4.  Push your branch and open a pull request against the `main` branch.
+5.  Provide a clear description of your changes in the pull request.
