@@ -197,3 +197,51 @@ class GlobuleAPI:
             min_globules=5
         )
         return analysis
+
+    async def natural_language_query(self, question: str) -> List[Dict[str, Any]]:
+        """
+        Takes a natural language question, converts it to SQL, executes it,
+        and returns the result.
+
+        Args:
+            question: The user's natural language question.
+
+        Returns:
+            The result of the SQL query as a list of dictionaries.
+        """
+        # 1. Get the database schema to provide context to the LLM.
+        db_schema = await self.storage.get_table_schema('globules')
+
+        # 2. Use the parser to convert the question to a SQL query.
+        sql_query = await self.orchestrator.parser_provider.text_to_sql(question, db_schema)
+
+        # 3. Execute the generated SQL query.
+        result = await self.storage.execute_raw_query(sql_query)
+
+        return result
+
+    # === Skeleton Management ===
+
+    def list_skeletons(self) -> List[Dict[str, Any]]:
+        """Lists all available canvas skeleton templates."""
+        skeletons = self.layout_engine.list_skeletons()
+        return [s.to_dict() for s in skeletons] # Assuming CanvasSkeleton has a to_dict method
+
+    def apply_skeleton(self, name: str, query_data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Applies a skeleton template to create a new canvas layout."""
+        # A default query_data if none is provided
+        if query_data is None:
+            from datetime import datetime
+            query_data = {'query': f'Applied template {name}', 'timestamp': datetime.now().isoformat()}
+        
+        modules = self.layout_engine.apply_skeleton_to_canvas(name, query_data)
+        # Assuming CanvasModule has a to_dict method or can be represented as a dict
+        return [module.__dict__ for module in modules]
+
+    def get_skeleton_stats(self) -> Dict[str, Any]:
+        """Gets statistics about skeleton templates."""
+        return self.layout_engine.get_skeleton_stats()
+
+    def create_default_skeletons(self) -> List[str]:
+        """Creates default skeleton templates for common use cases."""
+        return self.layout_engine.create_default_skeletons()

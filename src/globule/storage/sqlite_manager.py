@@ -783,3 +783,24 @@ class SQLiteStorageManager(IStorageManager):
             raise
         except Exception as e:
             raise StorageError(f"SQL query execution failed: {e}")
+
+    async def get_table_schema(self, table_name: str) -> str:
+        """Returns the CREATE TABLE statement for a given table."""
+        db = await self._get_connection()
+        async with db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table_name,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return row[0]
+            else:
+                raise StorageError(f"Table {table_name} not found.")
+
+    async def execute_raw_query(self, sql: str) -> List[Dict[str, Any]]:
+        """Executes a raw SQL query and returns the results as a list of dicts."""
+        db = await self._get_connection()
+        try:
+            async with db.execute(sql) as cursor:
+                rows = await cursor.fetchall()
+                columns = [description[0] for description in cursor.description]
+                return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            raise StorageError(f"Raw SQL query failed: {e}")

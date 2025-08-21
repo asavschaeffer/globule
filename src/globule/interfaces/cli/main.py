@@ -125,7 +125,6 @@ async def add(ctx: click.Context, text: str) -> None:
         try:
             await context.initialize(verbose)
             click.echo("Processing your thought...")
-            # The core logic is now in the API
             processed_globule = await context.api.add_thought(text, source="cli")
             click.echo(f"Thought captured with ID: {processed_globule.globule_id}")
 
@@ -169,17 +168,16 @@ async def draft(ctx: click.Context, topic: str, limit: int, output: Optional[str
                 else:
                     click.echo(f"Error exporting draft to: {output}", err=True)
             else:
-                click.echo("\n--- Draft Content ---\n")
+                click.echo("\n--- Draft Content ---\
+")
                 click.echo(draft_content)
             return
 
-        # For TUI and Web, the frontend manager will now be responsible.
-        # We will pass the API instance to it.
         launch_kwargs = {
             'topic': topic,
             'limit': limit,
             'output': output,
-            'api': context.api  # Pass the API to the frontend
+            'api': context.api
         }
         if frontend_type == FrontendType.WEB:
             launch_kwargs.update({'port': port, 'host': host})
@@ -191,7 +189,6 @@ async def draft(ctx: click.Context, topic: str, limit: int, output: Optional[str
             raise click.Abort()
 
         click.echo(f"[SUCCESS] {result['message']}")
-        # ... (rest of the web server monitoring logic can be added back if needed)
 
 
 @click.command()
@@ -218,10 +215,6 @@ async def search(ctx: click.Context, query: str, limit: int, verbose: bool) -> N
                 click.echo(f"   ID: {globule.globule_id}")
                 click.echo(f"   Created: {globule.processed_timestamp}")
 
-
-# ... (other commands like 'cluster', 'reconcile', etc. can be refactored similarly)
-
-# A simplified reconcile command
 @click.command()
 @click.pass_context
 async def reconcile(ctx: click.Context) -> None:
@@ -234,37 +227,50 @@ async def reconcile(ctx: click.Context) -> None:
         for key, value in stats.items():
             click.echo(f"  {key.replace('_', ' ').title()}: {value}")
 
+@click.command()
+@click.argument('query', required=True)
+@click.pass_context
+async def nlsearch(ctx: click.Context, query: str) -> None:
+    """Ask a natural language question about your thoughts."""
+    verbose = ctx.obj.get('verbose', False)
+    async with ctx.obj['context'] as context:
+        await context.initialize(verbose)
+        click.echo(f"Answering question: '{query}'...")
+        try:
+            results = await context.api.natural_language_query(query)
+            if not results:
+                click.echo("Could not answer the question.")
+                return
+
+            from rich.table import Table
+            from rich.console import Console
+            table = Table(title=f"Result for: '{query}'")
+            headers = results[0].keys() if results else []
+            for header in headers:
+                table.add_column(header, justify="left")
+            for row in results:
+                table.add_row(*[str(item) for item in row.values()])
+            console = Console()
+            console.print(table)
+
+        except Exception as e:
+            click.echo(f"Error during natural language query: {e}", err=True)
 
 @click.command()
-@click.option('--mode', '-m', type=click.Choice(['interactive', 'demo', 'debug']),
-              default='demo', help='Glass Engine tutorial mode.')
+@click.option('--mode', '-m', type=click.Choice(['interactive', 'demo', 'debug']), default='demo', help='Glass Engine tutorial mode.')
 @click.pass_context
 async def tutorial(ctx: click.Context, mode: str) -> None:
     """Run the Glass Engine tutorial to see how Globule works."""
-    verbose = ctx.obj.get('verbose', False)
-    async with ctx.obj['context'] as context:
-        try:
-            # The Glass Engine runs in a temporary directory, so we don't initialize
-            # the main context. Instead, we will pass it a factory for a new API instance.
-            from globule.tutorial.glass_engine_core import run_glass_engine, GlassEngineMode
-            
-            click.echo(f"Starting Glass Engine in {mode} mode...")
-
-            mode_enum = GlassEngineMode[mode.upper()]
-            
-            # The glass engine will create its own isolated environment,
-            # but it needs to know how to construct an API instance.
-            # For now, we assume it handles its own setup and just trigger it.
-            # A future refactoring would have it accept the API directly.
-            await run_glass_engine(mode_enum)
-
-            click.echo(f"Glass Engine finished.")
-
-        except Exception as e:
-            logger.error(f"Failed to run Glass Engine tutorial: {e}")
-            click.echo(f"Error: {e}", err=True)
-            raise click.Abort()
-
+    from globule.tutorial.glass_engine_core import run_glass_engine, GlassEngineMode
+    click.echo(f"Starting Glass Engine in {mode} mode...")
+    try:
+        mode_enum = GlassEngineMode[mode.upper()]
+        await run_glass_engine(mode_enum)
+        click.echo(f"Glass Engine finished.")
+    except Exception as e:
+        logger.error(f"Failed to run Glass Engine tutorial: {e}")
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort()
 
 @click.command()
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed cluster analysis')
@@ -277,18 +283,17 @@ async def cluster(ctx: click.Context, verbose: bool, export: Optional[str]) -> N
         await context.initialize(verbose)
         click.echo("Analyzing semantic clusters in your thoughts...")
         analysis = await context.api.get_clusters()
-
         if not analysis.clusters:
             click.echo("No clusters found. Add more thoughts to enable clustering.")
             return
 
         click.echo(f"\nDiscovered {len(analysis.clusters)} semantic clusters:\n")
-        for i, cluster in enumerate(analysis.clusters, 1):
-            click.echo(f"{i}. {cluster.label} ({cluster.size} thoughts)")
+        for i, cluster_obj in enumerate(analysis.clusters, 1):
+            click.echo(f"{i}. {cluster_obj.label} ({cluster_obj.size} thoughts)")
             if verbose:
-                click.echo(f"   Description: {cluster.description}")
-                click.echo(f"   Keywords: {', '.join(cluster.keywords)}")
-                click.echo(f"   Confidence: {cluster.confidence_score:.2f}")
+                click.echo(f"   Description: {cluster_obj.description}")
+                click.echo(f"   Keywords: {', '.join(cluster_obj.keywords)}")
+                click.echo(f"   Confidence: {cluster_obj.confidence_score:.2f}")
         
         if export:
             import json
@@ -299,14 +304,67 @@ async def cluster(ctx: click.Context, verbose: bool, export: Optional[str]) -> N
             except Exception as e:
                 click.echo(f"\nError exporting to file: {e}", err=True)
 
-cli.add_command(add)
+@click.group()
+def skeleton():
+    """Manage canvas skeleton templates."""
+    pass
 
+@skeleton.command(name="list")
+@click.pass_context
+async def skeleton_list(ctx: click.Context):
+    """List all available skeleton templates."""
+    async with ctx.obj['context'] as context:
+        await context.initialize(ctx.obj.get('verbose', False))
+        skeletons = context.api.list_skeletons()
+        if not skeletons:
+            click.echo("No skeletons found.")
+            return
+        click.echo("Available Skeletons:")
+        for s in skeletons:
+            click.echo(f"- {s['name']}: {s['description']}")
+
+@skeleton.command(name="apply")
+@click.argument('name', required=True)
+@click.pass_context
+async def skeleton_apply(ctx: click.Context, name: str):
+    """Apply a skeleton template."""
+    async with ctx.obj['context'] as context:
+        await context.initialize(ctx.obj.get('verbose', False))
+        click.echo(f"Applying skeleton: {name}...")
+        modules = context.api.apply_skeleton(name)
+        click.echo("Generated Modules:")
+        for m in modules:
+            click.echo(f"- {m['name']}")
+
+@skeleton.command(name="stats")
+@click.pass_context
+async def skeleton_stats(ctx: click.Context):
+    """Show statistics about skeleton templates."""
+    async with ctx.obj['context'] as context:
+        await context.initialize(ctx.obj.get('verbose', False))
+        stats = context.api.get_skeleton_stats()
+        click.echo("Skeleton Stats:")
+        for key, value in stats.items():
+            click.echo(f"- {key.replace('_', ' ').title()}: {value}")
+
+@skeleton.command(name="create-defaults")
+@click.pass_context
+async def skeleton_create_defaults(ctx: click.Context):
+    """Create default skeleton templates."""
+    async with ctx.obj['context'] as context:
+        await context.initialize(ctx.obj.get('verbose', False))
+        created = context.api.create_default_skeletons()
+        click.echo(f"Created {len(created)} default skeletons: {', '.join(created)}")
+
+# Register all commands
+cli.add_command(add)
 cli.add_command(draft)
 cli.add_command(search)
 cli.add_command(reconcile)
 cli.add_command(tutorial)
-# ... (add other commands back as they are refactored)
-
+cli.add_command(cluster)
+cli.add_command(nlsearch)
+cli.add_command(skeleton)
 
 def main():
     """Entry point for the CLI."""
