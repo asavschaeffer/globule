@@ -92,6 +92,30 @@ async def demonstrate_retrieval_flow(console: Console, api: GlobuleAPI):
             table.add_row(str(globule.globule_id)[:8], globule.original_globule.raw_text[:80] + "...")
         console.print(table)
 
+async def demonstrate_clustering_flow(console: Console, api: GlobuleAPI):
+    console.print("\n" + Panel.fit(
+        "[bold orange1]🧠 Test: Clustering Analysis via API[/bold orange1]",
+        title="Glass Engine: Pattern Discovery"
+    ))
+    console.print(f"\n[bold]Action:[/bold] Calling `api.get_clusters()`")
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        progress.add_task("Analyzing thought patterns...", total=None)
+        clusters = await api.get_clusters()
+
+    console.print(f"[bold green]✅ API call complete. Found {len(clusters.clusters) if hasattr(clusters, 'clusters') else 0} clusters.[/bold green]")
+
+    if hasattr(clusters, 'clusters') and clusters.clusters:
+        table = Table(title="Discovered Thought Clusters")
+        table.add_column("Cluster", style="bold")
+        table.add_column("Theme", style="cyan")
+        table.add_column("Size", style="dim")
+        for i, cluster in enumerate(clusters.clusters[:3], 1):  # Show top 3
+            table.add_row(f"#{i}", cluster.label, f"{cluster.size} thoughts")
+        console.print(table)
+    else:
+        console.print("[dim]No clusters found - need more diverse thoughts to enable clustering.[/dim]")
+
 def show_final_summary(console: Console):
     console.print("\n" + Panel.fit(
         "[bold green]✅ Demo Complete![/bold green]\n\n" +
