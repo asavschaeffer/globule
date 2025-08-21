@@ -39,19 +39,38 @@ class OllamaEmbeddingAdapter(BaseEmbeddingAdapter):
             raise EmbeddingError(f"Ollama embedding provider failed: {e}") from e
     
     async def batch_embed(self, texts: List[str]) -> List[EmbeddingResult]:
-        """Generate embeddings for multiple texts efficiently."""
-        # For now, process sequentially. Could be optimized later if Ollama supports batch operations
-        results = []
-        for text in texts:
-            result = await self.embed_single(text)
-            results.append(result)
-        return results
+        """Generate embeddings for multiple texts efficiently using the provider's batch support."""
+        start_time = time.time()
+        try:
+            embedding_vectors = await self._provider.embed_batch(texts)
+            
+            processing_time = (time.time() - start_time) * 1000
+            
+            results = []
+            for vector in embedding_vectors:
+                # Handle both numpy arrays and lists
+                if hasattr(vector, 'tolist'):
+                    vector = vector.tolist()
+                
+                results.append(EmbeddingResult(
+                    embedding=vector,
+                    dimensions=len(vector),
+                    model_name=self.get_model_name(),
+                    processing_time_ms=processing_time / len(embedding_vectors), # Distribute total time
+                    metadata={
+                        "provider": "ollama",
+                        "batch_size": len(texts)
+                    }
+                ))
+            return results
+        except Exception as e:
+            raise EmbeddingError(f"Ollama batch embedding failed: {e}") from e
     
     def get_dimensions(self) -> int:
-        """Return the embedding dimensions for this model."""
-        # This would ideally be cached or retrieved from model info
-        # For now, we'll use a reasonable default based on common Ollama models
-        return 1024  # Common dimension for many embedding models
+        """Return the embedding dimensions for this model by asking the provider."""
+        # Defer to the provider, which caches the dimension after the first call.
+        # This is more robust than a hardcoded value.
+        return self._provider.get_dimension()
     
     def get_model_name(self) -> str:
         """Return the name of the embedding model being used."""
