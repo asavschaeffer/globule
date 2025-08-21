@@ -235,10 +235,42 @@ async def reconcile(ctx: click.Context) -> None:
             click.echo(f"  {key.replace('_', ' ').title()}: {value}")
 
 
+@click.command()
+@click.option('--mode', '-m', type=click.Choice(['interactive', 'demo', 'debug']),
+              default='demo', help='Glass Engine tutorial mode.')
+@click.pass_context
+async def tutorial(ctx: click.Context, mode: str) -> None:
+    """Run the Glass Engine tutorial to see how Globule works."""
+    verbose = ctx.obj.get('verbose', False)
+    async with ctx.obj['context'] as context:
+        try:
+            # The Glass Engine runs in a temporary directory, so we don't initialize
+            # the main context. Instead, we will pass it a factory for a new API instance.
+            from globule.tutorial.glass_engine_core import run_glass_engine, GlassEngineMode
+            
+            click.echo(f"Starting Glass Engine in {mode} mode...")
+
+            mode_enum = GlassEngineMode[mode.upper()]
+            
+            # The glass engine will create its own isolated environment,
+            # but it needs to know how to construct an API instance.
+            # For now, we assume it handles its own setup and just trigger it.
+            # A future refactoring would have it accept the API directly.
+            await run_glass_engine(mode_enum)
+
+            click.echo(f"Glass Engine finished.")
+
+        except Exception as e:
+            logger.error(f"Failed to run Glass Engine tutorial: {e}")
+            click.echo(f"Error: {e}", err=True)
+            raise click.Abort()
+
+
 cli.add_command(add)
 cli.add_command(draft)
 cli.add_command(search)
 cli.add_command(reconcile)
+cli.add_command(tutorial)
 # ... (add other commands back as they are refactored)
 
 
