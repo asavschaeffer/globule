@@ -1,0 +1,13 @@
+refactor: Decouple UI and services via unified GlobuleAPI
+
+Introduces a new `GlobuleAPI` layer to serve as a single, clean interface for all application features.
+
+Refactors the TUI to be a pure presentation layer, removing all business logic, data access, and direct service calls. The TUI is now a client of the `GlobuleAPI`.
+
+Refactors all CLI commands (`add`, `draft`, `cluster`, `nlsearch`, etc.) to use the `GlobuleAPI`, ensuring consistent behavior and separation of concerns.
+
+Decouples services like `SemanticClusteringEngine` from the storage layer. These services now operate on data passed to them by the API.
+
+Fixes a performance bug in the embedding service by implementing true batch processing.
+
+This architectural refactoring significantly improves modularity, maintainability, and testability, and resolves the major structural issues in the codebase.
