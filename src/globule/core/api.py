@@ -138,7 +138,8 @@ class GlobuleAPI:
             
             return text[:200] + "..." if len(text) > 200 else text
             
-        except Exception:
+        except ParserError as e:
+            logger.warning(f"Summarization failed due to parser error: {e}. Falling back to truncation.")
             # Fallback to simple truncation
             return text[:200] + "..." if len(text) > 200 else text
 

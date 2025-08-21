@@ -4,6 +4,7 @@ from globule.core.interfaces import BaseEmbeddingAdapter
 from globule.core.models import EmbeddingResult
 from globule.core.errors import EmbeddingError
 from .ollama_provider import OllamaEmbeddingProvider
+from aiohttp import ClientError
 import numpy as np
 
 
@@ -35,7 +36,7 @@ class OllamaEmbeddingAdapter(BaseEmbeddingAdapter):
                     "timeout": self._provider.timeout
                 }
             )
-        except Exception as e:
+        except (RuntimeError, ClientError) as e:
             raise EmbeddingError(f"Ollama embedding provider failed: {e}") from e
     
     async def batch_embed(self, texts: List[str]) -> List[EmbeddingResult]:
@@ -63,7 +64,7 @@ class OllamaEmbeddingAdapter(BaseEmbeddingAdapter):
                     }
                 ))
             return results
-        except Exception as e:
+        except (RuntimeError, ClientError) as e:
             raise EmbeddingError(f"Ollama batch embedding failed: {e}") from e
     
     def get_dimensions(self) -> int:

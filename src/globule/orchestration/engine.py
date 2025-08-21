@@ -51,87 +51,82 @@ class GlobuleOrchestrator(IOrchestrationEngine):
         start_time = time.time()
         
         logger.debug(f"Processing globule: {globule.raw_text[:50]}...")
+
+        # Launch embedding, parsing, and processor tasks concurrently
+        embedding_task = asyncio.create_task(self._generate_embedding(globule.raw_text))
+        parsing_task = asyncio.create_task(self._parse_content(globule.raw_text))
         
-        try:
-            # Launch embedding, parsing, and processor tasks concurrently
-            embedding_task = asyncio.create_task(self._generate_embedding(globule.raw_text))
-            parsing_task = asyncio.create_task(self._parse_content(globule.raw_text))
+        # Phase 4: Add processor routing if available
+        tasks = [embedding_task, parsing_task]
+        if self.processor_router:
+            processor_task = asyncio.create_task(self._process_with_router(globule))
+            tasks.append(processor_task)
+        
+        # Wait for all tasks to complete
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Handle embedding result
+        embedding_result = results[0]
+        if isinstance(embedding_result, Exception):
+            logger.error(f"Embedding failed: {embedding_result}")
+            embedding = []
+        else:
+            embedding, _ = embedding_result
+        
+        # Handle parsing result  
+        parsing_result = results[1]
+        if isinstance(parsing_result, Exception):
+            logger.error(f"Parsing failed: {parsing_result}")
+            parsed_data = {"error": str(parsing_result)}
+        else:
+            parsed_data, _ = parsing_result
             
-            # Phase 4: Add processor routing if available
-            tasks = [embedding_task, parsing_task]
-            if self.processor_router:
-                processor_task = asyncio.create_task(self._process_with_router(globule))
-                tasks.append(processor_task)
-            
-            # Wait for all tasks to complete
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Handle embedding result
-            embedding_result = results[0]
-            if isinstance(embedding_result, Exception):
-                logger.error(f"Embedding failed: {embedding_result}")
-                embedding = []
+        # Handle processor result (Phase 4)
+        processor_result = None
+        if self.processor_router and len(results) > 2:
+            if isinstance(results[2], Exception):
+                logger.warning(f"Processor routing failed: {results[2]}")
             else:
-                embedding, _ = embedding_result
-            
-            # Handle parsing result  
-            parsing_result = results[1]
-            if isinstance(parsing_result, Exception):
-                logger.error(f"Parsing failed: {parsing_result}")
-                parsed_data = {"error": str(parsing_result)}
-            else:
-                parsed_data, _ = parsing_result
-                
-            # Handle processor result (Phase 4)
-            processor_result = None
-            if self.processor_router and len(results) > 2:
-                if isinstance(results[2], Exception):
-                    logger.warning(f"Processor routing failed: {results[2]}")
-                else:
-                    processor_result = results[2]
-            
-            # Generate file decision from parsed data or processor result
-            primary_data = parsed_data
-            if processor_result and processor_result.confidence > 0.5:
-                # Use processor result if it has high confidence
-                primary_data = processor_result.structured_data
-            
-            file_decision = self._generate_file_decision(globule.raw_text, primary_data)
-            
-            # Calculate total processing time
-            total_time = (time.time() - start_time) * 1000
-            
-            # Build provider metadata with processor info
-            provider_metadata = {
-                "parser": self.parser_provider.__class__.__name__,
-                "embedder": self.embedding_provider.__class__.__name__,
-                "storage": self.storage_manager.__class__.__name__
-            }
-            
-            if processor_result:
-                provider_metadata.update({
-                    "processor_type": processor_result.processor_type,
-                    "processor_confidence": processor_result.confidence,
-                    "processor_time_ms": processor_result.processing_time_ms
-                })
-            
-            # Create processed globule
-            processed_globule = ProcessedGlobuleV1(
-                globule_id=globule.globule_id,
-                original_globule=globule,
-                embedding=embedding,
-                parsed_data=primary_data,
-                file_decision=file_decision,
-                processing_time_ms=total_time,
-                provider_metadata=provider_metadata
-            )
-            
-            logger.debug(f"Globule processed in {total_time:.1f}ms")
-            return processed_globule
-            
-        except Exception as e:
-            logger.error(f"Orchestration failed: {e}")
-            raise
+                processor_result = results[2]
+        
+        # Generate file decision from parsed data or processor result
+        primary_data = parsed_data
+        if processor_result and processor_result.confidence > 0.5:
+            # Use processor result if it has high confidence
+            primary_data = processor_result.structured_data
+        
+        file_decision = self._generate_file_decision(globule.raw_text, primary_data)
+        
+        # Calculate total processing time
+        total_time = (time.time() - start_time) * 1000
+        
+        # Build provider metadata with processor info
+        provider_metadata = {
+            "parser": self.parser_provider.__class__.__name__,
+            "embedder": self.embedding_provider.__class__.__name__,
+            "storage": self.storage_manager.__class__.__name__
+        }
+        
+        if processor_result:
+            provider_metadata.update({
+                "processor_type": processor_result.processor_type,
+                "processor_confidence": processor_result.confidence,
+                "processor_time_ms": processor_result.processing_time_ms
+            })
+        
+        # Create processed globule
+        processed_globule = ProcessedGlobuleV1(
+            globule_id=globule.globule_id,
+            original_globule=globule,
+            embedding=embedding,
+            parsed_data=primary_data,
+            file_decision=file_decision,
+            processing_time_ms=total_time,
+            provider_metadata=provider_metadata
+        )
+        
+        logger.debug(f"Globule processed in {total_time:.1f}ms")
+        return processed_globule
     
     # Business Logic Methods (extracted from TUI)
     
@@ -209,20 +204,25 @@ class GlobuleOrchestrator(IOrchestrationEngine):
             with open(filepath, 'w', encoding='utf-8') as f:
                 # Add metadata frontmatter if available
                 if metadata or topic:
-                    f.write("---\n")
+                    f.write("---\
+")
                     if metadata:
                         for key, value in metadata.items():
-                            f.write(f"{key}: {value}\n")
+                            f.write(f"{key}: {value}\
+")
                     if topic:
-                        f.write(f"topic: {topic}\n")
-                    f.write(f"generated: {datetime.now().isoformat()}\n")
-                    f.write("---\n\n")
+                        f.write(f"topic: {topic}\
+")
+                    f.write(f"generated: {datetime.now().isoformat()}\
+")
+                    f.write("---\
+\n")
                 f.write(content)
             
             logger.info(f"Draft saved to {filepath}")
             return filepath
             
-        except Exception as e:
+        except (IOError, OSError) as e:
             logger.error(f"Failed to save draft: {e}")
             raise
     
