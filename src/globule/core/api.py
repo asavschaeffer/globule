@@ -170,3 +170,30 @@ class GlobuleAPI:
             return True
         except IOError:
             return False
+
+    async def get_clusters(self) -> Any:
+        """
+        Analyzes all globules and groups them into semantic clusters.
+
+        Returns:
+            A ClusteringAnalysis object containing the discovered clusters.
+        """
+        from ..services.clustering.semantic_clustering import SemanticClusteringEngine
+
+        all_globules = await self.get_all_globules(limit=1000)
+
+        # Filter for globules that are suitable for clustering
+        clusterable_globules = []
+        for globule in all_globules:
+            # This logic is moved from the engine to the API layer
+            if (hasattr(globule, 'embedding') and globule.embedding and
+                hasattr(globule, 'embedding_confidence') and globule.embedding_confidence > 0.5 and
+                len(globule.original_globule.raw_text.strip()) > 10):
+                clusterable_globules.append(globule)
+
+        clustering_engine = SemanticClusteringEngine()
+        analysis = await clustering_engine.analyze_semantic_clusters(
+            globules=clusterable_globules,
+            min_globules=5
+        )
+        return analysis

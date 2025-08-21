@@ -266,7 +266,41 @@ async def tutorial(ctx: click.Context, mode: str) -> None:
             raise click.Abort()
 
 
+@click.command()
+@click.option('--verbose', '-v', is_flag=True, help='Show detailed cluster analysis')
+@click.option('--export', '-e', help='Export results to JSON file')
+@click.pass_context
+async def cluster(ctx: click.Context, verbose: bool, export: Optional[str]) -> None:
+    """Discover semantic clusters and themes in your thoughts."""
+    verbose = verbose or ctx.obj.get('verbose', False)
+    async with ctx.obj['context'] as context:
+        await context.initialize(verbose)
+        click.echo("Analyzing semantic clusters in your thoughts...")
+        analysis = await context.api.get_clusters()
+
+        if not analysis.clusters:
+            click.echo("No clusters found. Add more thoughts to enable clustering.")
+            return
+
+        click.echo(f"\nDiscovered {len(analysis.clusters)} semantic clusters:\n")
+        for i, cluster in enumerate(analysis.clusters, 1):
+            click.echo(f"{i}. {cluster.label} ({cluster.size} thoughts)")
+            if verbose:
+                click.echo(f"   Description: {cluster.description}")
+                click.echo(f"   Keywords: {', '.join(cluster.keywords)}")
+                click.echo(f"   Confidence: {cluster.confidence_score:.2f}")
+        
+        if export:
+            import json
+            try:
+                with open(export, 'w') as f:
+                    json.dump(analysis.to_dict(), f, indent=2)
+                click.echo(f"\nExported analysis to {export}")
+            except Exception as e:
+                click.echo(f"\nError exporting to file: {e}", err=True)
+
 cli.add_command(add)
+
 cli.add_command(draft)
 cli.add_command(search)
 cli.add_command(reconcile)
