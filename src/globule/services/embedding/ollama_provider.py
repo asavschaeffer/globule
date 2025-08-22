@@ -129,6 +129,52 @@ class OllamaEmbeddingProvider(IEmbeddingAdapter):
             return 1024
         return self._dimension
     
+    # Interface compliance methods
+    async def embed_single(self, text: str):
+        """Generate embedding for single text (interface compliance)"""
+        from globule.core.models import EmbeddingResult
+        import time
+        
+        start_time = time.time()
+        embedding = await self.embed(text)
+        processing_time_ms = (time.time() - start_time) * 1000
+        
+        return EmbeddingResult(
+            embedding=embedding.tolist(),
+            dimensions=len(embedding),
+            model_name=self.model,
+            processing_time_ms=processing_time_ms,
+            metadata={"provider": "ollama"}
+        )
+    
+    async def batch_embed(self, texts: List[str]):
+        """Generate embeddings for multiple texts (interface compliance)"""
+        from globule.core.models import EmbeddingResult
+        import time
+        
+        start_time = time.time()
+        embeddings = await self.embed_batch(texts)
+        processing_time_ms = (time.time() - start_time) * 1000
+        
+        results = []
+        for embedding in embeddings:
+            results.append(EmbeddingResult(
+                embedding=embedding.tolist(),
+                dimensions=len(embedding),
+                model_name=self.model,
+                processing_time_ms=processing_time_ms / len(texts),  # Distribute time across batch
+                metadata={"provider": "ollama"}
+            ))
+        return results
+    
+    def get_dimensions(self) -> int:
+        """Interface compliance method"""
+        return self.get_dimension()
+    
+    def get_model_name(self) -> str:
+        """Return the model name"""
+        return self.model
+    
     async def close(self) -> None:
         """Close HTTP session"""
         if self._session:

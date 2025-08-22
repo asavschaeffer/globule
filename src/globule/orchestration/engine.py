@@ -128,6 +128,25 @@ class GlobuleOrchestrator(IOrchestrationEngine):
         logger.debug(f"Globule processed in {total_time:.1f}ms")
         return processed_globule
     
+    async def process_globule(self, enriched_input) -> ProcessedGlobuleV1:
+        """
+        Process an enriched input into a processed globule.
+        
+        This method takes an EnrichedInput and converts it to a GlobuleV1 
+        before processing, maintaining compatibility with the existing API.
+        """
+        from globule.core.models import GlobuleV1
+        
+        # Convert EnrichedInput to GlobuleV1
+        globule = GlobuleV1(
+            raw_text=enriched_input.original_text,
+            source=enriched_input.source,
+            initial_context=enriched_input.additional_context
+        )
+        
+        # Use the existing process method
+        return await self.process(globule)
+    
     # Business Logic Methods (extracted from TUI)
     
     async def capture_thought(self, raw_text: str, source: str = "tui", 

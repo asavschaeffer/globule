@@ -28,7 +28,12 @@ class SQLiteStorageManager(IStorageManager):
     def __init__(self, db_path: Optional[Path] = None):
         self.config = get_config()
         if db_path is None:
-            db_path = self.config.get_storage_dir() / "globules.db"
+            storage_dir = self.config.get_storage_dir()
+            if str(storage_dir) == ':memory:':
+                # Use in-memory database for SQLite
+                db_path = Path(':memory:')
+            else:
+                db_path = storage_dir / "globules.db"
         self.db_path = db_path
         self._connection: Optional[aiosqlite.Connection] = None
         
@@ -804,3 +809,93 @@ class SQLiteStorageManager(IStorageManager):
                 return [dict(zip(columns, row)) for row in rows]
         except Exception as e:
             raise StorageError(f"Raw SQL query failed: {e}")
+
+    async def query_structured(self, query) -> List[ProcessedGlobuleV1]:
+        """
+        Execute structured query for high-performance domain-specific searches.
+        
+        This method provides fast queries for specific domains (e.g., valet workflow)
+        by querying indexed fields directly, bypassing vector/full-text search.
+        
+        Args:
+            query: StructuredQuery object containing domain and filter parameters
+            
+        Returns:
+            List of ProcessedGlobuleV1 objects matching the query criteria
+            
+        Raises:
+            StorageError: If query execution fails
+        """
+        from globule.core.models import StructuredQuery
+        
+        try:
+            db = await self._get_connection()
+            
+            # Build SQL query based on domain and filters
+            where_clauses = []
+            params = []
+            
+            # Add domain-specific filters
+            if query.domain and query.domain != "all":
+                # For now, map domain to a field in parsed_data
+                where_clauses.append("JSON_EXTRACT(parsed_data, '$.domain') = ?")
+                params.append(query.domain)
+            
+            # Add general filters
+            for field, value in query.filters.items():
+                if field == "text":
+                    where_clauses.append("text LIKE ?")
+                    params.append(f"%{value}%")
+                elif field == "created_after":
+                    where_clauses.append("created_at > ?")
+                    params.append(value)
+                elif field == "created_before":
+                    where_clauses.append("created_at < ?")
+                    params.append(value)
+                elif field == "confidence_threshold":
+                    where_clauses.append("embedding_confidence >= ?")
+                    params.append(value)
+                else:
+                    # Try to match in parsed_data JSON
+                    where_clauses.append(f"JSON_EXTRACT(parsed_data, '$.{field}') = ?")
+                    params.append(value)
+            
+            # Build WHERE clause
+            where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+            
+            # Build ORDER BY clause
+            order_by = "created_at"
+            if query.sort_by:
+                # Sanitize sort field
+                allowed_sort_fields = ["created_at", "modified_at", "embedding_confidence", "parsing_confidence"]
+                if query.sort_by in allowed_sort_fields:
+                    order_by = query.sort_by
+            
+            order_direction = "DESC" if query.sort_desc else "ASC"
+            
+            # Execute query
+            sql = f"""
+                SELECT id, text, embedding, embedding_confidence, parsed_data,
+                       parsing_confidence, file_path, orchestration_strategy,
+                       confidence_scores, processing_time_ms, semantic_neighbors,
+                       processing_notes, created_at, modified_at
+                FROM globules
+                WHERE {where_sql}
+                ORDER BY {order_by} {order_direction}
+                LIMIT ?
+            """
+            
+            params.append(query.limit)
+            
+            async with db.execute(sql, params) as cursor:
+                rows = await cursor.fetchall()
+                
+                results = []
+                for row in rows:
+                    globule = self._row_to_globule(row)
+                    results.append(globule)
+                
+                return results
+                
+        except Exception as e:
+            raise StorageError(f"Structured query failed: {e}")

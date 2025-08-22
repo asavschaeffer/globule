@@ -74,8 +74,12 @@ class GlobuleAPI:
         # Generate embedding for the query
         embedding_result = await self.orchestrator.embedding_provider.embed_single(query)
         
+        # Convert embedding to numpy array if needed
+        import numpy as np
+        embedding_array = np.array(embedding_result.embedding, dtype=np.float32)
+        
         # Search storage by embedding
-        results = await self.storage.search_by_embedding(embedding_result.embedding, limit)
+        results = await self.storage.search_by_embedding(embedding_array, limit)
         
         return [result[0] for result in results]  # Extract globules from (globule, similarity) tuples
 
