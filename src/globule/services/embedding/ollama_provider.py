@@ -85,14 +85,42 @@ class OllamaEmbeddingProvider(IEmbeddingAdapter):
             raise
     
     async def embed_batch(self, texts: List[str]) -> List[np.ndarray]:
-        """Generate embeddings for multiple texts"""
-        # For Phase 1, implement as sequential calls
-        # Phase 2 can optimize with true batch processing
-        embeddings = []
-        for text in texts:
-            embedding = await self.embed(text)
-            embeddings.append(embedding)
-        return embeddings
+        """Generate embeddings for multiple texts using a single batch request."""
+        session = await self._get_session()
+        
+        # Ollama's /api/embed endpoint supports batching by passing a list of strings.
+        payload = {
+            "model": self.model,
+            "input": [text.strip() for text in texts],
+            "truncate": True
+        }
+        
+        try:
+            async with session.post(
+                f"{self.base_url}/api/embed",
+                json=payload
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise RuntimeError(f"Ollama API error: {response.status} - {error_text}")
+                
+                data = await response.json()
+                
+                if "embeddings" in data and isinstance(data["embeddings"], list):
+                    embeddings = [np.array(e, dtype=np.float32) for e in data["embeddings"]]
+                    
+                    if self._dimension is None and embeddings:
+                        self._dimension = len(embeddings[0])
+                        
+                    return embeddings
+                else:
+                    raise RuntimeError(f"Invalid response format from Ollama for batch request: {data}")
+                    
+        except aiohttp.ClientError as e:
+            raise RuntimeError(f"Failed to connect to Ollama: {e}")
+        except Exception as e:
+            logger.error(f"Batch embedding generation failed: {e}")
+            raise
     
     def get_dimension(self) -> int:
         """Return embedding dimensionality"""
@@ -100,6 +128,52 @@ class OllamaEmbeddingProvider(IEmbeddingAdapter):
             # Default dimension for mxbai-embed-large
             return 1024
         return self._dimension
+    
+    # Interface compliance methods
+    async def embed_single(self, text: str):
+        """Generate embedding for single text (interface compliance)"""
+        from globule.core.models import EmbeddingResult
+        import time
+        
+        start_time = time.time()
+        embedding = await self.embed(text)
+        processing_time_ms = (time.time() - start_time) * 1000
+        
+        return EmbeddingResult(
+            embedding=embedding.tolist(),
+            dimensions=len(embedding),
+            model_name=self.model,
+            processing_time_ms=processing_time_ms,
+            metadata={"provider": "ollama"}
+        )
+    
+    async def batch_embed(self, texts: List[str]):
+        """Generate embeddings for multiple texts (interface compliance)"""
+        from globule.core.models import EmbeddingResult
+        import time
+        
+        start_time = time.time()
+        embeddings = await self.embed_batch(texts)
+        processing_time_ms = (time.time() - start_time) * 1000
+        
+        results = []
+        for embedding in embeddings:
+            results.append(EmbeddingResult(
+                embedding=embedding.tolist(),
+                dimensions=len(embedding),
+                model_name=self.model,
+                processing_time_ms=processing_time_ms / len(texts),  # Distribute time across batch
+                metadata={"provider": "ollama"}
+            ))
+        return results
+    
+    def get_dimensions(self) -> int:
+        """Interface compliance method"""
+        return self.get_dimension()
+    
+    def get_model_name(self) -> str:
+        """Return the model name"""
+        return self.model
     
     async def close(self) -> None:
         """Close HTTP session"""

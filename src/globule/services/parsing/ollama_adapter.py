@@ -11,5 +11,5 @@ class OllamaParsingAdapter(IParserProvider):
         try:
             result = await self._provider.parse(text)
             return result
-        except Exception as e:
+        except (JSONDecodeError, ValidationError, PydanticError, ClientError, RuntimeError) as e:
             raise ParserError(f"Ollama parsing provider failed: {e}") from e

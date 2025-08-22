@@ -26,7 +26,16 @@ class FileManager:
     
     def __init__(self):
         self.config = get_config()
-        self.base_path = self.config.get_storage_dir() / "files"
+        storage_dir = self.config.get_storage_dir()
+        
+        # Handle in-memory database case
+        if str(storage_dir) == ':memory:':
+            # Use a temporary directory for files when using in-memory database
+            import tempfile
+            self.base_path = Path(tempfile.gettempdir()) / "globule_temp_files"
+        else:
+            self.base_path = storage_dir / "files"
+        
         self.base_path.mkdir(parents=True, exist_ok=True)
     
     def save_globule_to_file(self, globule: ProcessedGlobuleV1) -> Path:

@@ -197,19 +197,7 @@ class SemanticClusteringEngine:
             self.logger.error(f"Clustering analysis failed: {e}")
             raise
 
-    async def _get_clusterable_globules(self) -> List[ProcessedGlobule]:
-        """Get all globules suitable for clustering."""
-        # Get recent globules with good quality embeddings
-        all_globules = await self.storage.get_recent_globules(limit=1000)
-        
-        clusterable = []
-        for globule in all_globules:
-            if (globule.embedding is not None and 
-                globule.embedding_confidence > 0.5 and
-                len(globule.text.strip()) > 10):  # Reasonable content length
-                clusterable.append(globule)
-        
-        return clusterable
+    
 
     def _prepare_clustering_data(
         self, 

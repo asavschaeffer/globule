@@ -1,30 +1,29 @@
 """
 Core Pydantic models for Globule, serving as versioned data contracts.
 """
-from pydantic import BaseModel, Field, constr
+from pydantic import BaseModel, Field, constr, ConfigDict
 from typing import List, Optional, Dict, Any, Literal
 from uuid import UUID, uuid4
 from datetime import datetime
 
-class BaseModel(BaseModel):
-    class Config:
-        arbitrary_types_allowed = True
+class BaseGlobuleModel(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 # Version 1 Contracts
 
-class NuanceMetaDataV1(BaseModel):
+class NuanceMetaDataV1(BaseGlobuleModel):
     """Metadata capturing nuances in text."""
     has_sarcasm: bool = False
     has_metaphor: bool = False
     sentiment_score: float = Field(0.0, ge=-1.0, le=1.0)
 
-class FileDecisionV1(BaseModel):
+class FileDecisionV1(BaseGlobuleModel):
     """Represents a file organization recommendation."""
     semantic_path: str
     filename: str
     confidence: float = Field(..., ge=0.0, le=1.0)
 
-class GlobuleV1(BaseModel):
+class GlobuleV1(BaseGlobuleModel):
     """
     Represents a single, unprocessed unit of information captured by the user.
     This is the raw input to the orchestration engine.
@@ -39,7 +38,7 @@ class GlobuleV1(BaseModel):
     # Optional context provided at capture time
     initial_context: Dict[str, Any] = Field(default_factory=dict)
 
-class EmbeddingResult(BaseModel):
+class EmbeddingResult(BaseGlobuleModel):
     """
     Contract for embedding service results.
     Ensures consistency and type safety for all embedding operations.
@@ -50,7 +49,7 @@ class EmbeddingResult(BaseModel):
     processing_time_ms: float = Field(..., ge=0.0, description="Time taken to generate embedding")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional provider-specific metadata")
 
-class ProcessedContent(BaseModel):
+class ProcessedContent(BaseGlobuleModel):
     """
     Contract for processor outputs - structured data from content analysis.
     
@@ -63,7 +62,7 @@ class ProcessedContent(BaseModel):
     processor_type: str = Field(..., description="Type of processor that generated this content")
     processing_time_ms: float = Field(..., ge=0.0, description="Time taken to process content")
 
-class StructuredQuery(BaseModel):
+class StructuredQuery(BaseGlobuleModel):
     """
     Contract for structured queries against storage manager.
     
@@ -76,7 +75,21 @@ class StructuredQuery(BaseModel):
     sort_by: Optional[str] = Field(None, description="Field to sort results by")
     sort_desc: bool = Field(True, description="Sort in descending order")
 
-class ProcessedGlobuleV1(BaseModel):
+class EnrichedInput(BaseGlobuleModel):
+    """
+    Represents enriched input to the orchestration engine.
+    Contains the original text along with additional context and metadata.
+    """
+    original_text: str = Field(..., description="The original raw text")
+    enriched_text: str = Field(..., description="The enriched/processed text")
+    detected_schema_id: Optional[str] = Field(None, description="Detected schema ID if any")
+    schema_config: Optional[Dict[str, Any]] = Field(None, description="Schema configuration")
+    additional_context: Dict[str, Any] = Field(default_factory=dict, description="Additional context")
+    source: str = Field(..., description="Source of the input (e.g., 'cli', 'tui', 'api')")
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Timestamp of input")
+    verbosity: str = Field("concise", description="Verbosity level for processing")
+
+class ProcessedGlobuleV1(BaseGlobuleModel):
     """
     Represents a Globule after it has been processed by the orchestration engine.
     This is the core data structure used throughout the system.

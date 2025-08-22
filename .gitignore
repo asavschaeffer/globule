@@ -213,3 +213,4 @@ __marimo__/
 repomix-output.xml
 repo-overview.xml
 docs/
+*.log
