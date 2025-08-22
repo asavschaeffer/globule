@@ -17,7 +17,7 @@ from globule.core.api import GlobuleAPI
 from globule.core.models import EnrichedInput, StructuredQuery
 from globule.storage.sqlite_manager import SQLiteStorageManager
 from globule.services.embedding.ollama_provider import OllamaEmbeddingProvider
-from globule.services.embedding.mock_provider import MockEmbeddingProvider
+from globule.services.embedding.mock_adapter import MockEmbeddingAdapter as MockEmbeddingProvider
 from globule.services.embedding.ollama_adapter import OllamaEmbeddingAdapter
 from globule.services.parsing.ollama_parser import OllamaParser
 from globule.services.parsing.ollama_adapter import OllamaParsingAdapter

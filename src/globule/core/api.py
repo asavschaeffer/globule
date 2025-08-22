@@ -222,6 +222,7 @@ class GlobuleAPI:
         return result
 
     # === Skeleton Management ===
+    # TODO: Initialize self.layout_engine in __init__ when layout engine is implemented
 
     def list_skeletons(self) -> List[Dict[str, Any]]:
         """Lists all available canvas skeleton templates."""
