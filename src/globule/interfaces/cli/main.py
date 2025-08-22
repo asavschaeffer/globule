@@ -6,13 +6,13 @@ command-line interface and the core application logic.
 """
 
 import asyncio
-import click
 import logging
 import sys
 from typing import Optional, Any
 
 import asyncclick as click
 
+from globule import __version__
 from globule.core.api import GlobuleAPI
 from globule.core.models import EnrichedInput, StructuredQuery
 from globule.storage.sqlite_manager import SQLiteStorageManager
@@ -21,7 +21,7 @@ from globule.services.embedding.mock_adapter import MockEmbeddingAdapter as Mock
 from globule.services.embedding.ollama_adapter import OllamaEmbeddingAdapter
 from globule.services.parsing.ollama_parser import OllamaParser
 from globule.services.parsing.ollama_adapter import OllamaParsingAdapter
-from globule.orchestration.engine import OrchestrationEngine
+from globule.orchestration.engine import GlobuleOrchestrator
 from globule.core.frontend_manager import frontend_manager, FrontendType
 from globule.config.settings import get_config
 from globule.schemas.manager import SchemaManager
@@ -77,7 +77,7 @@ class GlobuleContext:
         parsing_adapter = OllamaParsingAdapter(self._parsing_provider)
 
         # 4. Initialize Orchestrator
-        orchestrator = OrchestrationEngine(
+        orchestrator = GlobuleOrchestrator(
             embedding_provider=embedding_adapter,
             parser_provider=parsing_adapter,
             storage_manager=self._storage
@@ -103,7 +103,7 @@ class GlobuleContext:
 
 
 @click.group()
-@click.version_option(version="1.0.0")
+@click.version_option(version=__version__)
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.pass_context
 async def cli(ctx: click.Context, verbose: bool):
@@ -256,21 +256,8 @@ async def nlsearch(ctx: click.Context, query: str) -> None:
         except Exception as e:
             click.echo(f"Error during natural language query: {e}", err=True)
 
-@click.command()
-@click.option('--mode', '-m', type=click.Choice(['interactive', 'demo', 'debug']), default='demo', help='Glass Engine tutorial mode.')
-@click.pass_context
-async def tutorial(ctx: click.Context, mode: str) -> None:
-    """Run the Glass Engine tutorial to see how Globule works."""
-    from globule.tutorial.glass_engine_core import run_glass_engine, GlassEngineMode
-    click.echo(f"Starting Glass Engine in {mode} mode...")
-    try:
-        mode_enum = GlassEngineMode[mode.upper()]
-        await run_glass_engine(mode_enum)
-        click.echo(f"Glass Engine finished.")
-    except Exception as e:
-        logger.error(f"Failed to run Glass Engine tutorial: {e}")
-        click.echo(f"Error: {e}", err=True)
-        raise click.Abort()
+# Tutorial command removed - tutorials are now in examples/ directory
+# Run tutorials with: python examples/tutorials/glass_engine_core.py
 
 @click.command()
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed cluster analysis')
@@ -361,7 +348,6 @@ cli.add_command(add)
 cli.add_command(draft)
 cli.add_command(search)
 cli.add_command(reconcile)
-cli.add_command(tutorial)
 cli.add_command(cluster)
 cli.add_command(nlsearch)
 cli.add_command(skeleton)

@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from globule.tutorial.glass_engine_core import AbstractGlassEngine, GlassEngineMode
+from ..glass_engine_core import AbstractGlassEngine, GlassEngineMode
 from globule.core.models import EnrichedInput
 
 

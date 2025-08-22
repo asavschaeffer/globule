@@ -11,7 +11,7 @@ from uuid import UUID
 
 from .interfaces import IStorageManager
 from .models import ProcessedGlobuleV1, StructuredQuery
-from ..orchestration.engine import OrchestrationEngine
+from ..orchestration.engine import GlobuleOrchestrator
 from ..storage.file_manager import FileManager
 from ..storage.sqlite_manager import SQLiteStorageManager
 
@@ -20,7 +20,7 @@ class GlobuleAPI:
     The single point of entry for all frontend interactions.
     """
 
-    def __init__(self, storage: IStorageManager, orchestrator: OrchestrationEngine):
+    def __init__(self, storage: IStorageManager, orchestrator: GlobuleOrchestrator):
         self.storage = storage
         self.orchestrator = orchestrator
         self.file_manager = FileManager()

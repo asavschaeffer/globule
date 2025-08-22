@@ -28,7 +28,7 @@ from globule.services.embedding.mock_adapter import MockEmbeddingAdapter as Mock
 from globule.services.embedding.ollama_adapter import OllamaEmbeddingAdapter
 from globule.services.parsing.ollama_parser import OllamaParser
 from globule.services.parsing.ollama_adapter import OllamaParsingAdapter
-from globule.orchestration.engine import OrchestrationEngine
+from globule.orchestration.engine import GlobuleOrchestrator
 
 
 class GlassEngineMode(Enum):
@@ -117,7 +117,7 @@ class AbstractGlassEngine(abc.ABC):
             self._parsing_provider = OllamaParser()
             parsing_adapter = OllamaParsingAdapter(self._parsing_provider)
 
-            orchestrator = OrchestrationEngine(
+            orchestrator = GlobuleOrchestrator(
                 embedding_provider=embedding_adapter,
                 parser_provider=parsing_adapter,
                 storage_manager=self._storage
@@ -142,9 +142,9 @@ class AbstractGlassEngine(abc.ABC):
 class GlassEngineFactory:
     @staticmethod
     def create(mode: GlassEngineMode, console: Optional[Console] = None) -> AbstractGlassEngine:
-        from globule.tutorial.modes.interactive_mode import InteractiveGlassEngine
-        from globule.tutorial.modes.demo_mode import DemoGlassEngine
-        from globule.tutorial.modes.debug_mode import DebugGlassEngine
+        from .modes.interactive_mode import InteractiveGlassEngine
+        from .modes.demo_mode import DemoGlassEngine
+        from .modes.debug_mode import DebugGlassEngine
 
         mode_map = {
             GlassEngineMode.INTERACTIVE: InteractiveGlassEngine,
