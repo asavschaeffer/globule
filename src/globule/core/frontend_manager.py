@@ -87,49 +87,23 @@ class FrontendManager:
                 "data": {"error": str(e)}
             }
     
-    async def _launch_tui(self, topic: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Launch the TUI frontend (existing implementation)."""
+    async def _launch_tui(self, api: 'GlobuleAPI', topic: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+        """Launch the clean TUI frontend in-process, passing the API instance."""
         try:
-            # Use the existing TUI launch logic from CLI
-            python_executable = sys.executable
-            script_args = [python_executable, "-m", "globule.tui.app"]
-            
-            if topic:
-                script_args.extend(["--topic", topic])
-            
-            # Add any additional arguments
-            for key, value in kwargs.items():
-                if key != "topic" and value is not None:
-                    script_args.extend([f"--{key}", str(value)])
-            
-            # Launch in new terminal (platform-specific)
-            if sys.platform.startswith("win"):
-                launch_cmd = ["start", "cmd", "/k"] + script_args
-                subprocess.Popen(launch_cmd, shell=True)
-            elif sys.platform == "darwin":  # macOS
-                launch_cmd = ["osascript", "-e", f'tell app "Terminal" to do script "{" ".join(script_args)}"']
-                subprocess.Popen(launch_cmd)
-            else:  # Linux/Unix
-                terminals = ["gnome-terminal", "xterm", "konsole"]
-                for terminal in terminals:
-                    try:
-                        launch_cmd = [terminal, "--", *script_args]
-                        subprocess.Popen(launch_cmd)
-                        break
-                    except FileNotFoundError:
-                        continue
-                else:
-                    # Fallback: run in current terminal
-                    subprocess.Popen(script_args)
-            
+            from ..tui.clean_app import run_clean_tui
+
+            # Run the CLEAN TUI with dependency injection - no god file!
+            run_clean_tui(api, topic or "")
+
             return {
                 "type": "tui",
-                "command": script_args,
                 "topic": topic,
-                "status": "launched"
+                "status": "closed"
             }
-            
+
         except Exception as e:
+            logger.error(f"TUI launch failed: {e}")
+            # Re-raise to be caught by the main launch_frontend method
             raise Exception(f"TUI launch failed: {e}")
     
     async def _launch_web(self, port: int = 8000, host: str = "127.0.0.1", **kwargs) -> Dict[str, Any]:

@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List, Union
 from functools import lru_cache
 
+from globule.core.interfaces import ISchemaManager
+
 import jsonschema
 from jsonschema import Draft7Validator
 try:
@@ -26,7 +28,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class SchemaManager:
+class SchemaManager(ISchemaManager):
     """Enhanced schema manager with YAML support, triggers, and workflow actions."""
     
     def __init__(self):

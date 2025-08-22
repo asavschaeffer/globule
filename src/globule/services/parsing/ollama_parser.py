@@ -22,14 +22,14 @@ import aiohttp
 from pydantic import BaseModel, ValidationError as PydanticError, create_model, field_validator
 from jsonschema import validate, ValidationError
 
-from globule.core.interfaces import ParsingProvider
+from globule.core.interfaces import IParserProvider
 from globule.config.settings import get_config
 from globule.schemas.manager import get_schema_manager, format_schema_for_llm, get_schema_for_domain
 
 logger = logging.getLogger(__name__)
 
 
-class OllamaParser(ParsingProvider):
+class OllamaParser(IParserProvider):
     """
     Enhanced Ollama parser with dynamic prompting and Pydantic validation.
     
@@ -220,6 +220,66 @@ Return ONLY the JSON object:"""
                 return self._create_fallback_result(text, str(e), schema_name)
         
         return self._create_fallback_result(text, "Max retries exceeded", schema_name)
+
+    async def text_to_sql(self, question: str, db_schema: str) -> str:
+        """
+        Translates a natural language question into a SQL query.
+
+        Args:
+            question: The user's natural language question.
+            db_schema: The schema of the database to query.
+
+        Returns:
+            A SQL query string.
+        """
+        prompt = self._build_text_to_sql_prompt(question, db_schema)
+        
+        try:
+            await self._ensure_session()
+            response = await self._call_ollama_api(prompt)
+            sql_query = self._clean_sql_response(response)
+            return sql_query
+        except Exception as e:
+            self.logger.error(f"Text-to-SQL conversion failed: {e}")
+            raise
+
+    def _build_text_to_sql_prompt(self, question: str, db_schema: str) -> str:
+        """Builds the prompt for the text-to-SQL LLM call."""
+        return f"""
+As an expert SQL developer, your task is to translate the following natural language question into a valid SQLite query. You must only respond with the raw SQL query, with no explanations, comments, or markdown.
+
+Database Schema:
+```sql
+{db_schema}
+```
+
+The `parsed_data` column is a JSON object. You can query it using `json_extract`.
+For example, to find globules with the category 'incident', you would use:
+`WHERE json_extract(parsed_data, '$.category') = 'incident'`
+
+Natural Language Question:
+`{question}`
+
+SQL Query:"""
+
+    def _clean_sql_response(self, response: str) -> str:
+        """Cleans the LLM response to extract a valid SQL query."""
+        response = response.strip()
+        # Remove markdown code blocks
+        if response.startswith("```sql"):
+            response = response[6:].rstrip("```").strip()
+        elif response.startswith("```"):
+            response = response[3:].rstrip("```").strip()
+
+        # Find the start of the SELECT statement
+        select_pos = response.upper().find("SELECT")
+        if select_pos != -1:
+            response = response[select_pos:]
+
+        # Remove trailing semicolons or other junk
+        response = response.split(';')[0].strip()
+
+        return response
 
     async def _parse_without_schema(self, text: str) -> Dict[str, Any]:
         """Parse text without schema using basic prompt."""

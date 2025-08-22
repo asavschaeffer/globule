@@ -1,13 +1,10 @@
 # Globule
 
-> Advanced AI-powered thought management with modular frontends and schema-driven layouts
+> Capture your thoughts, find connections, and draft your next big idea.
 
 ![Project Status: Active Development](https://img.shields.io/badge/status-active_development-green)
-![Features: CLI Mirroring](https://img.shields.io/badge/feature-cli_mirroring-blue)
-![Features: Frontend Modularity](https://img.shields.io/badge/feature-frontend_modularity-blue)
-![Features: Layout Templates](https://img.shields.io/badge/feature-layout_templates-blue)
 
-Globule transforms scattered thoughts into organized knowledge through AI-powered processing, intelligent layout management, and flexible interface options. The system features a modular architecture with scriptable CLI commands, visual canvas layouts, and reusable templates.
+Globule is a tool for thought management. It uses AI to help you find semantic connections between your notes, making it easy to synthesize new ideas and draft coherent documents.
 
 ## The Core Experience
 
@@ -33,26 +30,13 @@ $ globule draft "my next blog post"
 
 Globule's intelligent engine understands these thoughts are related and presents them in a clean, two-pane interface, ready for you to weave them together into a coherent first draft.
 
-## Your Files, Your Computer
-
-Globule organizes your thoughts into a clean, human-readable folder structure right on your local machine. A thought about creative philosophy might be saved as:
-
-`~/globule/philosophy/creativity/applying-progressive-overload.md`
-
-You can browse and edit these files with any tool. No proprietary formats, no lock-in. A single database file, `globule.db`, lives alongside your notes, holding the semantic connections that make the magic possible.
-
 ## Getting Started
-
-Globule Phase 2 is now functional! Here's how to get started:
 
 ```bash
 # Clone and install from source
 git clone https://github.com/asavschaeffer/globule
 cd globule
 pip install -e .
-
-# Learn how Globule works with the Glass Engine tutorial
-globule tutorial --mode=interactive
 
 # Start capturing your thoughts
 globule add "Your first thought here"
@@ -61,140 +45,22 @@ globule add "Your first thought here"
 globule draft "your topic"
 ```
 
-## 🏗️ Advanced Architecture
+## Key Commands
 
-Globule now features a sophisticated modular architecture with multiple interface options and intelligent layout management:
+- `globule add "<text>"`: Captures a new thought.
+- `globule draft "<topic>"`: Opens an interactive TUI to synthesize a draft on a topic.
+- `globule search "<query>"`: Performs a semantic search for related thoughts.
+- `globule reconcile`: Reconciles the file system with the database.
 
-### 🎯 Frontend Modularity
+## Architecture
 
-Choose the interface that fits your workflow - all sharing the same powerful backend:
+The Globule codebase has been refactored for simplicity, maintainability, and performance. It now follows a clean, three-layer architecture:
 
-#### 🖥️ Terminal UI (Interactive)
-```bash
-globule draft "project planning"                    # Default TUI
-globule draft "project planning" --frontend=tui     # Explicit
-```
-Visual canvas with drag-and-drop, real-time AI processing, schema-aware styling.
+1.  **Command-Line Interface (CLI):** The user-facing entry point, built with `click`.
+2.  **GlobuleAPI:** A clean, UI-agnostic API that exposes the core features of the application.
+3.  **Core Logic:** The underlying orchestration engine, services, and storage managers that handle data processing and persistence.
 
-#### 🌐 Web Interface  
-```bash
-globule draft "project planning" --frontend=web --port=8000
-# Opens http://localhost:8000 with browser-based interface
-```
-Responsive grid layouts, template management, cross-platform browser access.
-
-#### ⌨️ CLI Scripting
-```bash
-globule draft "project planning" --frontend=cli --output=results.md
-```
-Non-interactive batch processing, perfect for automation and LLM chains.
-
-### ⚡ CLI Mirroring System
-
-Key interactive functionality exposed as scriptable commands:
-
-```bash
-# Natural language search with AI SQL generation
-globule nlsearch "valet maria honda parked yesterday"
-globule nlsearch "meetings about budget" --output=meetings.md
-
-# Draft management  
-globule add-to-draft "Key insight from analysis"
-globule export-draft summary.md --metadata
-globule draft-stats
-
-# Frontend discovery
-globule frontends  # Show available interfaces and capabilities
-```
-
-### 📐 Configuration-Driven Canvas Layouts
-
-Schemas control their own visual presentation across all frontends:
-
-```json
-{
-  "title": "Valet Schema",
-  "canvas_config": {
-    "layout": { "type": "widget", "position": "top-left", "size": "small" },
-    "tui_style": { "border": "round", "border_color": "$accent" },
-    "web_style": { "className": "valet-widget bg-green-50 rounded-lg p-4" }
-  }
-}
-```
-
-**Benefits:**
-- Same positioning logic across TUI and Web
-- Schema-specific styling (valet=green, academic=blue, technical=orange)
-- User customizable via JSON configuration
-- DRY architecture: define once, render everywhere
-
-### 🎨 Template System
-
-Save successful canvas layouts as reusable templates:
-
-```bash
-# Create default templates
-globule skeleton-create-defaults
-
-# List available templates  
-globule skeleton-list
-# → valet_dashboard: search top-left, stats top-right, summary center
-# → research_layout: main center, sources right, notes bottom-left
-
-# Apply template to new content
-globule skeleton-apply valet_dashboard --output=dashboard.md
-
-# Template statistics and usage tracking
-globule skeleton-stats
-```
-
-**Template Features:**
-- **Structure without content**: Positions and schemas, not specific data
-- **Placeholder substitution**: `{query}` and `{content}` filled dynamically  
-- **Cross-platform sharing**: JSON files in `~/.globule/skeletons/`
-- **Usage tracking**: Popular templates rise to the top
-
-### 🔄 Unified Workflow Example
-
-```bash
-# 1. Capture thoughts (unchanged)
-globule add "Valet Maria reported BMW parking issue"
-globule add "Need dashboard for valet operations"
-
-# 2. Interactive exploration
-globule draft "valet operations" --frontend=tui
-# → Drag search results to canvas, organize visually
-
-# 3. Save successful layout as template (via TUI interface)
-# → Creates "valet_dashboard" with positioned modules
-
-# 4. Apply template to new searches  
-globule nlsearch "valet issues this week" | \
-  globule skeleton-apply valet_dashboard --output=weekly_report.md
-
-# 5. Automate with CLI mirroring
-#!/bin/bash
-for topic in "parking" "incidents" "scheduling"; do
-  globule skeleton-apply valet_dashboard \
-    --query="$topic operations" --output="$topic_dashboard.md"
-done
-```
-
-## The Glass Engine: Transparent Software
-
-Globule features the **Glass Engine** - a revolutionary tutorial system that shows you exactly how the software works while you learn to use it. No black boxes, no guesswork, complete transparency.
-
-We're still updating this at the moment.
-
-**Choose your learning style:**
-
-- 🎓 **New to Globule?** → `globule tutorial --mode=interactive` (guided hands-on learning)
-- 🎪 **Want to see capabilities?** → `globule tutorial --mode=demo` (professional showcase)  
-- 🔧 **Need technical details?** → `globule tutorial --mode=debug` (raw system analysis)
-
-The Glass Engine embodies our philosophy: *"Let the user see exactly how the pistons fire while teaching them to drive."*
-
-**📚 Learn more:** [Glass Engine Guide](docs/glass-engine-guide.md) | [Quick Start](docs/glass-engine-quick-start.md)
+This separation of concerns makes the system easier to understand, test, and extend.
 
 ## The Vision: Where We're Going
 

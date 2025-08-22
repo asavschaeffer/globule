@@ -13,20 +13,27 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 import uuid
+from uuid import UUID
 import numpy as np
 
-from globule.core.interfaces import StorageManager
-from globule.core.models import ProcessedGlobule, FileDecision
+from globule.core.interfaces import IStorageManager
+from globule.core.models import ProcessedGlobuleV1, FileDecisionV1
+from globule.core.errors import StorageError
 from globule.config.settings import get_config
 
 
-class SQLiteStorageManager(StorageManager):
+class SQLiteStorageManager(IStorageManager):
     """SQLite implementation of StorageManager"""
     
     def __init__(self, db_path: Optional[Path] = None):
         self.config = get_config()
         if db_path is None:
-            db_path = self.config.get_storage_dir() / "globules.db"
+            storage_dir = self.config.get_storage_dir()
+            if str(storage_dir) == ':memory:':
+                # Use in-memory database for SQLite
+                db_path = Path(':memory:')
+            else:
+                db_path = storage_dir / "globules.db"
         self.db_path = db_path
         self._connection: Optional[aiosqlite.Connection] = None
         
@@ -135,7 +142,7 @@ class SQLiteStorageManager(StorageManager):
             await self._connection.execute("PRAGMA synchronous = NORMAL")
         return self._connection
     
-    async def store_globule(self, globule: ProcessedGlobule) -> str:
+    async def store_globule(self, globule: ProcessedGlobuleV1) -> str:
         """
         Store a processed globule using the transactional Outbox Pattern.
         
@@ -163,7 +170,7 @@ class SQLiteStorageManager(StorageManager):
         
         # Update globule's file_decision to reflect the determined path
         relative_path = final_file_path.relative_to(self._file_manager.base_path)
-        globule.file_decision = FileDecision(
+        globule.file_decision = FileDecisionV1(
             semantic_path=relative_path.parent,
             filename=relative_path.name,
             metadata={"outbox_pattern": True, "atomic_storage": True},
@@ -247,7 +254,7 @@ class SQLiteStorageManager(StorageManager):
             self._file_manager.cleanup_temp(temp_file_path)
             raise Exception(f"Atomic storage operation failed: {e}")
     
-    async def update_globule(self, globule: ProcessedGlobule) -> bool:
+    async def update_globule(self, globule: ProcessedGlobuleV1) -> bool:
         """
         Update an existing globule atomically.
         
@@ -357,7 +364,7 @@ class SQLiteStorageManager(StorageManager):
             # Check if the deletion affected any rows
             return cursor.rowcount > 0
     
-    async def get_globule(self, globule_id: str) -> Optional[ProcessedGlobule]:
+    async def get_globule(self, globule_id: str) -> Optional[ProcessedGlobuleV1]:
         """Retrieve a globule by ID"""
         db = await self._get_connection()
         async with db.execute(
@@ -368,7 +375,7 @@ class SQLiteStorageManager(StorageManager):
                 return None
             return self._row_to_globule(row)
     
-    async def get_recent_globules(self, limit: int = 100) -> List[ProcessedGlobule]:
+    async def get_recent_globules(self, limit: int = 100) -> List[ProcessedGlobuleV1]:
         """Get recent globules ordered by creation time"""
         db = await self._get_connection()
         async with db.execute(
@@ -382,9 +389,9 @@ class SQLiteStorageManager(StorageManager):
         self, 
         query_vector: np.ndarray, 
         limit: int = 50,
-        similarity_threshold: float = 0.5,
+        similarity_threshold: float = 0.1,
         min_embedding_confidence: Optional[float] = None
-    ) -> List[Tuple[ProcessedGlobule, float]]:
+        ) -> List[Tuple[ProcessedGlobuleV1, float]]:
         """
         Finds semantically similar globules using a single, efficient query.
         This is the correct, non-looping implementation.
@@ -480,7 +487,7 @@ class SQLiteStorageManager(StorageManager):
         return vector / norm
 
     
-    def _row_to_globule(self, row: sqlite3.Row) -> ProcessedGlobule:
+    def _row_to_globule(self, row: sqlite3.Row) -> ProcessedGlobuleV1:
         """Convert database row to ProcessedGlobule"""
         # Deserialize embedding
         embedding = None
@@ -498,7 +505,7 @@ class SQLiteStorageManager(StorageManager):
         file_decision = None
         if row[6]:  # file_path
             file_path = Path(row[6])
-            file_decision = FileDecision(
+            file_decision = FileDecisionV1(
                 semantic_path=file_path.parent,
                 filename=file_path.name,
                 metadata={},
@@ -506,7 +513,7 @@ class SQLiteStorageManager(StorageManager):
                 alternative_paths=[]
             )
         
-        return ProcessedGlobule(
+        return ProcessedGlobuleV1(
             id=row[0],
             text=row[1],
             embedding=embedding,
@@ -540,13 +547,13 @@ class SQLiteStorageManager(StorageManager):
             await self._connection.close()
             self._connection = None
 
-    async def search_by_text_and_embedding(
+    async def hybrid_search(
         self,
         query_text: str,
         query_embedding: np.ndarray,
-        limit: int = 50,
-        similarity_threshold: float = 0.3
-    ) -> List[Tuple[ProcessedGlobule, float]]:
+        limit: int = 20,
+        similarity_threshold: float = 0.5
+    ) -> List[Tuple[ProcessedGlobuleV1, float]]:
         """
         Hybrid search combining text and embedding similarity.
         
@@ -573,10 +580,10 @@ class SQLiteStorageManager(StorageManager):
         return fused_results[:limit]
 
     async def _search_by_text_keywords(
-        self, 
-        query: str, 
-        limit: int = 50
-    ) -> List[Tuple[ProcessedGlobule, float]]:
+        self,
+        query: str,
+        limit: int = 20
+    ) -> List[Tuple[ProcessedGlobuleV1, float]]:
         """
         Search for globules containing specific keywords.
         
@@ -627,9 +634,9 @@ class SQLiteStorageManager(StorageManager):
 
     def _fuse_search_results(
         self,
-        semantic_results: List[Tuple[ProcessedGlobule, float]],
-        text_results: List[Tuple[ProcessedGlobule, float]]
-    ) -> List[Tuple[ProcessedGlobule, float]]:
+        semantic_results: List[Tuple[ProcessedGlobuleV1, float]],
+        text_results: List[Tuple[ProcessedGlobuleV1, float]]
+    ) -> List[Tuple[ProcessedGlobuleV1, float]]:
         """
         Fuse semantic and text search results with intelligent scoring.
         
@@ -670,3 +677,225 @@ class SQLiteStorageManager(StorageManager):
         # Sort by combined score
         fused_results.sort(key=lambda x: x[1], reverse=True)
         return fused_results
+
+    # Implementation of abstract methods from IStorageManager
+    
+    def save(self, globule: ProcessedGlobuleV1) -> None:
+        """
+        Synchronous wrapper for store_globule.
+        This is required by the IStorageManager interface.
+        """
+        # Run the async store_globule in a new event loop
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're already in an event loop, we can't use run()
+                # This shouldn't happen in normal usage as the orchestrator is async
+                raise StorageError("Cannot save globule synchronously from within an async context")
+            else:
+                loop.run_until_complete(self.store_globule(globule))
+        except RuntimeError:
+            # No event loop exists, create one
+            asyncio.run(self.store_globule(globule))
+    
+    def get(self, globule_id: UUID) -> ProcessedGlobuleV1:
+        """
+        Synchronous wrapper for get_globule.
+        This is required by the IStorageManager interface.
+        """
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                raise StorageError("Cannot get globule synchronously from within an async context")
+            else:
+                result = loop.run_until_complete(self.get_globule(str(globule_id)))
+        except RuntimeError:
+            result = asyncio.run(self.get_globule(str(globule_id)))
+        
+        if result is None:
+            raise StorageError(f"Globule {globule_id} not found")
+        return result
+
+    async def search(self, query: str, limit: int = 10) -> List[ProcessedGlobuleV1]:
+        """
+        Search for globules using natural language query.
+        
+        This method implements the search functionality that was previously
+        embedded in the orchestrator, properly isolating the SQL logic.
+        """
+        try:
+            db = await self._get_connection()
+            
+            # Simple LIKE search for now - this is where we can implement
+            # more sophisticated search logic later
+            async with db.execute("""
+                SELECT id, text, embedding, embedding_confidence, parsed_data,
+                       parsing_confidence, file_path, orchestration_strategy,
+                       confidence_scores, processing_time_ms, semantic_neighbors,
+                       processing_notes, created_at, modified_at
+                FROM globules 
+                WHERE text LIKE ? 
+                ORDER BY created_at DESC 
+                LIMIT ?
+            """, (f"%{query}%", limit)) as cursor:
+                rows = await cursor.fetchall()
+                
+                results = []
+                for row in rows:
+                    globule = self._row_to_globule(row)
+                    results.append(globule)
+                
+                return results
+                
+        except Exception as e:
+            raise StorageError(f"Search failed: {e}")
+
+    async def execute_sql(self, query: str, query_name: str = "Query") -> Dict[str, Any]:
+        """
+        Execute SQL query against the database.
+        
+        This method implements the SQL execution functionality that was previously
+        embedded in the orchestrator, with proper safety checks and error handling.
+        """
+        try:
+            db = await self._get_connection()
+            
+            # Validate SQL safety (basic check)
+            dangerous_keywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'TRUNCATE', 'ALTER']
+            if any(keyword in query.upper() for keyword in dangerous_keywords):
+                raise StorageError("Potentially dangerous SQL detected")
+            
+            async with db.execute(query) as cursor:
+                results = await cursor.fetchall()
+                
+                # Convert to list of dicts
+                results_list = [dict(row) for row in results] if results else []
+                headers = [desc[0] for desc in cursor.description] if cursor.description else []
+                
+                return {
+                    "type": "sql_results",
+                    "query": query,
+                    "query_name": query_name,
+                    "results": results_list,
+                    "headers": headers,
+                    "count": len(results_list)
+                }
+                
+        except StorageError:
+            # Re-raise storage errors as-is
+            raise
+        except Exception as e:
+            raise StorageError(f"SQL query execution failed: {e}")
+
+    async def get_table_schema(self, table_name: str) -> str:
+        """Returns the CREATE TABLE statement for a given table."""
+        db = await self._get_connection()
+        async with db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table_name,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return row[0]
+            else:
+                raise StorageError(f"Table {table_name} not found.")
+
+    async def execute_raw_query(self, sql: str) -> List[Dict[str, Any]]:
+        """Executes a raw SQL query and returns the results as a list of dicts."""
+        db = await self._get_connection()
+        try:
+            async with db.execute(sql) as cursor:
+                rows = await cursor.fetchall()
+                columns = [description[0] for description in cursor.description]
+                return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            raise StorageError(f"Raw SQL query failed: {e}")
+
+    async def query_structured(self, query) -> List[ProcessedGlobuleV1]:
+        """
+        Execute structured query for high-performance domain-specific searches.
+        
+        This method provides fast queries for specific domains (e.g., valet workflow)
+        by querying indexed fields directly, bypassing vector/full-text search.
+        
+        Args:
+            query: StructuredQuery object containing domain and filter parameters
+            
+        Returns:
+            List of ProcessedGlobuleV1 objects matching the query criteria
+            
+        Raises:
+            StorageError: If query execution fails
+        """
+        from globule.core.models import StructuredQuery
+        
+        try:
+            db = await self._get_connection()
+            
+            # Build SQL query based on domain and filters
+            where_clauses = []
+            params = []
+            
+            # Add domain-specific filters
+            if query.domain and query.domain != "all":
+                # For now, map domain to a field in parsed_data
+                where_clauses.append("JSON_EXTRACT(parsed_data, '$.domain') = ?")
+                params.append(query.domain)
+            
+            # Add general filters
+            for field, value in query.filters.items():
+                if field == "text":
+                    where_clauses.append("text LIKE ?")
+                    params.append(f"%{value}%")
+                elif field == "created_after":
+                    where_clauses.append("created_at > ?")
+                    params.append(value)
+                elif field == "created_before":
+                    where_clauses.append("created_at < ?")
+                    params.append(value)
+                elif field == "confidence_threshold":
+                    where_clauses.append("embedding_confidence >= ?")
+                    params.append(value)
+                else:
+                    # Try to match in parsed_data JSON
+                    where_clauses.append(f"JSON_EXTRACT(parsed_data, '$.{field}') = ?")
+                    params.append(value)
+            
+            # Build WHERE clause
+            where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+            
+            # Build ORDER BY clause
+            order_by = "created_at"
+            if query.sort_by:
+                # Sanitize sort field
+                allowed_sort_fields = ["created_at", "modified_at", "embedding_confidence", "parsing_confidence"]
+                if query.sort_by in allowed_sort_fields:
+                    order_by = query.sort_by
+            
+            order_direction = "DESC" if query.sort_desc else "ASC"
+            
+            # Execute query
+            sql = f"""
+                SELECT id, text, embedding, embedding_confidence, parsed_data,
+                       parsing_confidence, file_path, orchestration_strategy,
+                       confidence_scores, processing_time_ms, semantic_neighbors,
+                       processing_notes, created_at, modified_at
+                FROM globules
+                WHERE {where_sql}
+                ORDER BY {order_by} {order_direction}
+                LIMIT ?
+            """
+            
+            params.append(query.limit)
+            
+            async with db.execute(sql, params) as cursor:
+                rows = await cursor.fetchall()
+                
+                results = []
+                for row in rows:
+                    globule = self._row_to_globule(row)
+                    results.append(globule)
+                
+                return results
+                
+        except Exception as e:
+            raise StorageError(f"Structured query failed: {e}")

@@ -1,137 +1,375 @@
 """
-Orchestration Engine for Globule.
+GlobuleOrchestrator: The core business logic engine for Globule.
 
-Coordinates embedding and parsing services concurrently to process globules
-through the complete AI pipeline. Renamed from parallel_strategy.py for clarity.
+This orchestrator implements the IOrchestrationEngine interface and coordinates
+all business logic operations while remaining UI-agnostic. It serves as the
+bridge between the UI layer and the various service providers.
 """
 
 import asyncio
 import time
 import logging
-from typing import Dict, Any
+import os
+from typing import Dict, Any, List, Optional
+from uuid import UUID
+from datetime import datetime
 
-from globule.core.interfaces import OrchestrationEngine as OrchestrationEngineInterface, EmbeddingProvider, ParsingProvider, StorageManager
-from globule.core.models import EnrichedInput, ProcessedGlobule, FileDecision
+from globule.core.interfaces import IOrchestrationEngine, IEmbeddingAdapter, IParserProvider, IStorageManager
+from globule.core.models import GlobuleV1, ProcessedGlobuleV1, FileDecisionV1, NuanceMetaDataV1, ProcessedContent, StructuredQuery
+from globule.core.errors import ParserError, EmbeddingError, StorageError
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
-class OrchestrationEngine(OrchestrationEngineInterface):
-    """Main orchestration engine for processing globules through the AI pipeline"""
+class GlobuleOrchestrator(IOrchestrationEngine):
+    """
+    Main orchestration engine for processing globules and coordinating business logic.
+    
+    This class implements the IOrchestrationEngine interface and contains all the 
+    business logic previously embedded in the TUI, making it UI-agnostic and reusable.
+    """
     
     def __init__(self, 
-                 embedding_provider: EmbeddingProvider,
-                 parsing_provider: ParsingProvider,
-                 storage_manager: StorageManager):
-        self.embedding_provider = embedding_provider
-        self.parsing_provider = parsing_provider
+                 parser_provider: IParserProvider,
+                 embedding_provider: IEmbeddingAdapter,
+                 storage_manager: IStorageManager,
+                 processor_router=None):
+        self.parser_provider = parser_provider
+        self.embedding_provider = embedding_provider  
         self.storage_manager = storage_manager
+        # Processor router for Phase 4 multi-modal support (optional for backward compatibility)
+        self.processor_router = processor_router
         
-    
-    async def process_globule(self, enriched_input: EnrichedInput) -> ProcessedGlobule:
-        """Process an enriched input into a processed globule"""
+    async def process(self, globule: GlobuleV1) -> ProcessedGlobuleV1:
+        """
+        Process a raw globule into a processed globule.
+        
+        Implements the IOrchestrationEngine interface requirement.
+        Coordinates parsing and embedding in parallel, then constructs the final result.
+        """
         start_time = time.time()
-        processing_times = {}
         
-        logger.debug(f"Processing globule: {enriched_input.original_text[:50]}...")
+        logger.debug(f"Processing globule: {globule.raw_text[:50]}...")
+
+        # Launch embedding, parsing, and processor tasks concurrently
+        embedding_task = asyncio.create_task(self._generate_embedding(globule.raw_text))
+        parsing_task = asyncio.create_task(self._parse_content(globule.raw_text))
         
-        # Launch embedding and parsing tasks concurrently
-        embedding_task = asyncio.create_task(
-            self._generate_embedding(enriched_input.enriched_text)
+        # Phase 4: Add processor routing if available
+        tasks = [embedding_task, parsing_task]
+        if self.processor_router:
+            processor_task = asyncio.create_task(self._process_with_router(globule))
+            tasks.append(processor_task)
+        
+        # Wait for all tasks to complete
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Handle embedding result
+        embedding_result = results[0]
+        if isinstance(embedding_result, Exception):
+            logger.error(f"Embedding failed: {embedding_result}")
+            embedding = []
+        else:
+            embedding, _ = embedding_result
+        
+        # Handle parsing result  
+        parsing_result = results[1]
+        if isinstance(parsing_result, Exception):
+            logger.error(f"Parsing failed: {parsing_result}")
+            parsed_data = {"error": str(parsing_result)}
+        else:
+            parsed_data, _ = parsing_result
+            
+        # Handle processor result (Phase 4)
+        processor_result = None
+        if self.processor_router and len(results) > 2:
+            if isinstance(results[2], Exception):
+                logger.warning(f"Processor routing failed: {results[2]}")
+            else:
+                processor_result = results[2]
+        
+        # Generate file decision from parsed data or processor result
+        primary_data = parsed_data
+        if processor_result and processor_result.confidence > 0.5:
+            # Use processor result if it has high confidence
+            primary_data = processor_result.structured_data
+        
+        file_decision = self._generate_file_decision(globule.raw_text, primary_data)
+        
+        # Calculate total processing time
+        total_time = (time.time() - start_time) * 1000
+        
+        # Build provider metadata with processor info
+        provider_metadata = {
+            "parser": self.parser_provider.__class__.__name__,
+            "embedder": self.embedding_provider.__class__.__name__,
+            "storage": self.storage_manager.__class__.__name__
+        }
+        
+        if processor_result:
+            provider_metadata.update({
+                "processor_type": processor_result.processor_type,
+                "processor_confidence": processor_result.confidence,
+                "processor_time_ms": processor_result.processing_time_ms
+            })
+        
+        # Create processed globule
+        processed_globule = ProcessedGlobuleV1(
+            globule_id=globule.globule_id,
+            original_globule=globule,
+            embedding=embedding,
+            parsed_data=primary_data,
+            file_decision=file_decision,
+            processing_time_ms=total_time,
+            provider_metadata=provider_metadata
         )
-        parsing_task = asyncio.create_task(
-            self._parse_content(enriched_input.enriched_text, enriched_input.schema_config)
+        
+        logger.debug(f"Globule processed in {total_time:.1f}ms")
+        return processed_globule
+    
+    async def process_globule(self, enriched_input) -> ProcessedGlobuleV1:
+        """
+        Process an enriched input into a processed globule.
+        
+        This method takes an EnrichedInput and converts it to a GlobuleV1 
+        before processing, maintaining compatibility with the existing API.
+        """
+        from globule.core.models import GlobuleV1
+        
+        # Convert EnrichedInput to GlobuleV1
+        globule = GlobuleV1(
+            raw_text=enriched_input.original_text,
+            source=enriched_input.source,
+            initial_context=enriched_input.additional_context
         )
         
-        # Wait for both to complete
+        # Use the existing process method
+        return await self.process(globule)
+    
+    # Business Logic Methods (extracted from TUI)
+    
+    async def capture_thought(self, raw_text: str, source: str = "tui", 
+                             context: Dict[str, Any] = None) -> ProcessedGlobuleV1:
+        """
+        Capture and process a thought/globule.
+        
+        This method handles the complete workflow of taking raw text input,
+        creating a globule, processing it, and storing it.
+        """
+        if context is None:
+            context = {}
+            
+        # Create raw globule
+        globule = GlobuleV1(
+            raw_text=raw_text,
+            source=source,
+            initial_context=context
+        )
+        
+        # Process the globule
+        processed_globule = await self.process(globule)
+        
+        # Store the processed globule
+        self.storage_manager.save(processed_globule)
+        
+        logger.info(f"Captured and stored globule: {globule.globule_id}")
+        return processed_globule
+    
+    async def search_globules(self, query: str, limit: int = 10) -> List[ProcessedGlobuleV1]:
+        """
+        Search for globules using natural language query.
+        
+        Delegates to the storage manager's search implementation.
+        The orchestrator doesn't know HOW the search is done, only that it CAN be done.
+        """
         try:
-            embedding_result, parsing_result = await asyncio.gather(
-                embedding_task, parsing_task, return_exceptions=True
-            )
-            
-            # Handle embedding result
-            if isinstance(embedding_result, Exception):
-                logger.error(f"Embedding failed: {embedding_result}")
-                embedding = None
-                embedding_confidence = 0.0
-                processing_times["embedding_ms"] = 0
-            else:
-                embedding, embed_time = embedding_result
-                embedding_confidence = 1.0  # Assume success = high confidence for MVP
-                processing_times["embedding_ms"] = embed_time
-            
-            # Handle parsing result  
-            if isinstance(parsing_result, Exception):
-                logger.error(f"Parsing failed: {parsing_result}")
-                parsed_data = {"error": str(parsing_result)}
-                parsing_confidence = 0.0
-                processing_times["parsing_ms"] = 0
-            else:
-                parsed_data, parse_time = parsing_result
-                parsing_confidence = 1.0  # Assume success = high confidence for MVP
-                processing_times["parsing_ms"] = parse_time
-            
-            # Generate file decision from parsed data
-            file_decision = self._generate_file_decision(
-                enriched_input.original_text, 
-                parsed_data
-            )
-            
-            # Calculate total processing time
-            total_time = (time.time() - start_time) * 1000
-            processing_times["total_ms"] = total_time
-            processing_times["orchestration_ms"] = total_time - processing_times.get("embedding_ms", 0) - processing_times.get("parsing_ms", 0)
-            
-            # Create processed globule
-            globule = ProcessedGlobule(
-                text=enriched_input.original_text,
-                embedding=embedding,
-                embedding_confidence=embedding_confidence,
-                parsed_data=parsed_data,
-                parsing_confidence=parsing_confidence,
-                file_decision=file_decision,
-                orchestration_strategy="parallel",
-                processing_time_ms=processing_times,
-                confidence_scores={
-                    "embedding": embedding_confidence,
-                    "parsing": parsing_confidence,
-                    "overall": (embedding_confidence + parsing_confidence) / 2
-                },
-                interpretations=[],  # MVP: no disagreement detection
-                has_nuance=False,    # MVP: no nuance detection
-                semantic_neighbors=[],  # Will be populated later
-                processing_notes=[]
-            )
-            
-            logger.debug(f"Globule processed in {total_time:.1f}ms")
-            return globule
-            
+            return await self.storage_manager.search(query, limit)
+        except StorageError as e:
+            logger.error(f"Search failed: {e}")
+            return []
         except Exception as e:
-            logger.error(f"Orchestration failed: {e}")
+            logger.error(f"Unexpected search error: {e}")
+            return []
+    
+    async def get_globule(self, globule_id: UUID) -> Optional[ProcessedGlobuleV1]:
+        """Retrieve a specific globule by ID."""
+        try:
+            return self.storage_manager.get(globule_id)
+        except StorageError as e:
+            logger.error(f"Failed to get globule {globule_id}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error getting globule {globule_id}: {e}")
+            return None
+    
+    def save_draft(self, content: str, topic: str = None, metadata: Dict[str, Any] = None) -> str:
+        """
+        Save content as a draft file.
+        
+        This implements the actual draft-saving logic from the TUI.
+        """
+        try:
+            # Generate filename - this is the real logic from TUI
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            topic_part = topic.replace(" ", "_") if topic else "draft"
+            filename = f"globule_{topic_part}_{timestamp}.md"
+            
+            # Save to drafts directory
+            drafts_dir = "drafts"
+            os.makedirs(drafts_dir, exist_ok=True)
+            filepath = os.path.join(drafts_dir, filename)
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                # Add metadata frontmatter if available
+                if metadata or topic:
+                    f.write("---\
+")
+                    if metadata:
+                        for key, value in metadata.items():
+                            f.write(f"{key}: {value}\
+")
+                    if topic:
+                        f.write(f"topic: {topic}\
+")
+                    f.write(f"generated: {datetime.now().isoformat()}\
+")
+                    f.write("---\
+\n")
+                f.write(content)
+            
+            logger.info(f"Draft saved to {filepath}")
+            return filepath
+            
+        except (IOError, OSError) as e:
+            logger.error(f"Failed to save draft: {e}")
             raise
     
+    async def execute_sql_query(self, query: str, query_name: str = "Query") -> Dict[str, Any]:
+        """
+        Execute SQL query against the database.
+        
+        Delegates the entire execution, including safety checks, to the storage manager.
+        The orchestrator is free of infrastructure details and only deals with abstractions.
+        """
+        try:
+            return await self.storage_manager.execute_sql(query, query_name)
+        except StorageError as e:
+            logger.error(f"SQL query execution failed: {e}")
+            return {
+                "type": "error",
+                "query": query,
+                "query_name": query_name,
+                "error": str(e)
+            }
+        except Exception as e:
+            logger.error(f"Unexpected SQL execution error: {e}")
+            return {
+                "type": "error",
+                "query": query,
+                "query_name": query_name,
+                "error": str(e)
+            }
+    
+    async def execute_query(self, query: str, query_type: str = "natural") -> Dict[str, Any]:
+        """
+        Execute a query based on its type.
+        
+        This coordinates different query execution strategies.
+        """
+        try:
+            if query_type == "sql":
+                return await self.execute_sql_query(query)
+            elif query_type == "natural":
+                # For natural language, search globules
+                results = await self.search_globules(query)
+                return {
+                    "type": "search_results",
+                    "query": query,
+                    "results": results,
+                    "count": len(results)
+                }
+            else:
+                return {"type": "unknown", "query": query, "error": f"Unknown query type: {query_type}"}
+                
+        except Exception as e:
+            logger.error(f"Query execution failed: {e}")
+            return {"type": "error", "query": query, "error": str(e)}
+    
+    async def query_structured(self, query: StructuredQuery) -> List[ProcessedGlobuleV1]:
+        """
+        Execute structured query for high-performance domain-specific searches.
+        
+        This method provides Phase 4 support for querying processed content
+        by domain, processor type, and other structured fields.
+        
+        Args:
+            query: The structured query with domain, filters, and options.
+            
+        Returns:
+            List of ProcessedGlobules matching the query criteria.
+        """
+        try:
+            return await self.storage_manager.query_structured(query)
+        except StorageError as e:
+            logger.error(f"Structured query failed: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected structured query error: {e}")
+            return []
+    
+    async def get_processor_stats(self) -> Dict[str, Any]:
+        """
+        Get processor routing statistics and capabilities.
+        
+        Returns:
+            Dictionary with processor statistics and routing information.
+        """
+        if not self.processor_router:
+            return {"processors_enabled": False}
+        
+        return {
+            "processors_enabled": True,
+            "routing_stats": self.processor_router.get_routing_stats(),
+            "capabilities": self.processor_router.get_processor_capabilities()
+        }
+    
+    # Internal helper methods
+    
+    async def _process_with_router(self, globule: GlobuleV1) -> ProcessedContent:
+        """
+        Process globule using processor router.
+        
+        Args:
+            globule: The globule to process.
+            
+        Returns:
+            ProcessedContent from the appropriate processor.
+        """
+        return await self.processor_router.route_and_process(globule)
     
     async def _generate_embedding(self, text: str) -> tuple:
         """Generate embedding and return (embedding, time_ms)"""
-        logger.debug("TIMING: Starting embedding generation...")
-        start_time = time.time()
-        embedding = await self.embedding_provider.embed(text)
-        processing_time = (time.time() - start_time) * 1000
-        logger.info(f"TIMING: Embedding completed in {processing_time:.1f}ms")
-        return embedding, processing_time
+        try:
+            embedding_result = await self.embedding_provider.embed_single(text)
+            return embedding_result.embedding, embedding_result.processing_time_ms
+        except Exception as e:
+            logger.error(f"Embedding generation failed: {e}")
+            raise EmbeddingError(f"Failed to generate embedding: {e}")
     
-    async def _parse_content(self, text: str, schema_config: Dict[str, Any] = None) -> tuple:
+    async def _parse_content(self, text: str) -> tuple:
         """Parse content and return (parsed_data, time_ms)"""
-        logger.debug("TIMING: Starting content parsing...")
         start_time = time.time()
-        parsed_data = await self.parsing_provider.parse(text, schema_config)
-        processing_time = (time.time() - start_time) * 1000
-        logger.info(f"TIMING: Parsing completed in {processing_time:.1f}ms")
-        return parsed_data, processing_time
+        try:
+            parsed_data = await self.parser_provider.parse(text)
+            processing_time = (time.time() - start_time) * 1000
+            return parsed_data, processing_time
+        except Exception as e:
+            logger.error(f"Content parsing failed: {e}")
+            raise ParserError(f"Failed to parse content: {e}")
     
-    def _generate_file_decision(self, text: str, parsed_data: Dict[str, Any]) -> FileDecision:
-        """Generate simple file decision for MVP"""
+    def _generate_file_decision(self, text: str, parsed_data: Dict[str, Any]) -> FileDecisionV1:
+        """Generate file decision based on parsed data"""
         # Use parsed data if available, otherwise create simple path
         domain = parsed_data.get("domain", "general")
         category = parsed_data.get("category", "note")
@@ -146,218 +384,9 @@ class OrchestrationEngine(OrchestrationEngineInterface):
         semantic_path = Path(domain) / category
         filename = f"{clean_title}.md"
         
-        return FileDecision(
-            semantic_path=semantic_path,
+        return FileDecisionV1(
+            semantic_path=str(semantic_path),
             filename=filename,
-            metadata={
-                "auto_generated": True,
-                "source": "parallel_orchestration"
-            },
-            confidence=0.8,  # Default confidence for MVP
-            alternative_paths=[]
+            confidence=0.8  # Default confidence
         )
-
-
-# Reusable API functions for CLI mirroring
-async def search_globules_nlp(nl_query: str, storage_manager: StorageManager) -> str:
-    """
-    Mirror TUI search: Convert natural language query to SQL and execute.
-    Returns formatted Markdown module content.
-    """
-    from globule.services.parsing.ollama_parser import OllamaParser
-    import sqlite3
-    import os
     
-    try:
-        # Phase 1: Convert NL to SQL using AI
-        sql = await _nl_to_sql_cli(nl_query)
-        logger.info(f"Generated SQL for CLI search: {sql}")
-        
-        # Phase 2: Execute SQL
-        results, headers = await _execute_sql_cli(sql, storage_manager)
-        
-        # Phase 3: Format as Markdown
-        formatted_content = _format_module_cli(results, headers, nl_query)
-        
-        return formatted_content
-        
-    except Exception as e:
-        logger.error(f"CLI search failed: {e}")
-        return f"### {nl_query}\n\n**Error:** {str(e)}\n"
-
-
-async def _nl_to_sql_cli(nl_query: str) -> str:
-    """Convert natural language query to SQL (CLI version)"""
-    from globule.services.parsing.ollama_parser import OllamaParser
-    
-    prompt = f"""
-Translate this natural language query to SQL for the globules table.
-Columns: id TEXT, text TEXT, created_at TIMESTAMP, embedding TEXT/BLOB, parsed_data JSON.
-The parsed_data JSON contains keys like: valet_name, car_make, license_plate, parking_spot.
-
-Examples:
-- "maria" → WHERE json_extract(parsed_data, '$.valet_name') = 'maria'  
-- "valet maria" → WHERE json_extract(parsed_data, '$.valet_name') = 'maria'
-- "john" → WHERE json_extract(parsed_data, '$.valet_name') = 'john'
-- "honda" → WHERE json_extract(parsed_data, '$.car_make') = 'honda'
-- "valet:maria honda" → WHERE json_extract(parsed_data, '$.valet_name') = 'maria' AND json_extract(parsed_data, '$.car_make') = 'honda'
-
-Query: {nl_query}
-Return only the raw SQL SELECT statement, no explanations.
-    """
-    
-    parser = OllamaParser()
-    try:
-        response = await parser.parse(prompt, {'action': 'sql_translate', 'output_format': 'text'})
-        
-        # Extract SQL from response
-        if isinstance(response, dict):
-            sql = response.get('sql', response.get('title', response.get('reasoning', '')))
-        else:
-            sql = str(response)
-        
-        # Clean up the SQL
-        sql = sql.strip().replace('```sql', '').replace('```', '').strip()
-        
-        # Validate SQL format and security
-        if sql and sql.upper().startswith('SELECT'):
-            dangerous_keywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'TRUNCATE', 'ALTER']
-            if any(keyword in sql.upper() for keyword in dangerous_keywords):
-                raise ValueError("Potentially dangerous SQL detected")
-            return sql
-        else:
-            raise ValueError("Invalid SQL format generated")
-            
-    except Exception as e:
-        logger.warning(f"AI SQL generation failed: {e}, using fallback")
-        # Fallback to simple text search
-        return f"SELECT id, text, parsed_data FROM globules WHERE text LIKE '%{nl_query}%' LIMIT 10"
-    finally:
-        await parser.close()
-
-
-async def _execute_sql_cli(sql: str, storage_manager: StorageManager) -> tuple:
-    """Execute SQL query and return results with headers (CLI version)"""
-    import sqlite3
-    import os
-    
-    # Get database path
-    if hasattr(storage_manager, 'db_path'):
-        db_path = str(storage_manager.db_path)
-    else:
-        db_path = os.path.expanduser("~/.globule/data/globules.db")
-    
-    if not os.path.exists(db_path):
-        raise FileNotFoundError(f"Database not found at {db_path}")
-    
-    try:
-        conn = sqlite3.connect(db_path, timeout=10.0)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        cursor.execute(sql)
-        results = cursor.fetchall()
-        
-        # Convert to tuples and get headers
-        results = [tuple(row) for row in results]
-        headers = [desc[0] for desc in cursor.description] if cursor.description else ['Result']
-        
-        # Limit results for CLI display
-        if len(results) > 50:
-            logger.info(f"Large result set ({len(results)} rows), limiting to 50")
-            results = results[:50]
-        
-        return results, headers
-        
-    except Exception as e:
-        raise Exception(f"SQL execution error: {str(e)}")
-    finally:
-        if 'conn' in locals():
-            conn.close()
-
-
-def _format_module_cli(results: list, headers: list, query: str) -> str:
-    """Format query results as a Markdown module (CLI version)"""
-    if not results:
-        return f"### {query}\nNo data found."
-    
-    # Create markdown table
-    md = f"### {query}\n\n"
-    md += "| " + " | ".join(headers) + " |\n"
-    md += "|" + " --- |" * len(headers) + "\n"
-    
-    # Add rows (limit for CLI display)
-    for row in results[:20]:  # Limit to 20 rows
-        formatted_row = []
-        for value in row:
-            if value is None:
-                formatted_row.append("")
-            elif isinstance(value, str) and len(value) > 50:
-                # Truncate long text fields for CLI
-                formatted_row.append(value[:50] + "...")
-            else:
-                formatted_row.append(str(value))
-        md += "| " + " | ".join(formatted_row) + " |\n"
-    
-    if len(results) > 20:
-        md += f"\n*... and {len(results) - 20} more rows*\n"
-    
-    return md
-
-
-def fetch_globule_content(item_id: str, storage_manager: StorageManager) -> str:
-    """
-    Fetch globule content by ID for CLI add-to-draft functionality.
-    Returns formatted content ready for draft inclusion.
-    """
-    import sqlite3
-    import os
-    
-    # Get database path
-    if hasattr(storage_manager, 'db_path'):
-        db_path = str(storage_manager.db_path)
-    else:
-        db_path = os.path.expanduser("~/.globule/data/globules.db")
-    
-    if not os.path.exists(db_path):
-        raise FileNotFoundError(f"Database not found at {db_path}")
-    
-    try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        # Query for globule by ID
-        cursor.execute(
-            "SELECT id, text, created_at, parsed_data FROM globules WHERE id = ?", 
-            (item_id,)
-        )
-        result = cursor.fetchone()
-        
-        if not result:
-            return ""
-        
-        globule_id, text, created_at, parsed_data_json = result
-        
-        # Format content for draft inclusion
-        formatted_content = f"**Globule:** {globule_id}\n"
-        formatted_content += f"**Added:** {created_at}\n\n"
-        formatted_content += f"{text}\n"
-        
-        # Add parsed metadata if available
-        if parsed_data_json:
-            import json
-            try:
-                parsed_data = json.loads(parsed_data_json)
-                if parsed_data:
-                    formatted_content += f"\n**Metadata:** {json.dumps(parsed_data, indent=2)}\n"
-            except:
-                pass  # Skip if JSON parsing fails
-        
-        return formatted_content
-        
-    except Exception as e:
-        logger.error(f"Failed to fetch globule {item_id}: {e}")
-        return f"Error fetching globule {item_id}: {str(e)}"
-    finally:
-        if 'conn' in locals():
-            conn.close()

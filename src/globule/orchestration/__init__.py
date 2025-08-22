@@ -1,10 +1,10 @@
 """
-Orchestration Engine for Globule processing.
+Orchestration layer for Globule.
 
-Coordinates the processing pipeline, managing the flow between embedding,
-parsing, and storage services.
+This module contains the core orchestration engine that coordinates
+business logic across the application while remaining UI-agnostic.
 """
 
-from .engine import OrchestrationEngine
+from .engine import GlobuleOrchestrator
 
-__all__ = ['OrchestrationEngine']
+__all__ = ['GlobuleOrchestrator']
