@@ -171,7 +171,7 @@ class SQLiteStorageManager(IStorageManager):
         # Update globule's file_decision to reflect the determined path
         relative_path = final_file_path.relative_to(self._file_manager.base_path)
         globule.file_decision = FileDecisionV1(
-            semantic_path=relative_path.parent,
+            semantic_path=str(relative_path.parent),
             filename=relative_path.name,
             metadata={"outbox_pattern": True, "atomic_storage": True},
             confidence=1.0,  # High confidence as we determined the path
@@ -186,8 +186,10 @@ class SQLiteStorageManager(IStorageManager):
             # Serialize complex fields to JSON
             embedding_blob = None
             if globule.embedding is not None:
+                # Convert to numpy array if it's a list
+                embedding_array = np.array(globule.embedding, dtype=np.float32) if isinstance(globule.embedding, list) else globule.embedding.astype(np.float32)
                 # Normalize the embedding for consistent similarity calculations
-                normalized_embedding = self._normalize_vector(globule.embedding.astype(np.float32))
+                normalized_embedding = self._normalize_vector(embedding_array)
                 embedding_blob = normalized_embedding.tobytes()
             
             parsed_data_json = json.dumps(globule.parsed_data)
@@ -197,7 +199,8 @@ class SQLiteStorageManager(IStorageManager):
             processing_notes_json = json.dumps(globule.processing_notes)
             
             # Use the determined file path for database storage
-            file_path = str(globule.file_decision.semantic_path / globule.file_decision.filename)
+            from pathlib import Path
+            file_path = str(Path(globule.file_decision.semantic_path) / globule.file_decision.filename)
             
             db = await self._get_connection()
             
@@ -270,7 +273,8 @@ class SQLiteStorageManager(IStorageManager):
         # Serialize complex fields to JSON
         embedding_blob = None
         if globule.embedding is not None:
-            embedding_blob = globule.embedding.astype(np.float32).tobytes()
+            embedding_array = np.array(globule.embedding, dtype=np.float32) if isinstance(globule.embedding, list) else globule.embedding.astype(np.float32)
+            embedding_blob = embedding_array.tobytes()
         
         parsed_data_json = json.dumps(globule.parsed_data)
         confidence_scores_json = json.dumps(globule.confidence_scores)
@@ -281,7 +285,8 @@ class SQLiteStorageManager(IStorageManager):
         # Store file path from file decision
         file_path = None
         if globule.file_decision:
-            file_path = str(globule.file_decision.semantic_path / globule.file_decision.filename)
+            from pathlib import Path
+            file_path = str(Path(globule.file_decision.semantic_path) / globule.file_decision.filename)
         
         db = await self._get_connection()
         
@@ -506,28 +511,39 @@ class SQLiteStorageManager(IStorageManager):
         if row[6]:  # file_path
             file_path = Path(row[6])
             file_decision = FileDecisionV1(
-                semantic_path=file_path.parent,
+                semantic_path=str(file_path.parent),
                 filename=file_path.name,
                 metadata={},
                 confidence=0.8,  # Default confidence
                 alternative_paths=[]
             )
         
+        # Create the original globule
+        from globule.core.models import GlobuleV1
+        original_globule = GlobuleV1(
+            globule_id=UUID(row[0]),
+            raw_text=row[1],
+            source="database",  # We don't store original source separately
+            creation_timestamp=datetime.fromisoformat(row[12])
+        )
+        
+        # Create the processed globule with proper field names
         return ProcessedGlobuleV1(
-            id=row[0],
-            text=row[1],
+            globule_id=UUID(row[0]),
+            processed_timestamp=datetime.fromisoformat(row[13]),
+            original_globule=original_globule,
             embedding=embedding,
-            embedding_confidence=row[3],
             parsed_data=parsed_data,
-            parsing_confidence=row[5],
             file_decision=file_decision,
-            orchestration_strategy=row[7],
-            confidence_scores=confidence_scores,
             processing_time_ms=processing_time_ms,
-            semantic_neighbors=semantic_neighbors,
-            processing_notes=processing_notes,
-            created_at=datetime.fromisoformat(row[12]),
-            modified_at=datetime.fromisoformat(row[13])
+            provider_metadata={
+                'embedding_confidence': row[3],
+                'parsing_confidence': row[5],
+                'orchestration_strategy': row[7],
+                'confidence_scores': confidence_scores,
+                'semantic_neighbors': semantic_neighbors,
+                'processing_notes': processing_notes
+            }
         )
     
     def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:

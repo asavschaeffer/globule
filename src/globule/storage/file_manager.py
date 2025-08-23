@@ -233,7 +233,7 @@ class FileManager:
             if frontmatter.get('file_decision'):
                 fd_data = frontmatter['file_decision']
                 globule.file_decision = FileDecisionV1(
-                    semantic_path=Path(fd_data.get('semantic_path', '')),
+                    semantic_path=str(fd_data.get('semantic_path', '')),
                     filename=fd_data.get('filename', file_path.name),
                     metadata=fd_data.get('metadata', {}),
                     confidence=fd_data.get('confidence', 0.8),
@@ -497,7 +497,7 @@ class FileManager:
         
         # Create new FileDecisionV1 reflecting actual location
         globule.file_decision = FileDecisionV1(
-            semantic_path=relative_path.parent,
+            semantic_path=str(relative_path.parent),
             filename=relative_path.name,
             metadata={"reconciled": True, "original_path": str(globule.file_decision.semantic_path / globule.file_decision.filename) if globule.file_decision else None},
             confidence=0.9,  # High confidence as we found the actual file

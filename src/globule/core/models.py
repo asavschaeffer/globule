@@ -22,6 +22,8 @@ class FileDecisionV1(BaseGlobuleModel):
     semantic_path: str
     filename: str
     confidence: float = Field(..., ge=0.0, le=1.0)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    alternative_paths: List[Any] = Field(default_factory=list)
 
 class GlobuleV1(BaseGlobuleModel):
     """
@@ -121,3 +123,48 @@ class ProcessedGlobuleV1(BaseGlobuleModel):
     def id(self, value: str) -> None:
         """Compatibility setter for storage manager that expects 'id' field."""
         self.globule_id = UUID(value)
+    
+    @property
+    def created_at(self) -> datetime:
+        """Compatibility property for storage manager that expects 'created_at' field."""
+        return self.original_globule.creation_timestamp
+    
+    @property
+    def modified_at(self) -> datetime:
+        """Compatibility property for storage manager that expects 'modified_at' field."""
+        return self.processed_timestamp
+    
+    @property
+    def text(self) -> str:
+        """Compatibility property for storage manager that expects 'text' field."""
+        return self.original_globule.raw_text
+    
+    @property
+    def embedding_confidence(self) -> float:
+        """Compatibility property for storage manager that expects 'embedding_confidence' field."""
+        return self.provider_metadata.get('embedding_confidence', 0.8)
+    
+    @property
+    def parsing_confidence(self) -> float:
+        """Compatibility property for storage manager that expects 'parsing_confidence' field."""
+        return self.provider_metadata.get('parsing_confidence', 0.8)
+    
+    @property
+    def orchestration_strategy(self) -> str:
+        """Compatibility property for storage manager that expects 'orchestration_strategy' field."""
+        return self.provider_metadata.get('orchestration_strategy', 'default')
+    
+    @property
+    def confidence_scores(self) -> Dict[str, Any]:
+        """Compatibility property for storage manager that expects 'confidence_scores' field."""
+        return self.provider_metadata.get('confidence_scores', {})
+    
+    @property
+    def semantic_neighbors(self) -> List[str]:
+        """Compatibility property for storage manager that expects 'semantic_neighbors' field."""
+        return self.provider_metadata.get('semantic_neighbors', [])
+    
+    @property
+    def processing_notes(self) -> List[str]:
+        """Compatibility property for storage manager that expects 'processing_notes' field."""
+        return self.provider_metadata.get('processing_notes', [])
