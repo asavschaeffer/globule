@@ -6,6 +6,7 @@ to interact with Globule's features without needing to know about the
 underlying orchestration, storage, or service providers.
 """
 
+import logging
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 
@@ -14,6 +15,9 @@ from .models import ProcessedGlobuleV1, StructuredQuery
 from ..orchestration.engine import GlobuleOrchestrator
 from ..storage.file_manager import FileManager
 from ..storage.sqlite_manager import SQLiteStorageManager
+
+logger = logging.getLogger(__name__)
+
 
 class GlobuleAPI:
     """
@@ -59,6 +63,42 @@ class GlobuleAPI:
         globule_id = await self.storage.store_globule(processed_globule)
         
         return processed_globule
+
+    async def add_from_input_message(self, input_message) -> List[ProcessedGlobuleV1]:
+        """
+        Process an InputMessage from external sources (WhatsApp, email, etc.) and store all resulting globules.
+        
+        This method handles bundled content - text and attachments from a single message
+        are processed together and linked with shared metadata.
+        
+        Args:
+            input_message: InputMessage object from the inputs module
+            
+        Returns:
+            List of ProcessedGlobuleV1 objects that were created and stored
+        """
+        # Import here to avoid circular dependency
+        from globule.inputs.models import InputMessage
+        
+        if not isinstance(input_message, InputMessage):
+            raise ValueError(f"Expected InputMessage, got {type(input_message)}")
+        
+        # Process through orchestrator (handles both text and attachments)
+        processed_globules = await self.orchestrator.process_input_message(input_message)
+        
+        # Store all resulting globules
+        stored_globules = []
+        for globule in processed_globules:
+            try:
+                globule_id = await self.storage.store_globule(globule)
+                stored_globules.append(globule)
+            except Exception as e:
+                logger.error(f"Failed to store globule from {input_message.source}: {e}")
+                # Continue storing other globules even if one fails
+                continue
+        
+        logger.info(f"Stored {len(stored_globules)} globules from {input_message.source} message {input_message.message_id}")
+        return stored_globules
 
     async def search_semantic(self, query: str, limit: int = 10) -> List[ProcessedGlobuleV1]:
         """
@@ -117,7 +157,7 @@ class GlobuleAPI:
         Returns:
             A list of all processed globules.
         """
-        return await self.storage.get_all(limit)
+        return await self.storage.get_recent_globules(limit)
 
     async def get_summary_for_text(self, text: str) -> str:
         """

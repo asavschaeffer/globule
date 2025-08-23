@@ -42,12 +42,16 @@ This layer is responsible for presenting data to the user and accepting user inp
 -   **`interfaces/cli/main.py`:** The command-line interface, built with `click`. It parses commands and arguments and calls the `GlobuleAPI`.
 -   **`tui/app.py`:** The Textual-based Terminal User Interface. It is a pure presentation layer that receives all its data from the `GlobuleAPI`.
 -   **`tutorial/`:** The Glass Engine tutorial system. It acts as a client of the `GlobuleAPI` to demonstrate the application's features in a sandboxed environment.
+-   **`inputs/`:** Messaging platform integrations that capture thoughts from external sources:
+    -   **`adapters/`:** Platform-specific adapters (WhatsApp, Telegram, Email) that parse webhook messages into standardized `InputMessage` objects.
+    -   **`relay_service.py`:** Minimal cloud service that forwards webhooks from messaging platforms to local instances.
+    -   **`manager.py`:** Coordinates multiple input sources and routes messages to the `GlobuleAPI`.
 
 ### 2. API Layer
 
 This is the most critical layer for maintaining the application's structure.
 
--   **`core/api.py`:** Defines the `GlobuleAPI` class. This class is the sole entry point for the interface layer. It exposes high-level, business-oriented methods like `add_thought()`, `search_semantic()`, and `get_clusters()`. It encapsulates the complexity of the core logic layer.
+-   **`core/api.py`:** Defines the `GlobuleAPI` class. This class is the sole entry point for the interface layer. It exposes high-level, business-oriented methods like `add_thought()`, `add_from_input_message()`, `search_semantic()`, and `get_clusters()`. It encapsulates the complexity of the core logic layer.
 
 ### 3. Core Logic Layer
 

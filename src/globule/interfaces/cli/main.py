@@ -343,6 +343,179 @@ async def skeleton_create_defaults(ctx: click.Context):
         created = context.api.create_default_skeletons()
         click.echo(f"Created {len(created)} default skeletons: {', '.join(created)}")
 
+@click.group()
+def inputs():
+    """Manage external input sources (WhatsApp, email, etc.)."""
+    pass
+
+@inputs.command(name="setup-whatsapp")
+@click.option('--access-token', required=True, help='WhatsApp Business API access token')
+@click.option('--verify-token', required=True, help='Webhook verification token')
+@click.option('--phone', multiple=True, help='Authorized phone numbers (can specify multiple)')
+@click.option('--relay-url', help='Relay service URL (e.g., https://relay.globule.app)')
+@click.pass_context
+async def setup_whatsapp(ctx: click.Context, access_token: str, verify_token: str, phone: tuple, relay_url: str):
+    """Set up WhatsApp as an input source."""
+    try:
+        from globule.inputs.manager import InputSourceManager
+        
+        # Create input manager and register WhatsApp
+        input_manager = InputSourceManager()
+        input_manager.register_whatsapp(access_token, verify_token, list(phone) if phone else None)
+        
+        click.echo(f"✅ WhatsApp input source configured")
+        if phone:
+            click.echo(f"📱 Authorized phone numbers: {', '.join(phone)}")
+        
+        if relay_url:
+            click.echo(f"\n📡 To complete setup, register with relay service:")
+            click.echo(f"POST {relay_url}/register")
+            click.echo(f"{{")
+            click.echo(f'  "user_id": "your_user_id",')
+            click.echo(f'  "endpoint_url": "https://your-ngrok-url.ngrok.io/webhook",')
+            click.echo(f'  "auth_token": "your_secret_token",')
+            click.echo(f'  "platforms": {{')
+            if phone:
+                for p in phone:
+                    click.echo(f'    "whatsapp": "{p}"')
+            else:
+                click.echo(f'    "whatsapp": "+1234567890"')
+            click.echo(f'  }}')
+            click.echo(f'}}')
+        else:
+            click.echo("\n💡 Tip: Use --relay-url to get setup instructions for the relay service")
+            
+    except ImportError as e:
+        click.echo(f"❌ Failed to import inputs module: {e}", err=True)
+    except Exception as e:
+        click.echo(f"❌ Failed to setup WhatsApp: {e}", err=True)
+
+@inputs.command(name="setup-telegram")
+@click.option('--bot-token', required=True, help='Telegram bot token from @BotFather')
+@click.option('--user-id', multiple=True, type=int, help='Authorized Telegram user IDs (can specify multiple)')
+@click.option('--relay-url', help='Relay service URL (e.g., https://relay.globule.app)')
+@click.pass_context
+async def setup_telegram(ctx: click.Context, bot_token: str, user_id: tuple, relay_url: str):
+    """Set up Telegram as an input source."""
+    try:
+        from globule.inputs.manager import InputSourceManager
+        
+        # Create input manager and register Telegram
+        input_manager = InputSourceManager()
+        input_manager.register_telegram(bot_token, list(user_id) if user_id else None)
+        
+        click.echo(f"✅ Telegram input source configured")
+        if user_id:
+            click.echo(f"👤 Authorized user IDs: {', '.join(map(str, user_id))}")
+        
+        if relay_url:
+            click.echo(f"\n📡 To complete setup, register with relay service:")
+            click.echo(f"POST {relay_url}/register")
+            click.echo(f"And set webhook URL to: {relay_url}/webhook/telegram/{bot_token}")
+        else:
+            click.echo("\n💡 Tip: Use --relay-url to get setup instructions for the relay service")
+            
+    except ImportError as e:
+        click.echo(f"❌ Failed to import inputs module: {e}", err=True)
+    except Exception as e:
+        click.echo(f"❌ Failed to setup Telegram: {e}", err=True)
+
+@inputs.command(name="webhook-server")
+@click.option('--port', default=8080, help='Port to run webhook server on')
+@click.option('--host', default='127.0.0.1', help='Host to bind to')
+@click.option('--tunnel', is_flag=True, help='Auto-create ngrok tunnel for public access')
+@click.pass_context
+async def webhook_server(ctx: click.Context, port: int, host: str, tunnel: bool):
+    """Run a local webhook server to receive messages from relay service."""
+    try:
+        from aiohttp import web
+        from globule.inputs.manager import InputSourceManager
+        
+        click.echo(f"🚀 Starting webhook server on {host}:{port}")
+        
+        if tunnel:
+            click.echo("🌐 Creating public tunnel with ngrok...")
+            # TODO: Add ngrok integration
+            click.echo("💡 Install ngrok and run: ngrok http " + str(port))
+        
+        # Create webhook handler
+        input_manager = InputSourceManager()
+        
+        async def webhook_handler(request):
+            """Handle incoming webhook messages."""
+            try:
+                data = await request.json()
+                platform = data.get('platform')
+                payload = data.get('payload', {})
+                
+                # Process based on platform
+                if platform == 'whatsapp':
+                    messages = await input_manager.process_whatsapp_webhook(payload)
+                    for msg in messages:
+                        # Process through API
+                        async with ctx.obj['context'] as context:
+                            await context.initialize()
+                            results = await context.api.add_from_input_message(msg)
+                            click.echo(f"📨 Processed WhatsApp message: {len(results)} globules created")
+                
+                elif platform == 'telegram':
+                    message = await input_manager.process_telegram_webhook(payload)
+                    if message:
+                        async with ctx.obj['context'] as context:
+                            await context.initialize()
+                            results = await context.api.add_from_input_message(message)
+                            click.echo(f"📨 Processed Telegram message: {len(results)} globules created")
+                
+                return web.json_response({"status": "processed"})
+                
+            except Exception as e:
+                click.echo(f"❌ Webhook processing failed: {e}", err=True)
+                return web.json_response({"error": str(e)}, status=500)
+        
+        # Create web app
+        app = web.Application()
+        app.router.add_post('/webhook', webhook_handler)
+        app.router.add_get('/health', lambda r: web.json_response({"status": "healthy"}))
+        
+        # Run server
+        web.run_app(app, host=host, port=port)
+        
+    except ImportError as e:
+        click.echo(f"❌ Failed to import required modules: {e}", err=True)
+    except Exception as e:
+        click.echo(f"❌ Failed to start webhook server: {e}", err=True)
+
+@inputs.command(name="test-message")
+@click.option('--source', default='test', help='Source identifier')
+@click.option('--content', required=True, help='Test message content')
+@click.pass_context  
+async def test_message(ctx: click.Context, source: str, content: str):
+    """Test message processing with a mock InputMessage."""
+    try:
+        from globule.inputs.models import InputMessage
+        
+        # Create test message
+        test_msg = InputMessage(
+            content=content,
+            source=source,
+            user_identifier="test_user"
+        )
+        
+        async with ctx.obj['context'] as context:
+            await context.initialize()
+            results = await context.api.add_from_input_message(test_msg)
+            
+            click.echo(f"✅ Test message processed successfully!")
+            click.echo(f"📊 Created {len(results)} globules:")
+            for i, globule in enumerate(results, 1):
+                preview = globule.original_globule.raw_text[:50] + "..." if len(globule.original_globule.raw_text) > 50 else globule.original_globule.raw_text
+                click.echo(f"  {i}. {preview}")
+        
+    except ImportError as e:
+        click.echo(f"❌ Failed to import inputs module: {e}", err=True)
+    except Exception as e:
+        click.echo(f"❌ Test message processing failed: {e}", err=True)
+
 # Register all commands
 cli.add_command(add)
 cli.add_command(draft)
@@ -351,6 +524,7 @@ cli.add_command(reconcile)
 cli.add_command(cluster)
 cli.add_command(nlsearch)
 cli.add_command(skeleton)
+cli.add_command(inputs)
 
 def main():
     """Entry point for the CLI."""

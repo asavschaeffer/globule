@@ -15,7 +15,7 @@ from uuid import UUID
 from datetime import datetime
 
 from globule.core.interfaces import IOrchestrationEngine, IEmbeddingAdapter, IParserProvider, IStorageManager
-from globule.core.models import GlobuleV1, ProcessedGlobuleV1, FileDecisionV1, NuanceMetaDataV1, ProcessedContent, StructuredQuery
+from globule.core.models import GlobuleV1, ProcessedGlobuleV1, FileDecisionV1, NuanceMetaDataV1, ProcessedContent, StructuredQuery, EnrichedInput
 from globule.core.errors import ParserError, EmbeddingError, StorageError
 from pathlib import Path
 
@@ -334,6 +334,116 @@ class GlobuleOrchestrator(IOrchestrationEngine):
             "capabilities": self.processor_router.get_processor_capabilities()
         }
     
+    async def process_input_message(self, input_message) -> List[ProcessedGlobuleV1]:
+        """
+        Process an InputMessage from external sources (WhatsApp, email, etc.) into processed globules.
+        
+        This method handles bundled content - it can process both text content and attachments
+        from a single message, linking them together with shared metadata.
+        
+        Args:
+            input_message: InputMessage object from the inputs module
+            
+        Returns:
+            List of ProcessedGlobuleV1 objects (one for text, one per attachment)
+        """
+        # Import here to avoid circular dependency
+        from globule.inputs.models import InputMessage
+        
+        if not isinstance(input_message, InputMessage):
+            raise ValueError(f"Expected InputMessage, got {type(input_message)}")
+        
+        if not input_message.has_content:
+            logger.warning(f"InputMessage from {input_message.source} has no processable content")
+            return []
+        
+        processed_globules = []
+        shared_metadata = input_message.to_globule_source_metadata()
+        
+        # Process text content if present
+        if input_message.content:
+            try:
+                # Create EnrichedInput for text content
+                enriched_input = EnrichedInput(
+                    original_text=input_message.content,
+                    enriched_text=input_message.content,
+                    detected_schema_id=None,
+                    schema_config=None,
+                    additional_context=shared_metadata,
+                    source=input_message.source,
+                    timestamp=input_message.timestamp,
+                    verbosity="concise"
+                )
+                
+                # Process through existing pipeline
+                text_globule = await self.process_globule(enriched_input)
+                processed_globules.append(text_globule)
+                
+                logger.info(f"Processed text content from {input_message.source} message {input_message.message_id}")
+                
+            except Exception as e:
+                logger.error(f"Failed to process text content from {input_message.source}: {e}")
+                # Continue processing attachments even if text fails
+        
+        # Process attachments if present
+        for i, attachment in enumerate(input_message.attachments):
+            try:
+                # Create a GlobuleV1 for the attachment
+                attachment_text = f"Attachment: {attachment.filename or f'file_{i+1}'}"
+                if attachment.mime_type:
+                    attachment_text += f" (type: {attachment.mime_type})"
+                
+                # Add attachment metadata to shared context
+                attachment_metadata = {
+                    **shared_metadata,
+                    "attachment_index": i,
+                    "attachment_filename": attachment.filename,
+                    "attachment_type": attachment.attachment_type.value,
+                    "attachment_mime_type": attachment.mime_type,
+                    "attachment_size_bytes": attachment.size_bytes,
+                    "is_attachment": True
+                }
+                
+                # Create EnrichedInput for attachment
+                enriched_input = EnrichedInput(
+                    original_text=attachment_text,
+                    enriched_text=attachment_text,
+                    detected_schema_id=None,
+                    schema_config=None,
+                    additional_context=attachment_metadata,
+                    source=f"{input_message.source}_attachment",
+                    timestamp=input_message.timestamp,
+                    verbosity="concise"
+                )
+                
+                # Process through existing pipeline
+                attachment_globule = await self.process_globule(enriched_input)
+                
+                # Store the actual attachment content in provider_metadata
+                # This preserves the binary content for future processing
+                if attachment_globule.provider_metadata is None:
+                    attachment_globule.provider_metadata = {}
+                attachment_globule.provider_metadata["attachment_content"] = attachment.content
+                
+                processed_globules.append(attachment_globule)
+                
+                logger.info(f"Processed {attachment.attachment_type.value} attachment from {input_message.source} message {input_message.message_id}")
+                
+            except Exception as e:
+                logger.error(f"Failed to process attachment {i} from {input_message.source}: {e}")
+                # Continue processing other attachments
+                continue
+        
+        # Log final results
+        if processed_globules:
+            logger.info(f"Successfully processed {len(processed_globules)} globules from {input_message.source} message: "
+                       f"{len([g for g in processed_globules if not g.provider_metadata.get('is_attachment')])} text, "
+                       f"{len([g for g in processed_globules if g.provider_metadata.get('is_attachment')])} attachments")
+        else:
+            logger.warning(f"No globules could be processed from {input_message.source} message {input_message.message_id}")
+        
+        return processed_globules
+
     # Internal helper methods
     
     async def _process_with_router(self, globule: GlobuleV1) -> ProcessedContent:

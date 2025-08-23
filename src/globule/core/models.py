@@ -111,3 +111,13 @@ class ProcessedGlobuleV1(BaseGlobuleModel):
     # System metadata
     processing_time_ms: float
     provider_metadata: Dict[str, Any] = Field(default_factory=dict) # Info from parser, embedder, etc.
+    
+    @property
+    def id(self) -> str:
+        """Compatibility property for storage manager that expects 'id' field."""
+        return str(self.globule_id)
+    
+    @id.setter
+    def id(self, value: str) -> None:
+        """Compatibility setter for storage manager that expects 'id' field."""
+        self.globule_id = UUID(value)

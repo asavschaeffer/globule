@@ -12,13 +12,15 @@ Globule's magic is in its simplicity. Capture any thought, and let the AI handle
 
 #### 1. Capture Instantly
 
-No need to think about folders or filenames. Just capture the thought.
+No need to think about folders or filenames. Just capture the thought from anywhere - command line, WhatsApp, Telegram, or email.
 
 ```bash
 $ globule add "The concept of 'progressive overload' in fitness could apply to creative stamina."
 
 $ globule add "A core theme for my next post: discipline isn't about restriction, it's about freedom."
 ```
+
+Or send a message to your personal WhatsApp bot and watch your thoughts flow seamlessly into your knowledge base.
 
 #### 2. Synthesize with Ease
 
@@ -51,6 +53,17 @@ globule draft "your topic"
 - `globule draft "<topic>"`: Opens an interactive TUI to synthesize a draft on a topic.
 - `globule search "<query>"`: Performs a semantic search for related thoughts.
 - `globule reconcile`: Reconciles the file system with the database.
+
+### Messaging Integration
+
+Capture thoughts from anywhere with messaging platform integration:
+
+- `globule inputs setup-whatsapp`: Set up WhatsApp Business API integration
+- `globule inputs setup-telegram`: Set up Telegram bot integration  
+- `globule inputs webhook-server`: Run local webhook server for message processing
+- `globule inputs test-message`: Test messaging integration with sample data
+
+Send messages with text, images, or documents to your connected platforms and Globule will automatically process them into searchable thoughts in your knowledge base.
 
 ## Architecture
 

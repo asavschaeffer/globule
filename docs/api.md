@@ -55,6 +55,17 @@ Retrieves all globules from storage, up to a specified limit.
 -   **Returns:**
     -   A list of all `ProcessedGlobuleV1` objects, ordered by creation date.
 
+### `async def add_from_input_message(self, input_message: InputMessage) -> List[ProcessedGlobuleV1]`
+
+Process an InputMessage from external sources (WhatsApp, Telegram, email) and store all resulting globules.
+
+This method handles bundled content - text and attachments from a single message are processed together and linked with shared metadata.
+
+-   **Parameters:**
+    -   `input_message` (InputMessage): InputMessage object from the inputs module containing message content, attachments, and platform metadata.
+-   **Returns:**
+    -   A list of `ProcessedGlobuleV1` objects that were created and stored, including separate globules for text content and each attachment.
+
 ## Advanced Analysis Methods
 
 ### `async def get_clusters(self) -> ClusteringAnalysis`
@@ -159,6 +170,32 @@ for cluster in clusters.clusters:
 # Ask natural language questions
 sql_results = await api.natural_language_query("How many thoughts mention Python?")
 print(f"Found {len(sql_results)} matching thoughts")
+
+# Process messages from external platforms
+from globule.inputs.models import InputMessage, Attachment, AttachmentType
+from datetime import datetime
+
+# Create an InputMessage (typically from webhook)
+whatsapp_message = InputMessage(
+    content="Progressive overload principles could apply to creative stamina",
+    source="whatsapp",
+    user_identifier="+1234567890",
+    timestamp=datetime.now(),
+    message_id="whatsapp_msg_123",
+    platform_metadata={
+        "whatsapp_message_type": "text",
+        "phone_number_id": "123456789"
+    }
+)
+
+# Process the message (handles both text and any attachments)
+processed_globules = await api.add_from_input_message(whatsapp_message)
+print(f"Created {len(processed_globules)} globules from WhatsApp message")
+
+# Messages from all sources appear in searches
+all_results = await api.search_semantic("creative stamina", limit=10)
+whatsapp_results = [g for g in all_results if g.provider_metadata.get('input_source') == 'whatsapp']
+print(f"Found {len(whatsapp_results)} WhatsApp thoughts about creative stamina")
 ```
 
 ## Error Handling

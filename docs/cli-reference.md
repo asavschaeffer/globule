@@ -133,6 +133,132 @@ Discovered 3 semantic clusters:
    Confidence: 0.92
 ```
 
+## Messaging Integration Commands
+
+### `globule inputs`
+
+Manage messaging platform integrations for capturing thoughts from WhatsApp, Telegram, and email.
+
+#### `globule inputs setup-whatsapp`
+
+Configure WhatsApp Business API integration for message capture.
+
+```bash
+# Basic setup (interactive prompts)
+globule inputs setup-whatsapp
+
+# Provide credentials directly
+globule inputs setup-whatsapp --token your_access_token --verify-token your_verify_token
+
+# Test configuration
+globule inputs setup-whatsapp --test
+```
+
+**What you'll need:**
+- WhatsApp Business API access token
+- Webhook verification token
+- Phone number registered with WhatsApp Business
+
+**What happens:**
+1. Validates API credentials with WhatsApp
+2. Configures webhook endpoints for message receiving
+3. Sets up message parsing and routing
+4. Creates secure storage for credentials
+
+#### `globule inputs setup-telegram`
+
+Configure Telegram Bot API for capturing thoughts via Telegram messages.
+
+```bash
+# Interactive setup
+globule inputs setup-telegram
+
+# Direct bot token configuration  
+globule inputs setup-telegram --token your_bot_token
+
+# Webhook configuration with custom URL
+globule inputs setup-telegram --webhook-url https://yourserver.com/telegram
+```
+
+**Prerequisites:**
+- Create a bot via [@BotFather](https://t.me/botfather)
+- Get bot token from BotFather
+- Optional: Custom webhook URL for production
+
+#### `globule inputs webhook-server`
+
+Run the local webhook server to receive messages from messaging platforms.
+
+```bash
+# Start server on default port (8000)
+globule inputs webhook-server
+
+# Custom port and host
+globule inputs webhook-server --port 8080 --host 0.0.0.0
+
+# Development mode with debug logging
+globule inputs webhook-server --debug --verbose
+
+# Production mode with authentication
+globule inputs webhook-server --auth-token your_secret_token
+```
+
+**Server Features:**
+- Handles WhatsApp and Telegram webhooks simultaneously  
+- Processes text messages and attachments (images, documents)
+- Automatic message parsing and globule creation
+- Real-time processing with immediate storage
+- Secure authentication and request validation
+
+#### `globule inputs test-message`
+
+Test messaging integration with sample data without external services.
+
+```bash
+# Test basic text message processing
+globule inputs test-message
+
+# Test with attachment simulation
+globule inputs test-message --with-attachments
+
+# Test specific platform parsing
+globule inputs test-message --platform whatsapp
+globule inputs test-message --platform telegram
+
+# Verbose testing with detailed output
+globule inputs test-message --verbose --dry-run
+```
+
+**Test Coverage:**
+- Message parsing from webhook payloads
+- Text and attachment processing
+- Metadata extraction and context preservation
+- Storage integration and retrieval
+- Error handling and edge cases
+
+#### `globule inputs status`
+
+Check the status of all configured messaging integrations.
+
+```bash
+# Show all integration status
+globule inputs status
+
+# Check specific platform
+globule inputs status --platform whatsapp
+globule inputs status --platform telegram
+
+# Detailed health check with connectivity tests
+globule inputs status --check-connectivity
+```
+
+**Status Information:**
+- Configuration validation
+- Webhook endpoint accessibility
+- API credential verification
+- Recent message processing statistics
+- Error logs and connectivity issues
+
 ## Advanced Commands
 
 ### `globule nlsearch`
@@ -275,6 +401,26 @@ globule skeleton apply research_layout
 
 # Draft synthesis  
 globule draft "ML ethics summary" --frontend tui
+```
+
+### Messaging Integration Workflow
+```bash
+# Initial setup (one time)
+globule inputs setup-whatsapp --token your_token --verify-token verify_token
+globule inputs setup-telegram --token bot_token
+
+# Start message processing server
+globule inputs webhook-server --port 8000 --host 0.0.0.0
+
+# Test the integration
+globule inputs test-message --platform whatsapp --with-attachments
+
+# Check status and health
+globule inputs status --check-connectivity
+
+# Now thoughts captured via messaging appear in searches:
+globule search "creative ideas"  # Includes thoughts from WhatsApp/Telegram
+globule draft "blog post" --frontend tui  # Uses all captured thoughts
 ```
 
 ### Data Analysis
